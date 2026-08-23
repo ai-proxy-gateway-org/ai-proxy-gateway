@@ -25,35 +25,52 @@ kısımların dürüst listesi**.
 
 ## 2. Mimari
 
+Bir isteğin sistem içindeki yolculuğu. Mor çerçeveli kutular köprü katmanı (A tarafı),
+gri olanlar kalkan katmanı (B tarafı). Kesikli oklar yanıtı bekletmeyen kayıt yazımları.
+
+```mermaid
+flowchart TD
+    C(["İstemci isteği<br/>sk-proxy anahtarı + origin"]) --> K1
+
+    K1["1 · Kimlik doğrulama<br/>anahtar özeti veritabanıyla karşılaştırılır"]
+    K1 --> K2
+    K1 -.-> R1(["401 · 403"])
+
+    K2["2 · Domain kontrolü<br/>yalnızca tarayıcı tabanlı istemcilere"]
+    K2 --> K3
+    K2 -.-> R2(["403"])
+
+    K3["3 · Hız limiti<br/>Redis sayaçları"]
+    K3 --> M
+    K3 -.-> R3(["429"])
+
+    M["4 · Model yetkisi<br/>katalog, sonra istemcinin izinli listesi"]
+    M --> F
+    M -.-> R4(["400 · 403"])
+
+    F["5 · Sağlayıcıya iletim<br/>gerçek API anahtarı eklenir, gövdeye dokunulmaz"]
+    F --> P
+    F -.-> R5(["502"])
+    F -.-> L1[("logs · pending kaydı")]
+
+    P(["Yapay zeka servisi<br/>OpenAI · Anthropic · Gemini"]) --> Y
+
+    Y["6 · Yanıt aktarımı<br/>ham byte olarak, parça parça"]
+    Y --> OUT(["İstemciye yanıt · 200"])
+    Y -.-> L2[("logs · token, süre, maliyet")]
+
+    classDef kopru stroke:#5b63d3,stroke-width:2.5px
+    classDef red stroke:#c0504a,color:#c0504a
+    classDef kayit stroke-dasharray:4 3
+
+    class M,F,Y kopru
+    class R1,R2,R3,R4,R5 red
+    class L1,L2 kayit
 ```
-                     ┌──────────────────────────────────────────┐
-   Client ─────────► │  routes/  (Provider Adapter katmanı)     │
-   sk-proxy-...      │  openai.ts · anthropic.ts · gemini.ts    │
-                     └───────────────┬──────────────────────────┘
-                                     │
-                     ┌───────────────▼──────────────────────────┐
-                     │  core/security.ts                        │
-                     │  kimlik → domain → hız limiti            │
-                     └───────────────┬──────────────────────────┘
-                                     │
-                     ┌───────────────▼──────────────────────────┐
-                     │  core/modelAuthorization.ts              │
-                     │  katalog + client yetkisi                │
-                     └───────────────┬──────────────────────────┘
-                                     │
-                     ┌───────────────▼──────────────────────────┐
-                     │  core/proxyForward.ts  (Common Core)     │
-                     │  iletim · akış · ölçüm                   │
-                     └──────┬─────────────────────┬─────────────┘
-                            │                     │
-             ┌──────────────▼───────┐   ┌─────────▼─────────────┐
-             │ core/providerConfig  │   │ core/logCapture       │
-             │ hedef adres + gerçek │   │ log servisine açılan  │
-             │ API anahtarı         │   │ seam                  │
-             └──────────┬───────────┘   └─────────┬─────────────┘
-                        │                         │
-                   AI sağlayıcı            logs tablosu (+ cost)
-```
+
+Kontrollerin sırası bilinçli: en ucuz ve en kesin olan önce çalışıyor. Kimliği
+doğrulanmamış bir isteğin model listesini sorgulamanın anlamı yok. Reddedilen istek
+sağlayıcıya hiç ulaşmıyor.
 
 ### Dosya sorumlulukları
 

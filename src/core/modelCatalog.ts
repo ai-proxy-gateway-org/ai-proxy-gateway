@@ -26,6 +26,7 @@ const FALLBACK_MODEL_KEYS = [
 ];
 
 let knownModelKeys: Set<string>;
+let modelPrices: Record<string, PricingEntry>;
 let catalogSource: 'model_pricing.json' | 'fallback';
 
 function loadCatalog(): void {
@@ -35,9 +36,11 @@ function loadCatalog(): void {
     const keys = Object.keys(parsed);
     if (keys.length === 0) throw new Error('Katalog boş');
     knownModelKeys = new Set(keys);
+    modelPrices = parsed;
     catalogSource = 'model_pricing.json';
   } catch {
     knownModelKeys = new Set(FALLBACK_MODEL_KEYS);
+    modelPrices = {};
     catalogSource = 'fallback';
   }
 }
@@ -54,6 +57,14 @@ export function isKnownModel(provider: string, model: string): boolean {
 
 export function knownModels(): string[] {
   return [...knownModelKeys];
+}
+
+/**
+ * Model fiyatları. 1000 token başına dolar — logger.ts ile aynı birim.
+ * Arayüzde maliyet hesabını gösterip doğrulayabilmek için dışarı açıldı.
+ */
+export function priceList(): Record<string, PricingEntry> {
+  return modelPrices;
 }
 
 export function catalogInfo(): { source: string; modelCount: number } {

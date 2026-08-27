@@ -28,7 +28,7 @@ export function authorizeModel(
     return {
       ok: false,
       status: 400,
-      error: `'${model}' modeli ${provider} sağlayıcısı için sistemde tanımlı değil.`
+      error: `Model '${model}' is not defined for provider '${provider}'.`
     };
   }
 
@@ -36,7 +36,7 @@ export function authorizeModel(
     return {
       ok: false,
       status: 403,
-      error: `'${model}' modeli için yetkiniz yok.`
+      error: `You are not authorized to use model '${model}'.`
     };
   }
 

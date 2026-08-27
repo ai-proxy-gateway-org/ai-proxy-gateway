@@ -29,6 +29,7 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.112.3",
     "@upstash/redis": "^1.38.2",
+    "@vercel/functions": "^3.9.5",
     "@vercel/node": "^5.10.1",
     "fastify": "^5.12.0"
   }

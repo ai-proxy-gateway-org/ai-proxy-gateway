@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 import { openaiRoutes } from './routes/openai.js';
 import { geminiRoutes } from './routes/gemini.js';
 import { anthropicRoutes } from './routes/anthropic.js';
+import { portalRoutes } from './routes/portal.js';
 import { isLocalOrigin } from './core/localOrigins.js';
 import { catalogInfo } from './core/modelCatalog.js';
 
@@ -16,6 +17,7 @@ export function buildApp() {
   server.register(openaiRoutes);
   server.register(geminiRoutes);
   server.register(anthropicRoutes);
+  server.register(portalRoutes);
 
   return server;
 }

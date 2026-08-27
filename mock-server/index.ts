@@ -1,7 +1,27 @@
 import Fastify from 'fastify';
 import type { FastifyReply } from 'fastify';
 
-const mockServer = Fastify({ logger: true });
+const mockServer = Fastify({ logger: false });
+
+// Sunum için: sağlayıcıya TAM olarak neyin ulaştığını göster. Pass-through'un
+// tek görünür kanıtı bu — gövdeye dokunulmadığı ancak burada görülebiliyor.
+mockServer.addHook('preHandler', async (request) => {
+  const h = request.headers as Record<string, string | undefined>;
+  const kimlik = h.authorization
+    ? `authorization: Bearer ${h.authorization.slice(7, 17)}...`
+    : h['x-api-key']
+      ? `x-api-key: ${h['x-api-key'].slice(0, 10)}...`
+      : h['x-goog-api-key']
+        ? `x-goog-api-key: ${h['x-goog-api-key'].slice(0, 10)}...`
+        : '(anahtar yok)';
+  const surum = h['anthropic-version'] ? `  anthropic-version: ${h['anthropic-version']}` : '';
+
+  console.log('\n\x1b[33m┌─ SAĞLAYICIYA ULAŞAN İSTEK ─────────────────────────\x1b[0m');
+  console.log(`\x1b[33m│\x1b[0m ${request.method} ${request.url}`);
+  console.log(`\x1b[33m│\x1b[0m ${kimlik}${surum}`);
+  console.log(`\x1b[33m│\x1b[0m gövde: ${JSON.stringify(request.body)}`);
+  console.log('\x1b[33m└────────────────────────────────────────────────────\x1b[0m');
+});
 
 const SSE_HEADERS = {
   'Content-Type': 'text/event-stream',
@@ -230,7 +250,11 @@ mockServer.post('/v1/messages', async (request, reply) => {
 
 mockServer.listen({ port: 4000, host: '0.0.0.0' }, (err) => {
   if (err) {
-    mockServer.log.error(err);
+    console.error(err);
     process.exit(1);
   }
+  console.log('\n\x1b[1m  SAHTE SAĞLAYICI  ·  localhost:4000\x1b[0m');
+  console.log('\x1b[2m  OpenAI, Anthropic ve Gemini\'nin yerine geçiyor.\x1b[0m');
+  console.log('\x1b[2m  Buraya ulaşan her istek aşağıda sarı kutu olarak görünecek.\x1b[0m');
+  console.log('\x1b[2m  Şu an boş — henüz istek gelmedi.\x1b[0m\n');
 });

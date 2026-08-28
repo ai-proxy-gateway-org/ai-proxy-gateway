@@ -16,6 +16,16 @@ import {
 } from '../core/priceSource.js';
 import { priceList, invalidateCatalog, catalogInfo } from '../core/modelCatalog.js';
 
+// Ret mesajları müşteriye yol göstersin diye değiştirildi; eski kayıtlar
+// eski metinle duruyor. Süzgeçler ikisini de tanımak zorunda, yoksa
+// geçmiş talepler bir sürüm yükseltmesiyle görünmez oluyor.
+function katalogRedMi(mesaj: string): boolean {
+  return mesaj.includes('is not defined') || mesaj.includes('is not available on this gateway');
+}
+function yetkiRedMi(mesaj: string): boolean {
+  return mesaj.includes('not authorized') || mesaj.includes('is not enabled for your account');
+}
+
 function yoneticiMi(request: { headers: Record<string, unknown> }): boolean {
   const beklenen = process.env.ADMIN_TOKEN?.trim();
   if (!beklenen) return false;
@@ -98,6 +108,9 @@ ${YAZI_TIPI}
   .onek { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.78rem;
     background:var(--sunk); padding:.1rem .4rem; border-radius:4px; }
   .onek.soluk { color:var(--ink-3); }
+  /* Ret mesajları tam gösteriliyor; hücreyi taşırmasın diye sarmalı. */
+  .hataMetni { white-space:normal; text-align:left; line-height:1.45;
+    max-width:32rem; display:inline-block; }
   .yanpanelGovde textarea { width:100%; padding:.6rem .8rem; font:inherit; font-size:.85rem;
     font-family:ui-monospace,SFMono-Regular,Menlo,monospace; border:1px solid var(--line-2);
     border-radius:8px; background:var(--surface); color:var(--ink); resize:vertical; }
@@ -309,8 +322,9 @@ ${YAZI_TIPI}
             <div class="sayac" id="talepSayac"></div>
           </div>
           <div class="yardim" style="margin:-.3rem 0 .9rem">
-            Customers who called a model they are not allowed to use. Taken from
-            rejected requests — no separate request form needed.
+            Customers who called a model they could not use. Taken from rejected
+            requests — no separate request form needed. A row marked
+            <b>model inactive</b> also needs activating on the Models screen.
           </div>
           <div class="kaydir"><table id="talepTablo"></table></div>
         </div>
@@ -550,7 +564,10 @@ ${YAZI_TIPI}
   function durumHapi(k) {
     if (k.status === 'success') return '<span class="hap ok">success</span>';
     if (k.status === 'pending') return '<span class="hap bek">pending</span>';
-    return '<span class="hap err">' + (k.error_message || 'error').slice(0,34) + '</span>';
+    // Tam metin gösteriliyor: ret mesajları artık müşteriye ne yapması
+    // gerektiğini anlatıyor, kesilince asıl bilgi kayboluyordu.
+    // Hücre genişliği CSS'te sınırlı, uzun metin satır atlıyor.
+    return '<span class="hap err hataMetni">' + kacir(k.error_message || 'error') + '</span>';
   }
 
   function iSatirCiz(kayitlar, ekle) {
@@ -661,10 +678,22 @@ ${YAZI_TIPI}
       '<dt>Input tokens</dt><dd>' + bin(gi) + '</dd>' +
       '<dt>Output tokens</dt><dd>' + bin(ci) + '</dd></dl>';
 
+    if (k.error_message) {
+      govde += '<div class="bolumBaslik">Why it was rejected</div>' +
+        '<div class="dogrula err">' + kacir(k.error_message) + '</div>';
+    }
+
     if (k.status === 'pending') {
       govde += '<div class="bolumBaslik">Cost</div>' +
         '<div class="dogrula bek">This request was not fully recorded. ' +
         'Token counts and cost are missing.</div>';
+    } else if (k.status === 'error' && !(k.input_tokens || k.output_tokens)) {
+      // Reddedilen istekte hesaplanacak bir şey yok. Fiyat eksikliği mesajı
+      // burada yanıltıcıydı: sorun fiyatın olmaması değil, isteğin hiç
+      // çalışmamış olması.
+      govde += '<div class="bolumBaslik">Cost</div>' +
+        '<div class="dogrula bek">No cost — the request was rejected before it ' +
+        'reached the provider, so no tokens were used.</div>';
     } else if (!f) {
       govde += '<div class="bolumBaslik">Cost</div>' +
         '<div class="dogrula err">⚠ No price defined for this model, cost cannot be computed.</div>';
@@ -823,7 +852,8 @@ ${YAZI_TIPI}
       '<th>Last try</th><th></th></tr></thead><tbody>' +
       talepler.map((t, i) => '<tr>' +
         '<td>' + kacir(t.musteri) + '</td>' +
-        '<td>' + nokta(t.provider) + kacir(t.model) + '</td>' +
+        '<td>' + nokta(t.provider) + kacir(t.model) +
+          (t.modelAktif ? '' : ' <span class="hap bek">model inactive</span>') + '</td>' +
         '<td class="sayi">' + bin(t.adet) + '</td>' +
         '<td class="sayi">' + gunTarih(t.son) + '</td>' +
         '<td class="islem"><button class="satirDugme" data-talep="' + i + '">Allow</button></td>' +
@@ -2516,7 +2546,7 @@ export async function adminRoutes(server: FastifyInstance) {
       const mesaj = String(h.error_message ?? '');
       const ad = `${h.provider}/${h.model}`;
 
-      if (mesaj.includes('is not defined') && !bilinen.has(ad)) {
+      if (katalogRedMi(mesaj) && !bilinen.has(ad)) {
         const o = talepSayac.get(ad) ?? { provider: h.provider, model: h.model, adet: 0, son: h.created_at };
         o.adet += 1;
         if (h.created_at > o.son) o.son = h.created_at;
@@ -2825,29 +2855,39 @@ export async function adminRoutes(server: FastifyInstance) {
       }>).map((m) => [m.id, m])
     );
 
-    // Yalnızca katalogda duran ve aktif modeller için talep gösteriyoruz:
-    // katalogda olmayanlar zaten Price audit ekranında listeleniyor.
+    // Katalogdaki modeller — pasif olanlar dahil.
+    //
+    // Pasifleri dışarıda bırakmak zinciri kırıyordu: müşteri bilinmeyen bir
+    // modeli çağırınca 400 alıyor, gece denetimi modeli pasif olarak
+    // ekliyor, yönetici aktif ediyor — ama talep hiçbir yerde görünmediği
+    // için müşterinin bir kez daha denemesi gerekiyordu.
     const { data: katalog } = await supabase
       .from('model_catalog').select('provider, model, is_active');
-    const aktifModeller = new Set(
+    const katalogDurumu = new Map(
       ((katalog ?? []) as Array<{ provider: string; model: string; is_active: boolean }>)
-        .filter((m) => m.is_active)
-        .map((m) => `${m.provider}/${m.model}`)
+        .map((m) => [`${m.provider}/${m.model}`, m.is_active])
     );
 
     const sayac = new Map<string, {
       clientId: string; musteri: string; modelAnahtar: string;
       provider: string; model: string; adet: number; son: string;
+      modelAktif: boolean;
     }>();
 
     for (const h of (hatalar ?? []) as Array<{
       client_id: string; provider: string; model: string;
       error_message: string | null; created_at: string;
     }>) {
-      if (!String(h.error_message ?? '').includes('not authorized')) continue;
+      const mesaj = String(h.error_message ?? '');
+      // İki ret de talep sayılıyor:
+      //   403 — model var, bu müşteriye kapalı
+      //   400 — model o sırada katalogda yoktu; sonradan eklendiyse
+      //         müşterinin isteği hâlâ geçerli
+      const talepMi = yetkiRedMi(mesaj) || katalogRedMi(mesaj);
+      if (!talepMi) continue;
 
       const modelAnahtar = `${h.provider}/${h.model}`;
-      if (!aktifModeller.has(modelAnahtar)) continue;
+      if (!katalogDurumu.has(modelAnahtar)) continue;
 
       const musteri = musteriHarita.get(String(h.client_id));
       if (!musteri) continue;
@@ -2857,7 +2897,9 @@ export async function adminRoutes(server: FastifyInstance) {
       const anahtar = `${h.client_id}|${modelAnahtar}`;
       const o = sayac.get(anahtar) ?? {
         clientId: String(h.client_id), musteri: musteri.name, modelAnahtar,
-        provider: h.provider, model: h.model, adet: 0, son: h.created_at
+        provider: h.provider, model: h.model, adet: 0, son: h.created_at,
+        // Model pasifse izin vermek tek başına yetmiyor; ekranda söylüyoruz.
+        modelAktif: katalogDurumu.get(modelAnahtar) === true
       };
       o.adet += 1;
       if (h.created_at > o.son) o.son = h.created_at;
@@ -3080,17 +3122,112 @@ export async function adminRoutes(server: FastifyInstance) {
       });
     }
 
-    if (uygulanan.length) invalidateCatalog();
+    // --- 3) müşterilerin istediği ama katalogda olmayan modelleri ekle ---
+    //
+    // Reddedilen her 400 bir talep. Bunları elle eklemek, model adını ve iki
+    // fiyatı elle yazmak demekti — hem yorucu hem hataya açık (bin kat şişik
+    // fiyat girme hatasını bu yüzden yaşadık).
+    //
+    // Modeli PASİF ekliyoruz. Aktif eklemek, kimse karar vermeden yeni ve
+    // pahalı bir modeli kullanıma açmak olurdu. Pasif model kimseye görünmez,
+    // yalnızca Models ekranında "buna bakılması lazım" olarak durur.
+    //
+    // Kaynakta fiyatı bulunamayan modeli hiç eklemiyoruz: fiyatsız model zaten
+    // aktif edilemiyor, listede gürültüden başka bir şey olmaz.
+    const eklenenModeller: Array<{ model: string; fiyat: string }> = [];
+    if (or || lite) {
+      const yediGunOnce = new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString();
+      const { data: redler } = await supabase
+        .from('logs')
+        .select('provider, model, error_message')
+        .eq('status', 'error')
+        .gte('created_at', yediGunOnce)
+        .limit(2000);
+
+      const mevcut = new Set(
+        ((satirlar ?? []) as Array<{ provider: string; model: string }>)
+          .map((m) => `${m.provider}/${m.model}`)
+      );
+
+      const istenen = new Map<string, { provider: string; model: string }>();
+      for (const r of (redler ?? []) as Array<{
+        provider: string; model: string; error_message: string | null;
+      }>) {
+        if (!katalogRedMi(String(r.error_message ?? ''))) continue;
+        const ad = `${r.provider}/${r.model}`;
+        if (mevcut.has(ad)) continue;
+        istenen.set(ad, { provider: r.provider, model: r.model });
+      }
+
+      for (const [ad, m] of istenen) {
+        // Kaynaklarda ada göre tam karşılık arıyoruz. Fiyat sürekliliği burada
+        // kullanılamaz: elimizde bir önceki fiyat yok, model bizde hiç yok.
+        let girdi: number | null = null, cikti: number | null = null;
+        let orId: string | null = null, liteId: string | null = null;
+
+        if (or) {
+          const aday = olasiKarsiliklar(m.provider, m.model, or.fiyatlar)[0];
+          const f = aday ? or.fiyatlar.get(aday) : undefined;
+          // Yalnızca adı birebir tutan adayı kabul ediyoruz. Benzer adlı
+          // başka bir modelin fiyatını yazmak, yanlış fiyatı sessizce
+          // kataloga sokmak olurdu.
+          const sade = (t: string) => t.toLowerCase().replace(/[^a-z0-9]/g, '');
+          if (aday && f && sade(aday.split('/').slice(1).join('/')) === sade(m.model)) {
+            girdi = f.girdi; cikti = f.cikti; orId = aday;
+          }
+        }
+        if (lite) {
+          const aday = liteAdaylari(m.model, lite.fiyatlar)[0];
+          const f = aday ? lite.fiyatlar.get(aday) : undefined;
+          if (aday && f) {
+            liteId = aday;
+            if (girdi === null) { girdi = f.girdi; cikti = f.cikti; }
+          }
+        }
+
+        if (girdi === null || cikti === null) continue;
+
+        const { error: h } = await supabase.from('model_catalog').insert([{
+          provider: m.provider,
+          model: m.model,
+          input_price: girdi,
+          output_price: cikti,
+          is_active: false,
+          price_checked_at: simdi,
+          price_source: orId && liteId ? 'verified' : (orId ? 'openrouter' : 'litellm'),
+          source_ids: orId ? [orId] : [],
+          litellm_ids: liteId ? [liteId] : [],
+          son_fiyat_notu:
+            `Added automatically on ${simdi.slice(0, 10)}: customers requested it and ` +
+            `a price was found at the source. Inactive until reviewed.`
+        }]);
+        if (h) continue;
+
+        eklenenModeller.push({
+          model: ad,
+          fiyat: `$${(girdi * 1000).toFixed(2)} / $${(cikti * 1000).toFixed(2)}`
+        });
+        olaylar.push({
+          tur: 'model', tetikleyen, model: ad,
+          yeni_girdi: girdi, yeni_cikti: cikti,
+          kaynak: [orId ? 'openrouter' : null, liteId ? 'litellm' : null].filter(Boolean).join(' + '),
+          aciklama: 'Customers requested this model; added to the catalog as inactive.'
+        });
+      }
+    }
+
+    if (uygulanan.length || eklenenModeller.length) invalidateCatalog();
 
     olaylar.unshift({
       tur: 'run', tetikleyen,
       aciklama: `Checked ${(satirlar ?? []).length} models in ${Date.now() - basladi} ms — ` +
         `${dogrulanan} already correct, ${uygulanan.length} price(s) applied, ` +
-        `${baglanan.length} mapping(s) repaired, ${bekleyen.length} waiting for approval.`
+        `${baglanan.length} mapping(s) repaired, ${eklenenModeller.length} model(s) discovered, ` +
+        `${bekleyen.length} waiting for approval.`
     });
     await olayYaz(olaylar);
 
-    return { calisti: true, uygulanan, baglanan, bekleyen, dogrulanan };
+    return { calisti: true, uygulanan, baglanan, bekleyen, dogrulanan, eklenenModeller };
   }
 
   // Zamanlayıcının çağırdığı uç.

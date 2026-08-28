@@ -26,11 +26,18 @@ export async function authorizeModel(
   model: string,
   allowedModels: string[]
 ): Promise<AuthorizationResult> {
+  // Ret mesajları müşteriye ne yapması gerektiğini söylüyor.
+  //
+  // Önceden yalnızca kapıyı kapatıyorlardı ("not authorized"). Oysa her ret
+  // yönetici panelinde talep olarak görünüyor: müşterinin bize ayrıca yazmasına
+  // gerek yok. Bunu söylemezsek ya vazgeçiyor ya da gereksiz yere mesaj atıyor.
   if (!(await isKnownModel(provider, model))) {
     return {
       ok: false,
       status: 400,
-      error: `Model '${model}' is not defined for provider '${provider}'.`
+      error:
+        `Model '${model}' is not available on this gateway. ` +
+        `Your request has been recorded and will be reviewed by an administrator.`
     };
   }
 
@@ -38,7 +45,9 @@ export async function authorizeModel(
     return {
       ok: false,
       status: 403,
-      error: `You are not authorized to use model '${model}'.`
+      error:
+        `Model '${model}' is not enabled for your account. ` +
+        `Your request has been recorded and is awaiting review.`
     };
   }
 

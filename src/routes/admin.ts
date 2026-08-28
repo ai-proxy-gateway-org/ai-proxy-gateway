@@ -25,6 +25,11 @@ function katalogRedMi(mesaj: string): boolean {
 function yetkiRedMi(mesaj: string): boolean {
   return mesaj.includes('not authorized') || mesaj.includes('is not enabled for your account');
 }
+// Sağlayıcının reddettiği istekler. Metin Türkçeden İngilizceye çevrildi;
+// eski kayıtlar eski metinle duruyor, ikisi de tanınmalı.
+function saglayiciRedMi(mesaj: string): boolean {
+  return /Provider returned\s+\d{3}/.test(mesaj) || /Sağlayıcı\s+\d{3}/.test(mesaj);
+}
 
 function yoneticiMi(request: { headers: Record<string, unknown> }): boolean {
   const beklenen = process.env.ADMIN_TOKEN?.trim();
@@ -567,7 +572,12 @@ ${YAZI_TIPI}
     // Tam metin gösteriliyor: ret mesajları artık müşteriye ne yapması
     // gerektiğini anlatıyor, kesilince asıl bilgi kayboluyordu.
     // Hücre genişliği CSS'te sınırlı, uzun metin satır atlıyor.
-    return '<span class="hap err hataMetni">' + kacir(k.error_message || 'error') + '</span>';
+    // Sebebi kaydedilmemiş eski kayıtlar var (error_message kolonu bağlanmadan
+    // önce yazılmışlar). "error" demek yerine neden bilinmediğini söylüyoruz.
+    return '<span class="hap err hataMetni">' +
+      (k.error_message
+        ? kacir(k.error_message)
+        : 'error — reason was not recorded') + '</span>';
   }
 
   function iSatirCiz(kayitlar, ekle) {
@@ -678,9 +688,12 @@ ${YAZI_TIPI}
       '<dt>Input tokens</dt><dd>' + bin(gi) + '</dd>' +
       '<dt>Output tokens</dt><dd>' + bin(ci) + '</dd></dl>';
 
-    if (k.error_message) {
+    if (k.status === 'error') {
       govde += '<div class="bolumBaslik">Why it was rejected</div>' +
-        '<div class="dogrula err">' + kacir(k.error_message) + '</div>';
+        (k.error_message
+          ? '<div class="dogrula err">' + kacir(k.error_message) + '</div>'
+          : '<div class="dogrula bek">The reason was not recorded. This request ' +
+            'predates error logging.</div>');
     }
 
     if (k.status === 'pending') {
@@ -2555,7 +2568,7 @@ export async function adminRoutes(server: FastifyInstance) {
       }
 
       // Sağlayıcının reddettikleri: katalogda duran ama artık çalışmayan modeller.
-      if (/Sağlayıcı\s+\d{3}/.test(mesaj) && bilinen.has(ad)) {
+      if (saglayiciRedMi(mesaj) && bilinen.has(ad)) {
         const o = saglayiciSayac.get(ad) ?? {
           provider: h.provider, model: h.model, adet: 0, son: h.created_at, mesaj
         };

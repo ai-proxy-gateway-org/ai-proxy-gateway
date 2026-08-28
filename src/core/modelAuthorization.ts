@@ -1,6 +1,6 @@
 // Model erişim kontrolü iki katmanlı çalışır:
 //
-//   1. KATALOG  — Model sistemde tanımlı mı? Kaynağı model_pricing.json.
+//   1. KATALOG  — Model sistemde tanımlı mı? Kaynağı model_catalog tablosu.
 //                 Fiyatı olmayan model hiç geçmez; aksi halde maliyet sessizce 0 yazılır.
 //   2. YETKİ    — BU client BU modeli kullanabilir mi? Kaynağı clients.allowed_models.
 //
@@ -9,7 +9,7 @@
 // kullanılmaz; böylece yeni ve pahalı modellere kontrolsüz erişim engellenir").
 //
 // allowed_models biçimi: "provider/model" (örn. "anthropic/claude-3-5-sonnet").
-// model_pricing.json anahtarlarıyla aynı düzen — aynı model adı iki sağlayıcıda
+// katalog anahtarlarıyla aynı düzen — aynı model adı iki sağlayıcıda
 // bulunabileceği için yalnız model adı belirsiz kalırdı.
 
 import { isKnownModel, modelKey } from './modelCatalog.js';
@@ -19,12 +19,14 @@ export type AuthorizationResult = { ok: true } | { ok: false; status: number; er
 
 // Yetki listesi parametre olarak alınıyor: güvenlik zinciri client kaydını zaten
 // okuduğu için ikinci bir veritabanı turu gerekmiyor.
-export function authorizeModel(
+// Katalog artık veritabanından geldiği için async. Önbellekten okunduğunda
+// beklemesiz döner; yalnızca 10 dakikada bir gerçek sorgu yapılır.
+export async function authorizeModel(
   provider: ProviderName,
   model: string,
   allowedModels: string[]
-): AuthorizationResult {
-  if (!isKnownModel(provider, model)) {
+): Promise<AuthorizationResult> {
+  if (!(await isKnownModel(provider, model))) {
     return {
       ok: false,
       status: 400,

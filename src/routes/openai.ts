@@ -16,6 +16,8 @@ export async function openaiRoutes(server: FastifyInstance) {
       return reply.status(security.status).send({ error: security.error });
     }
     const clientId = security.clientId;
+    const keyId = security.keyId;
+    const maxOutputPrice = security.maxOutputPrice;
     const allowedModels = security.allowedModels;
 
     const body = request.body as { model?: string } | undefined;
@@ -24,9 +26,9 @@ export async function openaiRoutes(server: FastifyInstance) {
       return reply.status(400).send({ error: "The 'model' field is required in the request body." });
     }
 
-    const authorization = await authorizeModel('openai', requestedModel, allowedModels);
+    const authorization = await authorizeModel('openai', requestedModel, allowedModels, maxOutputPrice);
     if (!authorization.ok) {
-      void logDeniedRequest(clientId, 'openai', requestedModel, authorization.error);
+      void logDeniedRequest(clientId, 'openai', requestedModel, authorization.error, keyId);
       return reply.status(authorization.status).send({ error: authorization.error });
     }
 
@@ -34,6 +36,7 @@ export async function openaiRoutes(server: FastifyInstance) {
       body: request.body,
       reply,
       clientId,
+      keyId,
       provider: 'openai',
       model: requestedModel
     });

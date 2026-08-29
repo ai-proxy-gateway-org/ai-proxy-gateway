@@ -8,20 +8,35 @@ import { priceFor } from '../core/modelCatalog.js';
 /**
  * Creates a 'pending' log entry when an AI request starts.
  */
-export async function logRequestStart(clientId: string, provider: string, model: string) {
+export async function logRequestStart(
+  clientId: string,
+  provider: string,
+  model: string,
+  keyId?: string | null
+) {
   try {
-    const { data, error } = await supabase
-      .from('logs')
-      .insert([{
-        client_id: clientId,
-        provider: provider,
-        model: model,
-        status: 'pending'
-      }])
-      .select('id')
-      .single();
+    // key_id: isteğin hangi anahtarla geldiği. Bir şirketin harcamasını
+    // anahtar bazında kırabilmek için gerekiyor — kayıtta yalnızca client_id
+    // olduğunda "kim ne harcadı" sorusunun cevabı yoktu.
+    const satir: Record<string, unknown> = {
+      client_id: clientId,
+      provider: provider,
+      model: model,
+      status: 'pending'
+    };
+    if (keyId) satir.key_id = keyId;
+
+    let { data, error } = await supabase.from('logs').insert([satir]).select('id').single();
+
+    // key_id sütunu sonradan eklendi; göç çalıştırılmamış bir ortamda sorgu
+    // burada düşerse kaydı sütunsuz açıyoruz — log kaybetmek daha kötü.
+    if (error && /key_id|column/i.test(String(error.message))) {
+      delete satir.key_id;
+      ({ data, error } = await supabase.from('logs').insert([satir]).select('id').single());
+    }
 
     if (error) throw error;
+    if (!data) throw new Error('Log satırı oluşturulamadı.');
     return data.id; 
   } catch (error) {
     console.error('Error starting log:', error);

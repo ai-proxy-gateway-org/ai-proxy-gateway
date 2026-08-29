@@ -12,7 +12,7 @@
 // katalog anahtarlarıyla aynı düzen — aynı model adı iki sağlayıcıda
 // bulunabileceği için yalnız model adı belirsiz kalırdı.
 
-import { isKnownModel, modelKey } from './modelCatalog.js';
+import { isKnownModel, modelKey, priceFor } from './modelCatalog.js';
 import type { ProviderName } from './providerConfig.js';
 
 export type AuthorizationResult = { ok: true } | { ok: false; status: number; error: string };
@@ -21,10 +21,28 @@ export type AuthorizationResult = { ok: true } | { ok: false; status: number; er
 // okuduğu için ikinci bir veritabanı turu gerekmiyor.
 // Katalog artık veritabanından geldiği için async. Önbellekten okunduğunda
 // beklemesiz döner; yalnızca 10 dakikada bir gerçek sorgu yapılır.
+// FİYAT TAVANI
+//
+// İzin listesi tek başına bir darboğaz: müşteri ucuz bir modele geçmek istese
+// bile yöneticinin kutucuğu işaretlemesini bekliyor. Yeni bir model
+// çıktığında da kimse izin vermeden kullanılamıyor.
+//
+// Fiyat tavanı bunu tersine çeviriyor: müşteriye birim fiyat sınırı konuyor,
+// o sınırın altındaki her model onaysız geçiyor, üstündekiler kapalı kalıyor.
+// Yeni model ucuzsa kendiliğinden kullanılabilir, pahalıysa kendiliğinden
+// kapalı — kimsenin bir şey yapması gerekmiyor.
+//
+// Çıktı fiyatı üzerinden ölçülüyor: modeller arasındaki fark orada
+// belirginleşiyor (gpt-4o $0.010 · claude-opus-4 $0.075 / 1K) ve fatura
+// ağırlığı da çıktıdan geliyor.
+//
+// allowed_models kalkmıyor, İSTİSNA LİSTESİ oluyor: tavanın üstünde ama bu
+// müşteriye özel açılmış modeller orada duruyor.
 export async function authorizeModel(
   provider: ProviderName,
   model: string,
-  allowedModels: string[]
+  allowedModels: string[],
+  maxOutputPrice?: number | null
 ): Promise<AuthorizationResult> {
   // Ret mesajları müşteriye ne yapması gerektiğini söylüyor.
   //
@@ -41,15 +59,34 @@ export async function authorizeModel(
     };
   }
 
-  if (!allowedModels.includes(modelKey(provider, model))) {
-    return {
-      ok: false,
-      status: 403,
-      error:
-        `Model '${model}' is not enabled for your account. ` +
-        `Your request has been recorded and is awaiting review.`
-    };
+  if (allowedModels.includes(modelKey(provider, model))) return { ok: true };
+
+  // İzin listesinde yok — tavanın altında mı?
+  if (typeof maxOutputPrice === 'number' && maxOutputPrice > 0) {
+    const fiyat = await priceFor(provider, model);
+
+    // Fiyatı bilinmeyen model tavana göre değerlendirilemez; kapalı kalıyor.
+    // "Bilmiyorsak geçir" demek, pahalı bir modelin fiyatı girilmediği için
+    // açılması demekti.
+    if (fiyat && fiyat.output <= maxOutputPrice) return { ok: true };
+
+    if (fiyat) {
+      return {
+        ok: false,
+        status: 403,
+        error:
+          `Model '${model}' costs $${(fiyat.output * 1000).toFixed(2)} per 1M output tokens, ` +
+          `above your limit of $${(maxOutputPrice * 1000).toFixed(2)}. ` +
+          `Your request has been recorded and is awaiting review.`
+      };
+    }
   }
 
-  return { ok: true };
+  return {
+    ok: false,
+    status: 403,
+    error:
+      `Model '${model}' is not enabled for your account. ` +
+      `Your request has been recorded and is awaiting review.`
+  };
 }

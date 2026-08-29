@@ -10,9 +10,10 @@ import * as logger from '../services/logger.js';
 export async function logRequestStart(
   clientId: string,
   provider: ProviderName,
-  model: string
+  model: string,
+  keyId?: string | null
 ): Promise<string | null> {
-  return logger.logRequestStart(clientId, provider, model);
+  return logger.logRequestStart(clientId, provider, model, keyId);
 }
 
 export async function logRequestComplete(
@@ -36,9 +37,10 @@ export async function logDeniedRequest(
   clientId: string,
   provider: ProviderName,
   model: string,
-  reason: string
+  reason: string,
+  keyId?: string | null
 ): Promise<void> {
-  const logId = await logRequestStart(clientId, provider, model);
+  const logId = await logRequestStart(clientId, provider, model, keyId);
   if (!logId) return;
   await logRequestComplete(logId, provider, model, 0, 0, 0, false, reason);
 }

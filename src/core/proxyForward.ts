@@ -7,6 +7,9 @@ interface ForwardOptions {
   body: unknown;
   reply: FastifyReply;
   clientId: string;
+  // İsteğin geldiği anahtar; kayda yazılıyor ki harcama anahtar bazında
+  // kırılabilsin.
+  keyId?: string | null;
   provider: ProviderName;
   model: string;
 }
@@ -27,13 +30,13 @@ function extractOutputTokens(provider: ProviderName, data: any): number | undefi
   return data?.usage?.output_tokens ?? data?.message?.usage?.output_tokens;
 }
 
-export async function forwardToProvider({ body, reply, clientId, provider, model }: ForwardOptions) {
+export async function forwardToProvider({ body, reply, clientId, keyId, provider, model }: ForwardOptions) {
   const startTime = Date.now();
   const isStreaming = (body as { stream?: boolean } | undefined)?.stream === true;
 
   // wf-ortak §5: istek başlarken `pending` kaydı açılır.
   // Bilerek await ETMİYORUZ — kayıt işlemi isteğin önüne geçmesin (düşük overhead).
-  const pendingLog = logRequestStart(clientId, provider, model);
+  const pendingLog = logRequestStart(clientId, provider, model, keyId);
 
   // Log'u kapatan tek nokta. Yanıtı geciktirmiyor ama kaybolmuyor da.
   //

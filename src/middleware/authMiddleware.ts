@@ -1,61 +1,65 @@
-import { supabase } from '../services/db.js';
+import type { Request, Response, NextFunction } from 'express';
 import { hashApiKey } from '../utils/auth.js';
+import { db } from '../db/index.js';
+import { client_keys, clients } from '../db/schema.js';
+import { eq } from 'drizzle-orm';
 
-/**
- * Verifies the provided Proxy API key.
- * Returns client details if successful, otherwise throws an error.
- * @param providedApiKey The "sk-proxy-..." key provided by the client
- */
-export async function verifyClient(providedApiKey: string) {
+// 1. test.ts dosyasının ve middleware'in ortak kullandığı Doğrulama Fonksiyonu
+export async function verifyClient(token: string) {
   try {
-    if (!providedApiKey || !providedApiKey.startsWith('sk-proxy-')) {
-      return { success: false, error: 'Invalid API Key format', status: 401 };
-    }
+    const hashedKey = hashApiKey(token);
 
-    const hashedKey = hashApiKey(providedApiKey);
+    const [keyData] = await db
+      .select({ client_id: client_keys.client_id, environment: client_keys.environment })
+      .from(client_keys)
+      .where(eq(client_keys.key_hash, hashedKey));
 
-    const { data: keyData, error: keyError } = await supabase
-      .from('client_keys')
-      .select(`
-        is_active,
-        environment,
-        clients (
-          id,
-          name,
-          is_active,
-          client_type,
-          allowed_domains,
-          allowed_models
-        )
-      `)
-      .eq('key_hash', hashedKey)
-      .single();
-
-    if (keyError || !keyData) {
+    if (!keyData) {
       return { success: false, error: 'Unauthorized: Key not found', status: 401 };
     }
 
-    const client = keyData.clients;
-    const clientDetails = Array.isArray(client) ? client[0] : client;
+    const [clientData] = await db
+      .select({
+        id: clients.id,
+        name: clients.name,
+        is_active: clients.is_active,
+        client_type: clients.client_type,
+        
+        allowed_domains: clients.allowed_domains,
+        allowed_models: clients.allowed_models
+      })
+      .from(clients)
+      .where(eq(clients.id, keyData.client_id));
 
-    if (!keyData.is_active || !clientDetails?.is_active) {
-      return { success: false, error: 'Forbidden: Client or key is inactive', status: 403 };
+    if (!clientData || !clientData.is_active) {
+      return { success: false, error: 'Forbidden: Client is inactive or not found', status: 403 };
     }
 
-    return {
-      success: true,
-      client: {
-        id: clientDetails.id,
-        name: clientDetails.name,
-        environment: keyData.environment,
-        client_type: clientDetails.client_type,
-        allowed_domains: clientDetails.allowed_domains,
-        allowed_models: clientDetails.allowed_models
-      }
-    };
-
+    return { success: true, client: clientData };
   } catch (error) {
-    console.error('Unexpected error during authentication:', error);
-    return { success: false, error: 'Internal server error', status: 500 };
+    console.error('Auth Error:', error);
+    return { success: false, error: 'Internal Server Error', status: 500 };
   }
+}
+
+// 2. Express Sunucusunun Kullandığı Middleware
+export async function authMiddleware(req: Request, res: Response, next: NextFunction) {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Unauthorized: Missing or invalid token' });
+  }
+
+  const token = authHeader.split(' ')[1];
+  
+  // Üstteki verifyClient fonksiyonunu çağırıyoruz
+  const result = await verifyClient(token);
+
+  if (!result.success) {
+    return res.status(result.status || 401).json({ error: result.error });
+  }
+
+  // Müşteri bilgilerini request objesine ekleyip akışa devam et
+  req.client = result.client;
+  next();
 }

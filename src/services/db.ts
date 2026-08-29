@@ -1,10 +1,8 @@
-import { createClient } from '@supabase/supabase-js';
+// src/services/db.ts
+import { db } from '../db/index.js';
+import { clients, client_keys } from '../db/schema.js';
+import { eq } from 'drizzle-orm';
 import { generateProxyKey, hashApiKey } from '../utils/auth.js';
-
-const supabaseUrl = process.env.SUPABASE_URL || '';
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_KEY || '';
-
-export const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
 /**
  * Creates a new client and assigns a generated API key.
@@ -13,30 +11,31 @@ export const supabase = createClient(supabaseUrl, supabaseServiceKey);
  */
 export async function createNewClient(name: string, environment: string) {
   try {
-    const { data: clientData, error: clientError } = await supabase
-      .from('clients')
-      .insert([{ name: name }])
-      .select('id, name, is_active, client_type, allowed_domains, allowed_models')
-      .single();
+    // 1. Yeni Client'ı (Müşteriyi) veritabanına ekle
+    // Drizzle'ın .returning() özelliği sayesinde eklenen veriyi anında geri alırız
+    const [newClient] = await db.insert(clients)
+      .values({ 
+        name: name,
+        
+        client_type: 'server-based'
+      })
+      .returning({ id: clients.id });
 
-    if (clientError) throw new Error(`Error creating client: ${clientError.message}`);
-
+    // 2. Güvenli API Anahtarını üret
     const plainApiKey = generateProxyKey();
     const hashedKey = hashApiKey(plainApiKey);
 
-    const { error: keyError } = await supabase
-      .from('client_keys')
-      .insert([{
-        client_id: clientData.id,
+    // 3. Üretilen anahtarı veritabanına kaydet ve müşteriye bağla
+    await db.insert(client_keys)
+      .values({
+        client_id: newClient.id,
         key_hash: hashedKey,
         environment: environment
-      }]);
-
-    if (keyError) throw new Error(`Error adding key: ${keyError.message}`);
+      });
 
     return {
       success: true,
-      clientId: clientData.id,
+      clientId: newClient.id,
       plainApiKey: plainApiKey,
       message: "Client successfully created. Please save the API key now, it will not be shown again!"
     };

@@ -1,4 +1,6 @@
-import { supabase } from './db.js';
+import { db } from '../db/index.js';
+import { logs } from '../db/schema.js';
+import { eq } from 'drizzle-orm';
 import pricingData from '../model_pricing.json';
 
 type PricingMap = Record<string, { input: number; output: number }>;
@@ -9,19 +11,16 @@ const pricing: PricingMap = pricingData;
  */
 export async function logRequestStart(clientId: string, provider: string, model: string) {
   try {
-    const { data, error } = await supabase
-      .from('logs')
-      .insert([{
+    const [newLog] = await db.insert(logs)
+      .values({
         client_id: clientId,
         provider: provider,
         model: model,
         status: 'pending'
-      }])
-      .select('id')
-      .single();
+      })
+      .returning({ id: logs.id });
 
-    if (error) throw error;
-    return data.id; 
+    return newLog.id; 
   } catch (error) {
     console.error('Error starting log:', error);
     return null;
@@ -53,20 +52,17 @@ export async function logRequestComplete(
       totalCost = inputCost + outputCost;
     }
 
-    const { error } = await supabase
-      .from('logs')
-      .update({
+    await db.update(logs)
+      .set({
         status: isSuccess ? 'success' : 'error',
         input_tokens: inputTokens,
         output_tokens: outputTokens,
         cost: totalCost,
-        latency_ms: latencyMs,
-        completed_at: new Date().toISOString(),
+        latency_ms: latencyMs, // Gecikme süresi korunuyor
+        completed_at: new Date(), // Bitiş zamanı korunuyor
         error_message: error_message || null
       })
-      .eq('id', logId);
-
-    if (error) throw error;
+      .where(eq(logs.id, logId));
     
   } catch (error) {
     console.error('Error updating log:', error);

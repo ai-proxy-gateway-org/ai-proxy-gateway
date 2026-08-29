@@ -1,5 +1,6 @@
 import type { FastifyReply } from 'fastify';
 import { logRequestStart, logRequestComplete } from './logCapture.js';
+import { waitUntil } from '@vercel/functions';
 import { buildProviderTarget, prepareBodyForProvider, type ProviderName } from './providerConfig.js';
 
 interface ForwardOptions {
@@ -34,7 +35,16 @@ export async function forwardToProvider({ body, reply, clientId, provider, model
   // Bilerek await ETMİYORUZ — kayıt işlemi isteğin önüne geçmesin (düşük overhead).
   const pendingLog = logRequestStart(clientId, provider, model);
 
-  // Log'u kapatan tek nokta. Yine non-blocking: client'a dönen yanıtı geciktirmiyor.
+  // Log'u kapatan tek nokta. Yanıtı geciktirmiyor ama kaybolmuyor da.
+  //
+  // Önceden yalnızca `void` ile arkaya bırakılıyordu. Sürekli çalışan bir
+  // sunucuda bu doğru; sunucusuz ortamda değil — Vercel yanıt gönderildiği an
+  // fonksiyonu dondurabiliyor ve tamamlama yazımı hiç çalışmıyordu. Canlıda
+  // bazı kayıtlar `pending` olarak kalıyordu.
+  //
+  // waitUntil, yanıtı beklet MEDEN fonksiyonun kapanışını arkadaki iş bitene
+  // kadar erteliyor. Vercel dışında (yerelde) çağrı sessizce başarısız olur,
+  // orada zaten süreç kapanmadığı için `void` davranışı yeterli.
   const finishLog = (
     isSuccess: boolean,
     inputTokens: number | undefined,
@@ -42,7 +52,7 @@ export async function forwardToProvider({ body, reply, clientId, provider, model
     errorMessage?: string
   ) => {
     const latencyMs = Date.now() - startTime;
-    void pendingLog
+    const yazma = pendingLog
       .then((logId) => {
         if (!logId) return;
         return logRequestComplete(
@@ -59,6 +69,12 @@ export async function forwardToProvider({ body, reply, clientId, provider, model
       .catch(() => {
         // Loglama hiçbir koşulda asıl isteği etkilememeli.
       });
+
+    try {
+      waitUntil(yazma);
+    } catch {
+      // Vercel dışında çalışıyoruz; süreç kapanmadığı için ek bir şey gerekmiyor.
+    }
   };
 
   let response: Response;
@@ -70,9 +86,9 @@ export async function forwardToProvider({ body, reply, clientId, provider, model
       body: JSON.stringify(prepareBodyForProvider(provider, body))
     });
   } catch (err) {
-    const detail = err instanceof Error ? err.message : 'Bilinmeyen hata';
-    finishLog(false, undefined, undefined, `Sağlayıcıya ulaşılamadı: ${detail}`);
-    return reply.status(502).send({ error: 'Sağlayıcıya ulaşılamadı.' });
+    const detail = err instanceof Error ? err.message : 'unknown error';
+    finishLog(false, undefined, undefined, `Provider could not be reached: ${detail}`);
+    return reply.status(502).send({ error: 'Could not reach the provider.' });
   }
 
   const contentType = response.headers.get('content-type');
@@ -82,7 +98,7 @@ export async function forwardToProvider({ body, reply, clientId, provider, model
   // akış sanılarak client'a stream olarak geçer.
   if (!response.ok) {
     const rawBody = await response.text();
-    finishLog(false, undefined, undefined, `Sağlayıcı ${response.status} döndü.`);
+    finishLog(false, undefined, undefined, `Provider returned ${response.status}.`);
     reply.status(response.status);
     if (contentType) reply.header('content-type', contentType);
     return reply.send(rawBody);
@@ -123,7 +139,7 @@ export async function forwardToProvider({ body, reply, clientId, provider, model
 
   const reader = response.body?.getReader();
   if (!reader) {
-    finishLog(false, undefined, undefined, 'Sağlayıcıdan okunabilir bir gövde gelmedi.');
+    finishLog(false, undefined, undefined, 'The provider returned no readable body.');
     raw.end();
     return;
   }
@@ -186,15 +202,18 @@ export async function forwardToProvider({ body, reply, clientId, provider, model
     drainCompleteLines();
     if (lineBuffer.trim() !== '') readSseLine(lineBuffer.trim());
   } catch (err) {
-    streamError = err instanceof Error ? err.message : 'Akış beklenmedik şekilde koptu.';
+    streamError = err instanceof Error ? err.message : 'unknown error';
   }
 
   if (!clientGone && !raw.writableEnded) raw.end();
 
   if (clientGone) {
-    finishLog(false, inputTokens, outputTokens, 'Client bağlantıyı kapattı.');
+    finishLog(false, inputTokens, outputTokens, 'The client closed the connection.');
   } else if (streamError) {
-    finishLog(false, inputTokens, outputTokens, streamError);
+    // Ham çalışma zamanı metni tek başına anlamsız kalıyor ('terminated' gibi);
+    // neyin koptuğunu söyleyen bir bağlam ekliyoruz.
+    finishLog(false, inputTokens, outputTokens,
+      `The response stream failed: ${streamError}`);
   } else {
     finishLog(true, inputTokens, outputTokens);
   }

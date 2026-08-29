@@ -23,10 +23,10 @@ export async function geminiRoutes(server: FastifyInstance) {
     const modelParam = (request.params as { model: string }).model;
     const requestedModel = modelParam.split(':')[0];
     if (!requestedModel) {
-      return reply.status(400).send({ error: 'Model adı belirtilmedi.' });
+      return reply.status(400).send({ error: 'Model name is missing from the URL.' });
     }
 
-    const authorization = authorizeModel('gemini', requestedModel, allowedModels);
+    const authorization = await authorizeModel('gemini', requestedModel, allowedModels);
     if (!authorization.ok) {
       void logDeniedRequest(clientId, 'gemini', requestedModel, authorization.error);
       return reply.status(authorization.status).send({ error: authorization.error });

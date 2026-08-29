@@ -24,10 +24,10 @@ export async function anthropicRoutes(server: FastifyInstance) {
     const body = request.body as { model?: string } | undefined;
     const requestedModel = body?.model;
     if (!requestedModel) {
-      return reply.status(400).send({ error: "İstek gövdesinde 'model' alanı zorunludur." });
+      return reply.status(400).send({ error: "The 'model' field is required in the request body." });
     }
 
-    const authorization = authorizeModel('anthropic', requestedModel, allowedModels);
+    const authorization = await authorizeModel('anthropic', requestedModel, allowedModels);
     if (!authorization.ok) {
       void logDeniedRequest(clientId, 'anthropic', requestedModel, authorization.error);
       return reply.status(authorization.status).send({ error: authorization.error });

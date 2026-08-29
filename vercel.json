@@ -1,6 +1,15 @@
 {
   "framework": null,
   "rewrites": [
-    { "source": "/(.*)", "destination": "/api/index" }
+    {
+      "source": "/(.*)",
+      "destination": "/api/index"
+    }
+  ],
+  "crons": [
+    {
+      "path": "/admin/api/cron/prices",
+      "schedule": "0 3 * * *"
+    }
   ]
 }

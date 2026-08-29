@@ -1,8 +1,9 @@
 import { supabase } from './db.js';
-import pricingData from '../model_pricing.json' with { type: 'json' };
-
-type PricingMap = Record<string, { input: number; output: number }>;
-const pricing: PricingMap = pricingData;
+// Fiyatlar artık model_catalog tablosundan geliyor (A tarafı, modelCatalog.ts).
+// Önceden model_pricing.json doğrudan import ediliyordu; dosya dağıtım paketine
+// gömülü olduğu için panelden fiyat değiştirmek mümkün değildi. Dosya yedek
+// olarak duruyor, veritabanı okunamazsa modelCatalog ona düşüyor.
+import { priceFor } from '../core/modelCatalog.js';
 
 /**
  * Creates a 'pending' log entry when an AI request starts.
@@ -42,8 +43,7 @@ export async function logRequestComplete(
   error_message?: string
 ) {
   try {
-    const modelKey = `${provider}/${model}`;
-    const modelPricing = pricing[modelKey];
+    const modelPricing = await priceFor(provider, model);
     let totalCost = 0;
 
     // Token'lar null değilse maliyet hesapla
@@ -53,18 +53,34 @@ export async function logRequestComplete(
       totalCost = inputCost + outputCost;
     }
 
-    const { error } = await supabase
-      .from('logs')
-      .update({
-        status: isSuccess ? 'success' : 'error',
-        input_tokens: inputTokens,
-        output_tokens: outputTokens,
-        cost: totalCost,
-        latency_ms: latencyMs,
-        completed_at: new Date().toISOString(),
-        error_message: error_message || null
-      })
-      .eq('id', logId);
+    // Kullanılan birim fiyat da kayda giriyor.
+    //
+    // Sebep: model fiyatı sonradan değişince eski kayıtların maliyeti
+    // doğrulanamaz hale geliyordu. Panel bugünkü fiyatla yeniden hesaplayıp
+    // "uyuşmuyor" diyordu, oysa kayıt o günkü fiyata göre doğruydu.
+    // Fiyatı da saklayınca geçmiş her istek kesin olarak doğrulanabiliyor.
+    const alanlar: Record<string, unknown> = {
+      status: isSuccess ? 'success' : 'error',
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
+      cost: totalCost,
+      latency_ms: latencyMs,
+      completed_at: new Date().toISOString(),
+      error_message: error_message || null,
+      input_price_used: modelPricing?.input ?? null,
+      output_price_used: modelPricing?.output ?? null
+    };
+
+    let { error } = await supabase.from('logs').update(alanlar).eq('id', logId);
+
+    // Fiyat sütunları sonradan eklendi; göç çalıştırılmamış bir ortamda
+    // sorgu bu yüzden düşerse kaydı fiyatsız yazıyoruz — log kaybetmek,
+    // eksik alandan daha kötü.
+    if (error && /input_price_used|output_price_used|column/i.test(String(error.message))) {
+      delete alanlar.input_price_used;
+      delete alanlar.output_price_used;
+      ({ error } = await supabase.from('logs').update(alanlar).eq('id', logId));
+    }
 
     if (error) throw error;
     

@@ -2,12 +2,21 @@
 // wf-ortak §3: "Kontrolden geçen istekler, Provider Adapter katmanlarında ilgili
 // sağlayıcının gerçek API anahtarı eklenerek hedefe iletilir."
 //
-// Anahtar tanımlı değilse istek mock sunucuya gider; böylece gerçek anahtar olmadan
-// geliştirme ve test akışı bozulmaz.
+// Hedef adres varsayılan olarak sağlayıcının gerçek adresidir. Geliştirmede mock
+// sunucuya yönlendirmek için ilgili BASE_URL değişkeni açıkça verilir.
+//
+// Önceden tersi geçerliydi: değişken boşsa mock'a düşülüyordu. Yerelde kolaylık
+// sağlıyordu ama üretimde sessiz bir tuzak: Vercel'de localhost:4000 diye bir
+// sunucu yok, bütün istekler bağlantı hatasıyla düşerdi. Varsayılanın güvenli
+// tarafı, unutulduğunda çalışan taraf olmalı.
 
 export type ProviderName = 'openai' | 'gemini' | 'anthropic';
 
-const MOCK_BASE_URL = 'http://localhost:4000';
+const GERCEK_ADRESLER: Record<ProviderName, string> = {
+  openai: 'https://api.openai.com',
+  anthropic: 'https://api.anthropic.com',
+  gemini: 'https://generativelanguage.googleapis.com'
+};
 
 // Anthropic'in zorunlu tuttuğu API sürümü başlığı.
 const ANTHROPIC_VERSION = '2023-06-01';
@@ -20,9 +29,10 @@ function envOrUndefined(name: string): string | undefined {
 }
 
 function baseUrlFor(provider: ProviderName): string {
-  if (provider === 'openai') return envOrUndefined('OPENAI_BASE_URL') ?? MOCK_BASE_URL;
-  if (provider === 'gemini') return envOrUndefined('GEMINI_BASE_URL') ?? MOCK_BASE_URL;
-  return envOrUndefined('ANTHROPIC_BASE_URL') ?? MOCK_BASE_URL;
+  const degisken = provider === 'openai' ? 'OPENAI_BASE_URL'
+    : provider === 'gemini' ? 'GEMINI_BASE_URL'
+    : 'ANTHROPIC_BASE_URL';
+  return envOrUndefined(degisken) ?? GERCEK_ADRESLER[provider];
 }
 
 export interface ProviderTarget {

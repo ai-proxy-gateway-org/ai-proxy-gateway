@@ -11,6 +11,11 @@ import { STIL, YAZI_TIPI } from '../ui/stil.js';
 import { supabase, createNewClient } from '../services/db.js';
 import { generateProxyKey, hashApiKey } from '../utils/auth.js';
 import {
+  hesapOlustur, sifreDegistir, sifreKusuru,
+  girisDogrula, oturumdakiHesap, CEREZ_ADI
+} from '../core/kimlik.js';
+import { cerezYaz, cerezSil } from '../utils/hesap.js';
+import {
   kaynakFiyatlari, liteFiyatlari, kaynakDurumu, olasiKarsiliklar,
   ikiKaynaktanOku, fiyatlaYenidenEslestir, liteAdaylari
 } from '../core/priceSource.js';
@@ -31,16 +36,59 @@ function saglayiciRedMi(mesaj: string): boolean {
   return /Provider returned\s+\d{3}/.test(mesaj) || /Sağlayıcı\s+\d{3}/.test(mesaj);
 }
 
-function yoneticiMi(request: { headers: Record<string, unknown> }): boolean {
-  const beklenen = process.env.ADMIN_TOKEN?.trim();
-  if (!beklenen) return false;
-  const baslik = request.headers.authorization;
-  const gelen = typeof baslik === 'string' && baslik.startsWith('Bearer ')
-    ? baslik.slice(7).trim()
-    : '';
-  // Sabit zamanlı karşılaştırma gerekmiyor: token uzun ve rastgele, ayrıca
-  // bu uç dışarıya kapalı bir yönetim yüzeyi.
-  return gelen.length > 0 && gelen === beklenen;
+// Yöneticinin şifre uydurması zayıf ve tekrar eden şifreler demek; rastgele
+// üretip bir kez gösteriyoruz.
+function uretilmisSifre(): string {
+  const harfler = 'abcdefghijkmnopqrstuvwxyzACDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let s = '';
+  for (let i = 0; i < 16; i++) {
+    s += harfler[Math.floor(Math.random() * harfler.length)];
+  }
+  return s;
+}
+
+// Panele iki yolla girilebiliyor:
+//
+//   1. Oturum çerezi — admin_users tablosundaki bir hesapla giriş yapılmış
+//   2. ADMIN_TOKEN — tek paylaşılan jeton
+//
+// İkincisi acil durum kapısı olarak duruyor: ilk yönetici hesabı onunla
+// açılıyor ve hesaplarla ilgili bir sorun çıkarsa panele girilebiliyor.
+// Hesaplar yerleşince kaldırılacak — paylaşılan bir jetonda "kim ne yaptı"
+// sorusunun cevabı yok.
+type YoneticiKimligi = { yol: 'hesap'; id: string; email: string } | { yol: 'jeton' } | null;
+
+async function yoneticiKimligi(
+  request: { headers: Record<string, unknown> }
+): Promise<YoneticiKimligi> {
+  const hesap = await oturumdakiHesap('yonetici', request.headers.cookie as string | undefined);
+  if (hesap) return { yol: 'hesap', id: hesap.id, email: hesap.email };
+
+  const beklenen = process.env.ADMIN_TOKEN;
+  if (!beklenen || beklenen.trim() === '') return null;
+
+  const baslik = String(request.headers.authorization ?? '');
+  const jeton = baslik.startsWith('Bearer ') ? baslik.slice(7).trim() : '';
+  // Sabit zamanlı karşılaştırma gerekmiyor: jeton uzun ve rastgele.
+  return jeton === beklenen ? { yol: 'jeton' } : null;
+}
+
+// Paylaşılan jetonun yetkisi bilerek dar.
+//
+// Jeton acil durum kapısı: hesap tarafında bir sorun çıkarsa panele girilmeli.
+// Ama onunla her şeyin yapılabilmesi, "kim ne yaptı" sorusunu cevapsız bırakan
+// bir arka kapı demek — hesaplara geçmenin sebebi tam olarak buydu.
+//
+// Bu yüzden jeton yalnızca yönetici hesabı açmaya ve şifre sıfırlamaya yetiyor.
+// Fiyat değiştirme, müşteri silme, anahtar üretme gibi işler hesap oturumu
+// istiyor ve kimin yaptığı kayda geçebiliyor.
+async function yoneticiMi(request: { headers: Record<string, unknown> }): Promise<boolean> {
+  return (await yoneticiKimligi(request)) !== null;
+}
+
+async function hesapOturumuMu(request: { headers: Record<string, unknown> }): Promise<boolean> {
+  const k = await yoneticiKimligi(request);
+  return k?.yol === 'hesap';
 }
 
 const SAYFA = `<!doctype html>
@@ -65,6 +113,14 @@ ${YAZI_TIPI}
   .satirDugme:hover { background:var(--sunk); }
   .satirDugme.tehlike { color:var(--kirmizi); }
   td.islem { text-align:right; white-space:nowrap; }
+  .girisSekme { display:flex; gap:.3rem; background:var(--sunk); padding:.25rem;
+    border-radius:9px; margin:.6rem 0 1.1rem; }
+  .girisSekme button { flex:1; padding:.45rem .6rem; font:inherit; font-size:.86rem;
+    border:0; border-radius:7px; background:none; color:var(--ink-3); cursor:pointer; }
+  .girisSekme button.secili { background:var(--surface); color:var(--ink); font-weight:500;
+    box-shadow:0 1px 2px rgba(0,0,0,.06); }
+  .alanEtiket { display:block; font-size:.85rem; color:var(--ink-3); }
+  .alanEtiket input { margin-top:.35rem; }
 
   /* Model izin listesi: kutucuklar sığdıkça yan yana akıyor, uzun listede kaydırılıyor. */
   .secimKutu { display:flex; flex-wrap:wrap; gap:.45rem; max-height:14rem; overflow-y:auto;
@@ -113,6 +169,24 @@ ${YAZI_TIPI}
   .onek { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.78rem;
     background:var(--sunk); padding:.1rem .4rem; border-radius:4px; }
   .onek.soluk { color:var(--ink-3); }
+
+  /* Şifre kutusu.
+     .dogrula'yı kullanıyordu ama o flex ve dikey ortalıyor; alan sıkışıyordu.
+     Şifre yazarken hangi karakteri girdiğini görmek gerekiyor, o yüzden geniş
+     ve tek aralıklı yazı tipiyle. Renkler iki temada da açıkça veriliyor. */
+  .sifreKutu { display:block; margin-top:.8rem; padding:.9rem 1rem;
+    border:1px solid var(--sari); border-radius:9px; background:var(--sari-soft); }
+  .sifreKutu .sifreAlan { display:block; width:100%; margin-top:.5rem;
+    padding:.65rem .85rem; font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-size:1rem; letter-spacing:.02em;
+    border:1px solid var(--line-2); border-radius:8px;
+    background:var(--surface); color:var(--ink); }
+  .sifreKutu .sifreAlan::placeholder { color:var(--ink-3); font-family:inherit;
+    font-size:.9rem; letter-spacing:0; }
+  .sifreKutu .sifreAlan:focus { outline:none; border-color:var(--mavi); }
+  .sifreKutu .baslikkucuk { color:var(--ink); }
+  .sifreKutu .yardim { color:var(--ink-3); }
+  .sifreKutu .dugmeler { display:flex; gap:.6rem; margin-top:.8rem; }
   /* Ret mesajları tam gösteriliyor; hücreyi taşırmasın diye sarmalı. */
   .hataMetni { white-space:normal; text-align:left; line-height:1.45;
     max-width:32rem; display:inline-block; }
@@ -137,11 +211,31 @@ ${YAZI_TIPI}
     </div>
     <div class="kart">
       <div class="baslikkucuk">Admin Console</div>
-      <div class="yardim" style="margin:.35rem 0 .9rem">
-        Enter the administrator token to continue.
+
+      <div class="girisSekme" id="girisSekme">
+        <button data-yol="hesap" class="secili">Email</button>
+        <button data-yol="jeton">Token</button>
       </div>
-      <input id="jeton" type="password" placeholder="adm-..." autocomplete="off">
-      <button class="dugme koyu" id="btn" style="width:100%;margin-top:.7rem">Sign in</button>
+
+      <div id="yolHesap">
+        <label class="alanEtiket">Email
+          <input id="yEposta" type="email" placeholder="you@company.com" autocomplete="username">
+        </label>
+        <label class="alanEtiket" style="margin-top:.7rem">Password
+          <input id="ySifre" type="password" placeholder="••••••••••" autocomplete="current-password">
+        </label>
+        <button class="dugme koyu" id="btnHesap" style="width:100%;margin-top:.9rem">Sign in</button>
+      </div>
+
+      <div id="yolJeton" class="gizli">
+        <div class="yardim" style="margin:.35rem 0 .9rem">
+          The shared token still works. It is the way in if something goes wrong with
+          accounts — but it cannot tell who did what.
+        </div>
+        <input id="jeton" type="password" placeholder="adm-..." autocomplete="off">
+        <button class="dugme koyu" id="btn" style="width:100%;margin-top:.7rem">Sign in</button>
+      </div>
+
       <div class="uyari gizli" id="hata"></div>
     </div>
   </div>
@@ -173,6 +267,9 @@ ${YAZI_TIPI}
       <button data-bolum="istekler">
         <svg viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
         Requests</button>
+      <button data-bolum="yoneticiler">
+        <svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.4-2.9 8.4-7 9.6C7.9 19.4 5 15.4 5 11V6z"/><path d="M9 12l2 2 4-4"/></svg>
+        Administrators</button>
       <button data-bolum="fiyatlar">
         <svg viewBox="0 0 24 24"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
         Price audit</button>
@@ -211,6 +308,10 @@ ${YAZI_TIPI}
     </div>
 
     <div class="govde">
+      <div class="uyari gizli" id="jetonUyari">
+        Signed in with the shared token. Only administrator accounts can be managed here —
+        everything else needs an account, so the console can record who did what.
+      </div>
       <div class="uyari gizli" id="uyari"></div>
       <div class="yukleniyor gizli" id="yukleniyor">Loading...</div>
 
@@ -345,6 +446,28 @@ ${YAZI_TIPI}
         <div class="yardim" style="margin-top:.8rem" id="mAltNot"></div>
       </section>
 
+      <section data-bolum="yoneticiler" class="gizli">
+        <div class="kart" style="max-width:52rem">
+          <div class="baslikkucuk">Administrator accounts</div>
+          <div class="yardim" style="margin:.35rem 0 1.1rem">
+            Everyone here can sign in with their own email and password, so the console
+            can tell who did what. The shared token still opens this page — but nothing
+            else — as a way back in if accounts break.
+          </div>
+          <div id="yonListe"><div class="yardim">Loading...</div></div>
+          <div class="formSatir" style="margin-top:1.1rem;grid-template-columns:1fr 1fr auto">
+            <input id="yonEposta" placeholder="you@company.com">
+            <input id="yonSifre" type="text" placeholder="password (optional)">
+            <button class="dugme koyu" id="yonEkle">Add administrator</button>
+          </div>
+          <div class="yardim" style="margin-top:.4rem">
+            Leave the password empty and one is generated for you. Either way it is
+            shown once.
+          </div>
+          <div class="uyari gizli" id="yonHata"></div>
+        </div>
+      </section>
+
       <section data-bolum="fiyatlar" class="gizli">
         <div class="kart" id="fKaynak" style="margin-bottom:1.25rem"></div>
 
@@ -471,9 +594,19 @@ ${YAZI_TIPI}
     { day:'numeric', month:'short', year:'numeric' }) : '—';
 
   async function api(yol, secenek) {
-    const c = await fetch('/admin/api' + yol, Object.assign({
-      headers: { 'content-type':'application/json', authorization:'Bearer ' + jeton }
-    }, secenek || {}));
+    // Hesapla girildiyse jeton yok; kimlik çerezle taşınıyor.
+    const bas = { 'content-type': 'application/json' };
+    if (jeton) bas.authorization = 'Bearer ' + jeton;
+    const c = await fetch('/admin/api' + yol, Object.assign({ headers: bas }, secenek || {}));
+
+    // Oturum düştüyse ekranda "Unauthorized" bırakmak yerine giriş ekranına
+    // dönüyoruz. En sık sebebi kendi şifreni sıfırlaman: şifre değişince
+    // bütün oturumlar düşüyor, kendi oturumun dahil.
+    if (c.status === 401) {
+      oturumBitti();
+      throw new Error('Your session ended. Sign in again.');
+    }
+
     if (!c.ok) {
       const v = await c.json().catch(() => ({}));
       throw new Error(v.error || 'Request failed');
@@ -522,7 +655,8 @@ ${YAZI_TIPI}
     modeller:   ['Models',    'Model catalog and pricing'],
     musteriler: ['Customers', 'Accounts, keys and model access'],
     istekler:   ['Requests',  'All requests across customers'],
-    fiyatlar:   ['Price audit', 'Stored prices checked against a live source']
+    fiyatlar:     ['Price audit', 'Stored prices checked against a live source'],
+    yoneticiler:  ['Administrators', 'Who can sign in to this console']
   };
   let bolum = 'ozet';
 
@@ -542,6 +676,7 @@ ${YAZI_TIPI}
     if (yeni === 'musteriler') musteriYukle();
     if (yeni === 'ozet') ozetYukle();
     if (yeni === 'fiyatlar') fiyatYukle();
+    if (yeni === 'yoneticiler') yoneticileriYukle();
     // Models de her girişte tazeleniyor. Bellekte tutulsaydı, fiyat denetimi
     // ekranından yapılan bir değişiklikten sonra burada eski değer kalırdı.
     if (yeni === 'modeller' && modeller.length) yukle();
@@ -771,7 +906,7 @@ ${YAZI_TIPI}
 
 
   // ---------------- müşteriler ----------------
-  let musterilerListe = [], acikMusteri = null;
+  let musterilerListe = [], acikMusteri = null, sonKullanicilar = [];
 
   function modelSecimKutusu(kapsayici, secili) {
     const aktif = modeller.filter(m => m.is_active);
@@ -820,7 +955,7 @@ ${YAZI_TIPI}
     }
     $('mBos').classList.add('gizli');
     $('mTablo').innerHTML =
-      '<thead><tr><th>Customer</th><th>Type</th><th>Models</th><th>Keys</th>' +
+      '<thead><tr><th>Customer</th><th>Type</th><th>Access</th><th>Keys</th>' +
       '<th class="sayi">Requests</th><th>Last seen</th><th>Status</th></tr></thead><tbody>' +
       gorunen.map((m) => {
         const i = musterilerListe.indexOf(m);
@@ -829,9 +964,12 @@ ${YAZI_TIPI}
         return '<tr class="tiklanir" data-i="' + i + '">' +
           '<td>' + kacir(m.name) + '</td>' +
           '<td>' + (m.client_type === 'browser-based' ? 'Browser' : 'Server') + '</td>' +
-          '<td>' + (izin
-            ? izin + ' allowed'
-            : '<span class="hap bek">none</span>') + '</td>' +
+          '<td>' + (m.max_output_price
+            ? '≤ $' + (m.max_output_price * 1000).toFixed(2) + '/1M' +
+              (izin ? ' <span class="yardim">+' + izin + '</span>' : '')
+            : izin
+              ? izin + ' allowed'
+              : '<span class="hap bek">none</span>') + '</td>' +
           '<td>' + (canli
             ? canli + ' active'
             : '<span class="hap">no key</span>') + '</td>' +
@@ -994,9 +1132,21 @@ ${YAZI_TIPI}
         ? '<span class="hap ok">active</span>'
         : '<span class="hap">suspended</span>') + '</dd></dl>' +
 
-      '<div class="bolumBaslik">Allowed models</div>' +
+      '<div class="bolumBaslik">Price limit</div>' +
       '<div class="yardim" style="margin-bottom:.7rem">' +
-      'Requests to any other model are rejected with 403.</div>' +
+      'Any model at or below this output price is usable without approval — including ' +
+      'models added later. Leave empty to require the list below for everything.</div>' +
+      '<div class="formSatir" style="grid-template-columns:1fr 2fr">' +
+      '<label>Max output price<input id="ypTavan" type="number" step="0.01" min="0" ' +
+      'placeholder="15.00" value="' +
+      (m.max_output_price ? (m.max_output_price * 1000).toFixed(2) : '') + '"></label>' +
+      '<div class="yardim" style="align-self:end;padding-bottom:.55rem">$ per 1M output tokens</div>' +
+      '</div>' +
+
+      '<div class="bolumBaslik" style="margin-top:1.5rem">Always allowed</div>' +
+      '<div class="yardim" style="margin-bottom:.7rem">' +
+      'Exceptions — these work even above the price limit. Anything not listed and above ' +
+      'the limit is rejected with 403.</div>' +
       '<div id="ypModeller" class="secimKutu"></div>' +
 
       '<div class="bolumBaslik" style="margin-top:1.5rem">Allowed domains</div>' +
@@ -1021,6 +1171,21 @@ ${YAZI_TIPI}
         : '') +
       '<div class="uyari gizli" id="ypHata"></div>' +
 
+      '<div class="bolumBaslik" style="margin-top:1.8rem">Users</div>' +
+      '<div class="yardim" style="margin-bottom:.7rem">' +
+      'People who sign in to the portal for this customer. The portal shows company-wide ' +
+      'usage to everyone; roles only limit what they can change.</div>' +
+      '<div id="ypKullanicilar"><div class="yardim">Loading...</div></div>' +
+      '<div class="formSatir" style="margin-top:.9rem;grid-template-columns:1.4fr 1.4fr auto auto">' +
+      '<input id="ypYeniEposta" placeholder="person@company.com">' +
+      '<input id="ypYeniSifre" type="text" placeholder="password (optional)">' +
+      '<select id="ypYeniRol"><option value="member">Member</option>' +
+      '<option value="owner">Owner</option></select>' +
+      '<button class="dugme cerceveli" id="ypKullaniciEkle">Add</button></div>' +
+      '<div class="yardim" style="margin-top:.4rem">' +
+      'Leave the password empty and one is generated for you. Either way it is shown ' +
+      'once. There is no email reset yet — if they forget it, reset it here.</div>' +
+
       '<div class="bolumBaslik" style="margin-top:1.8rem">Keys</div>' +
       '<div class="hesap" id="ypAnahtarlar">' +
       ((m.anahtarlar || []).length
@@ -1029,9 +1194,13 @@ ${YAZI_TIPI}
             (a.key_prefix
               ? '<code class="onek">' + kacir(a.key_prefix) + '…</code> '
               : '<code class="onek soluk">unknown</code> ') +
+            (a.label ? '<b>' + kacir(a.label) + '</b> · ' : '') +
             a.environment + ' · ' +
             new Date(a.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) +
-            '</span><span>' + (a.is_active
+            (a.user_id ? ' · <span class="hap ok">owned</span>' : ' · <span class="hap">shared</span>') +
+            '</span><span>' +
+            '<button class="satirDugme" data-anahtar-duzen="' + a.id + '">Edit</button>' +
+            (a.is_active
               ? '<button class="satirDugme tehlike" data-anahtar="' + a.id + '">Revoke</button>'
               : '<span class="hap">revoked</span>') + '</span></div>').join('')
         : '<div class="sat"><span>No key issued yet</span><span></span></div>') +
@@ -1043,13 +1212,41 @@ ${YAZI_TIPI}
 
     modelSecimKutusu($('ypModeller'), m.allowed_models || []);
     panelAc();
+    kullanicilariYukle(m.id);
+
+    $('ypKullaniciEkle').addEventListener('click', async () => {
+      const e = $('ypYeniEposta').value.trim();
+      if (!e) return;
+      $('ypKullaniciEkle').disabled = true;
+      try {
+        const v = await api('/customers/' + m.id + '/users', {
+          method: 'POST',
+          body: JSON.stringify({
+            email: e,
+            role: $('ypYeniRol').value,
+            // Boş bırakılırsa sunucu üretiyor. Yöneticinin şifre uydurması
+            // zayıf ve tekrar eden şifreler demek, o yüzden varsayılan üretim.
+            password: $('ypYeniSifre').value
+          })
+        });
+        $('ypYeniEposta').value = ''; $('ypYeniSifre').value = '';
+        await kullanicilariYukle(m.id);
+        // Şifre yalnızca burada görünüyor; veritabanında karması duruyor.
+        sifreGoster(v.kullanici.email, v.sifre, 'Account created');
+      } catch (err) {
+        $('ypHata').textContent = err.message; $('ypHata').classList.remove('gizli');
+      } finally { $('ypKullaniciEkle').disabled = false; }
+    });
 
     $('ypKaydet').addEventListener('click', async () => {
       $('ypHata').classList.add('gizli'); $('ypKaydet').disabled = true;
       try {
+        // Panelde 1M başına giriliyor, veritabanında 1K başına saklanıyor.
+        const tavanMetin = $('ypTavan').value.trim();
         await api('/customers/' + m.id, { method: 'PATCH', body: JSON.stringify({
           allowed_models: secilenModeller($('ypModeller')),
-          allowed_domains: $('ypAlan').value.split(',').map(x => x.trim()).filter(Boolean)
+          allowed_domains: $('ypAlan').value.split(',').map(x => x.trim()).filter(Boolean),
+          max_output_price: tavanMetin === '' ? null : Number(tavanMetin) / 1000
         })});
         await musteriYukle();
         detayKapat();
@@ -1096,7 +1293,52 @@ ${YAZI_TIPI}
       }
     });
 
+    // Anahtara ad ve sahip atama.
+    //
+    // Ad olmadan kırılım anlaşılmıyor: portalda "sk-proxy-91c…" yerine
+    // "ayselin-dev" görünmesi gerekiyor. Sahip ise harcamanın kime ait
+    // sayılacağını belirliyor; boş bırakılırsa ortak servis anahtarı oluyor.
     $('ypAnahtarlar').addEventListener('click', async (e) => {
+      const duzen = e.target.closest('[data-anahtar-duzen]');
+      if (duzen) {
+        const a = (m.anahtarlar || []).find(x => x.id === duzen.dataset.anahtarDuzen);
+        if (!a) return;
+        const kullanicilar = sonKullanicilar || [];
+        const secenekler = ['<option value="">Shared — no owner</option>']
+          .concat(kullanicilar.map(u =>
+            '<option value="' + u.id + '"' + (a.user_id === u.id ? ' selected' : '') + '>' +
+            kacir(u.email) + '</option>')).join('');
+
+        const kutu = document.createElement('div');
+        kutu.className = 'dogrula bek';
+        kutu.style.marginTop = '.7rem';
+        kutu.innerHTML =
+          '<div class="formSatir" style="grid-template-columns:1fr 1fr">' +
+          '<label>Name<input id="akAd" value="' + kacir(a.label || '') + '" placeholder="ayselin-dev"></label>' +
+          '<label>Owner<select id="akSahip">' + secenekler + '</select></label></div>' +
+          '<div style="display:flex;gap:.6rem;margin-top:.8rem">' +
+          '<button class="dugme koyu" id="akKaydet">Save</button>' +
+          '<button class="dugme cerceveli" id="akIptal">Cancel</button></div>';
+        duzen.closest('.sat').after(kutu);
+        duzen.disabled = true;
+
+        $('akIptal').onclick = () => { kutu.remove(); duzen.disabled = false; };
+        $('akKaydet').onclick = async () => {
+          try {
+            await api('/keys/' + a.id + '/owner', {
+              method: 'PATCH',
+              body: JSON.stringify({ label: $('akAd').value, user_id: $('akSahip').value || null })
+            });
+            await musteriYukle();
+            const yeni = musterilerListe.find(x => x.id === m.id);
+            if (yeni) musteriAc(yeni);
+          } catch (err) {
+            $('ypHata').textContent = err.message; $('ypHata').classList.remove('gizli');
+          }
+        };
+        return;
+      }
+
       const d = e.target.closest('[data-anahtar]'); if (!d) return;
       if (!confirm('Revoke this key? Requests using it will be rejected.')) return;
       try {
@@ -1532,6 +1774,163 @@ ${YAZI_TIPI}
         '<td>' + kacir(x.aciklama || '') + '</td></tr>').join('') + '</tbody>';
   }
 
+  // Müşterinin portal kullanıcıları.
+  async function kullanicilariYukle(clientId) {
+    const kutu = $('ypKullanicilar');
+    if (!kutu) return;
+    try {
+      const v = await api('/customers/' + clientId + '/users');
+      const liste = v.kullanicilar || [];
+      // Anahtar sahibi seçiminde aynı liste kullanılıyor.
+      sonKullanicilar = liste;
+      kutu.innerHTML = liste.length
+        ? '<div class="hesap">' + liste.map(u =>
+            '<div class="sat"><span>' + kacir(u.email) +
+            (u.role === 'owner' ? ' <span class="hap ok">owner</span>' : '') +
+            '<br><span class="yardim">' +
+            (u.last_login_at
+              ? 'last signed in ' + gunTarih(u.last_login_at)
+              : 'never signed in') + '</span></span>' +
+            '<span><button class="satirDugme" data-kul-eposta="' + u.id + '">Change email</button>' +
+            '<button class="satirDugme" data-kul-sifre="' + u.id + '">Reset password</button>' +
+            '<button class="satirDugme tehlike" data-kul-sil="' + u.id + '">Remove</button></span></div>'
+          ).join('') + '</div>'
+        : '<div class="yardim">No portal accounts yet. This customer can still use the API key.</div>';
+
+      kutu.onclick = async (e) => {
+        const eposta = e.target.closest('[data-kul-eposta]');
+        const sifirla = e.target.closest('[data-kul-sifre]');
+        const sil = e.target.closest('[data-kul-sil]');
+        if (eposta) {
+          const u = liste.find(x => x.id === eposta.dataset.kulEposta);
+          epostaKutusuAc(eposta, u ? u.email : '', async (yeniEposta) => {
+            await api('/users/' + eposta.dataset.kulEposta, {
+              method: 'PATCH', body: JSON.stringify({ email: yeniEposta })
+            });
+            await kullanicilariYukle(clientId);
+          });
+          return;
+        }
+        if (sifirla) {
+          sifreSifirlamaAc(sifirla, async (yeni) => {
+            const v2 = await api('/users/' + sifirla.dataset.kulSifre, {
+              method: 'PATCH', body: JSON.stringify({ password: yeni })
+            });
+            sifreGoster('', v2.sifre, 'Password reset');
+            await kullanicilariYukle(clientId);
+          });
+        }
+        if (sil) {
+          if (!confirm('Remove this account? Keys they own stay active and become shared.')) return;
+          await api('/users/' + sil.dataset.kulSil, { method: 'DELETE' });
+          await kullanicilariYukle(clientId);
+        }
+      };
+    } catch (e) {
+      kutu.innerHTML = '<div class="uyari">' + kacir(e.message) + '</div>';
+    }
+  }
+
+  // E-posta değiştirme kutusu. Adres giriş kimliği olduğu için değiştirmek
+  // girişi de değiştiriyor — kutu bunu söylüyor.
+  function epostaKutusuAc(dugme, mevcut, uygula) {
+    document.querySelectorAll('.sifreKutu').forEach(x => x.remove());
+
+    const kutu = document.createElement('div');
+    kutu.className = 'sifreKutu';
+    kutu.innerHTML =
+      '<div class="baslikkucuk" style="font-size:.85rem">Email address</div>' +
+      '<input id="epYeni" class="sifreAlan" type="email" spellcheck="false" ' +
+      'autocapitalize="off" autocorrect="off" value="' + kacir(mevcut) + '">' +
+      '<div class="yardim" style="margin-top:.5rem">' +
+      'This is what they sign in with. The password stays the same.</div>' +
+      '<div class="dugmeler">' +
+      '<button class="dugme koyu" id="epKaydet">Save</button>' +
+      '<button class="dugme cerceveli" id="epIptal">Cancel</button></div>';
+
+    const satir = dugme.closest('.sat') || dugme.parentNode;
+    satir.after(kutu);
+    dugme.disabled = true;
+    $('epYeni').focus();
+
+    const kapat = () => { kutu.remove(); dugme.disabled = false; };
+    $('epIptal').onclick = kapat;
+    $('epKaydet').onclick = async () => {
+      $('epKaydet').disabled = true;
+      try { await uygula($('epYeni').value); } catch (err) {
+        kutu.insertAdjacentHTML('beforeend',
+          '<div class="uyari" style="margin-top:.6rem">' + kacir(err.message) + '</div>');
+        $('epKaydet').disabled = false;
+        return;
+      }
+      kapat();
+    };
+    $('epYeni').onkeydown = (e) => { if (e.key === 'Enter') $('epKaydet').click(); };
+  }
+
+  // Şifre sıfırlama kutusu.
+  //
+  // Eskiden düğme doğrudan rastgele bir şifre üretiyordu. Yönetici bazen
+  // kendi belirlediği bir şifreyi vermek istiyor (telefonda okumak,
+  // müşterinin hazırladığı bir şifreyi kullanmak gibi), o yüzden alan açık —
+  // ama boş bırakılırsa yine üretiliyor, çünkü elle uydurulan şifreler zayıf
+  // ve tekrar eden oluyor.
+  function sifreSifirlamaAc(dugme, uygula) {
+    // Aynı anda birden çok kutu açılmasın.
+    document.querySelectorAll('.sifreKutu').forEach(x => x.remove());
+
+    const kutu = document.createElement('div');
+    kutu.className = 'sifreKutu';
+    kutu.innerHTML =
+      '<div class="baslikkucuk" style="font-size:.85rem">New password</div>' +
+      '<input id="sfYeni" class="sifreAlan" type="text" spellcheck="false" ' +
+      'autocapitalize="off" autocorrect="off" autocomplete="off" ' +
+      'placeholder="leave empty to generate one">' +
+      '<div class="yardim" style="margin-top:.5rem">' +
+      'At least 10 characters. Shown as you type so you can read it out. ' +
+      'The current password stops working immediately and all their open sessions ' +
+      'are signed out.</div>' +
+      '<div class="dugmeler">' +
+      '<button class="dugme koyu" id="sfKaydet">Set password</button>' +
+      '<button class="dugme cerceveli" id="sfIptal">Cancel</button></div>';
+
+    const satir = dugme.closest('.sat') || dugme.parentNode;
+    satir.after(kutu);
+    dugme.disabled = true;
+    $('sfYeni').focus();
+
+    const kapat = () => { kutu.remove(); dugme.disabled = false; };
+    $('sfIptal').onclick = kapat;
+    $('sfKaydet').onclick = async () => {
+      $('sfKaydet').disabled = true;
+      try {
+        await uygula($('sfYeni').value);
+      } catch (e) {
+        kutu.insertAdjacentHTML('beforeend',
+          '<div class="uyari" style="margin-top:.6rem">' + kacir(e.message) + '</div>');
+        $('sfKaydet').disabled = false;
+        return;
+      }
+      kapat();
+    };
+    $('sfYeni').onkeydown = (e) => { if (e.key === 'Enter') $('sfKaydet').click(); };
+  }
+
+  // Üretilen şifre bir kez gösteriliyor; saklanmıyor.
+  function sifreGoster(eposta, sifre, baslik) {
+    const kutu = $('ypKullanicilar');
+    if (!kutu) return;
+    const alan = document.createElement('div');
+    alan.className = 'sifreKutu';
+    alan.innerHTML =
+      '<div class="baslikkucuk" style="font-size:.85rem">' + baslik +
+      (eposta ? ' — ' + kacir(eposta) : '') + '</div>' +
+      '<div class="anahtarKutu" style="margin-top:.6rem"><code>' + kacir(sifre) + '</code></div>' +
+      '<div class="yardim" style="margin-top:.5rem">' +
+      'Shown once. Send it to them over a channel you trust.</div>';
+    kutu.parentNode.insertBefore(alan, kutu.nextSibling);
+  }
+
   // Kırılan eşleştirmeleri fiyat sürekliliğiyle onarır.
   async function fYenidenEslestir() {
     const d = $('fRematch');
@@ -1605,6 +2004,122 @@ ${YAZI_TIPI}
       $('yukleniyor').classList.add('gizli');
     }
   }
+
+  // ---------------- yönetici hesapları ----------------
+  //
+  // Jetonla girilmişse yalnızca bu ekran çalışıyor: paylaşılan jeton acil
+  // durum kapısı, arkasından her şeyin yapılabilmesi "kim ne yaptı" sorusunu
+  // cevapsız bırakırdı.
+  let girisYolu = 'hesap';
+
+  function jetonKisitiUygula() {
+    const jetonla = girisYolu === 'jeton';
+    document.querySelectorAll('#menu button[data-bolum]').forEach(b => {
+      const izinli = !jetonla || b.dataset.bolum === 'yoneticiler';
+      b.disabled = !izinli;
+      b.style.opacity = izinli ? '' : '.4';
+    });
+    $('jetonUyari').classList.toggle('gizli', !jetonla);
+    if (jetonla) bolumGoster('yoneticiler');
+  }
+
+  // Oturum düştüğünde giriş ekranına dön ve sebebini söyle.
+  function oturumBitti(mesaj) {
+    jeton = null; modeller = [];
+    try { localStorage.removeItem(DEPO); } catch (e) {}
+    $('uygulama').classList.add('gizli');
+    $('girisEkran').classList.remove('gizli');
+    $('hata').textContent = mesaj ||
+      'Your session ended — this happens right after your own password is reset. ' +
+      'Sign in with the new one.';
+    $('hata').classList.remove('gizli');
+  }
+
+  async function yoneticileriYukle() {
+    const kutu = $('yonListe');
+    $('yonHata').classList.add('gizli');
+    try {
+      const v = await api('/admins');
+      const liste = v.yoneticiler || [];
+      kutu.innerHTML = liste.length
+        ? '<div class="hesap">' + liste.map(y =>
+            '<div class="sat"><span>' + kacir(y.email) +
+            '<br><span class="yardim">' +
+            (y.last_login_at ? 'last signed in ' + gunTarih(y.last_login_at) : 'never signed in') +
+            '</span></span><span>' +
+            '<button class="satirDugme" data-yon-eposta="' + y.id + '">Change email</button>' +
+            '<button class="satirDugme" data-yon-sifre="' + y.id + '">Reset password</button>' +
+            (liste.length > 1
+              ? '<button class="satirDugme tehlike" data-yon-sil="' + y.id + '">Remove</button>'
+              : '') +
+            '</span></div>').join('') + '</div>'
+        : '<div class="yardim">No administrator accounts yet. Add one — the shared token ' +
+          'is meant to be a fallback, not the way in.</div>';
+
+      kutu.onclick = async (e) => {
+        const eps = e.target.closest('[data-yon-eposta]');
+        const sif = e.target.closest('[data-yon-sifre]');
+        const sil = e.target.closest('[data-yon-sil]');
+        try {
+          if (eps) {
+            const y = liste.find(x => x.id === eps.dataset.yonEposta);
+            epostaKutusuAc(eps, y ? y.email : '', async (yeniEposta) => {
+              await api('/admins/' + eps.dataset.yonEposta, {
+                method: 'PATCH', body: JSON.stringify({ email: yeniEposta })
+              });
+              await yoneticileriYukle();
+            });
+          }
+          if (sif) {
+            sifreSifirlamaAc(sif, async (yeni) => {
+              const v2 = await api('/admins/' + sif.dataset.yonSifre, {
+                method: 'PATCH', body: JSON.stringify({ password: yeni })
+              });
+              await yoneticileriYukle();
+              yonSifreGoster('Password reset', v2.sifre);
+            });
+          }
+          if (sil) {
+            if (!confirm('Remove this administrator?')) return;
+            await api('/admins/' + sil.dataset.yonSil, { method: 'DELETE' });
+            await yoneticileriYukle();
+          }
+        } catch (err) {
+          $('yonHata').textContent = err.message;
+          $('yonHata').classList.remove('gizli');
+        }
+      };
+    } catch (e) {
+      kutu.innerHTML = '<div class="uyari">' + kacir(e.message) + '</div>';
+    }
+  }
+
+  function yonSifreGoster(baslik, sifre) {
+    const alan = document.createElement('div');
+    alan.className = 'sifreKutu';
+    alan.innerHTML = '<div class="baslikkucuk" style="font-size:.85rem">' + baslik + '</div>' +
+      '<div class="anahtarKutu" style="margin-top:.6rem"><code>' + kacir(sifre) + '</code></div>' +
+      '<div class="yardim" style="margin-top:.5rem">Shown once — copy it now.</div>';
+    $('yonListe').parentNode.insertBefore(alan, $('yonListe').nextSibling);
+  }
+
+  $('yonEkle').addEventListener('click', async () => {
+    const e = $('yonEposta').value.trim();
+    if (!e) return;
+    $('yonEkle').disabled = true; $('yonHata').classList.add('gizli');
+    try {
+      const v = await api('/admins', {
+        method: 'POST',
+        body: JSON.stringify({ email: e, password: $('yonSifre').value })
+      });
+      $('yonEposta').value = ''; $('yonSifre').value = '';
+      await yoneticileriYukle();
+      yonSifreGoster('Administrator added — ' + v.yonetici.email, v.sifre);
+    } catch (err) {
+      $('yonHata').textContent = err.message;
+      $('yonHata').classList.remove('gizli');
+    } finally { $('yonEkle').disabled = false; }
+  });
 
   async function yukle() {
     $('uyari').classList.add('gizli');
@@ -1691,10 +2206,8 @@ ${YAZI_TIPI}
       try { localStorage.setItem(DEPO, JSON.stringify({ a: d, t: Date.now() })); } catch (e) {}
       $('girisEkran').classList.add('gizli');
       $('uygulama').classList.remove('gizli');
-      // Model listesi Customers ekranındaki izin kutucukları için de gerekli,
-      // o yüzden bölümden bağımsız olarak baştan yükleniyor.
-      await yukle();
-      bolumGoster(bolum);
+      girisYolu = 'jeton';
+      jetonKisitiUygula();
     } catch (e) {
       jeton = null;
       try { localStorage.removeItem(DEPO); } catch (err) {}
@@ -1704,6 +2217,49 @@ ${YAZI_TIPI}
       }
     } finally { $('btn').disabled = false; }
   }
+
+  async function hesapGirisi() {
+    const e = $('yEposta').value.trim(), sf = $('ySifre').value;
+    if (!e || !sf) return;
+    $('btnHesap').disabled = true; $('hata').classList.add('gizli');
+    try {
+      const c = await fetch('/admin/api/session', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: e, password: sf })
+      });
+      const v = await c.json();
+      if (!c.ok) {
+        $('hata').textContent = v.error || 'Sign-in failed.';
+        $('hata').classList.remove('gizli');
+        return;
+      }
+      jeton = null;
+      try { localStorage.removeItem(DEPO); } catch (err) {}
+      $('ySifre').value = '';
+      $('girisEkran').classList.add('gizli');
+      $('uygulama').classList.remove('gizli');
+      girisYolu = 'hesap';
+      jetonKisitiUygula();
+      // Model listesi Customers ekranındaki izin kutucukları için de gerekli.
+      await yukle();
+      bolumGoster(bolum);
+    } catch (err) {
+      $('hata').textContent = 'Could not reach the server.';
+      $('hata').classList.remove('gizli');
+    } finally { $('btnHesap').disabled = false; }
+  }
+
+  $('girisSekme').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    [...$('girisSekme').children].forEach(x => x.classList.toggle('secili', x === b));
+    $('yolHesap').classList.toggle('gizli', b.dataset.yol !== 'hesap');
+    $('yolJeton').classList.toggle('gizli', b.dataset.yol !== 'jeton');
+    $('hata').classList.add('gizli');
+  });
+
+  $('btnHesap').addEventListener('click', hesapGirisi);
+  $('yEposta').addEventListener('keydown', e => { if (e.key === 'Enter') $('ySifre').focus(); });
+  $('ySifre').addEventListener('keydown', e => { if (e.key === 'Enter') hesapGirisi(); });
 
   $('btn').addEventListener('click', () => girisYap());
   $('jeton').addEventListener('keydown', e => { if (e.key === 'Enter') girisYap(); });
@@ -1743,19 +2299,39 @@ ${YAZI_TIPI}
 
   $('tema').addEventListener('click', temaDegistir);
   $('temaKose').addEventListener('click', temaDegistir);
-  $('cikis').addEventListener('click', () => {
-    jeton = null; $('jeton').value = ''; modeller = [];
+  $('cikis').addEventListener('click', async () => {
+    try { await fetch('/admin/api/session', { method: 'DELETE' }); } catch (e) {}
+    jeton = null; $('jeton').value = ''; $('ySifre').value = ''; modeller = [];
     try { localStorage.removeItem(DEPO); } catch (e) {}
     $('uygulama').classList.add('gizli'); $('girisEkran').classList.remove('gizli');
   });
 
   try {
-    const ham = localStorage.getItem(DEPO);
-    if (ham) {
+    // Önce oturum çerezi: hesapla girilmişse jeton saklamaya gerek yok.
+    (async () => {
+      try {
+        const c = await fetch('/admin/api/me');
+        if (c.ok) {
+          const v = await c.json();
+          // Jetonla girilmişse çerez yok; saklanan jetona düşülüyor.
+          if (v.yol === 'hesap') {
+            $('girisEkran').classList.add('gizli');
+            $('uygulama').classList.remove('gizli');
+            girisYolu = 'hesap';
+            jetonKisitiUygula();
+            await yukle();
+            bolumGoster(bolum);
+            return;
+          }
+        }
+      } catch (e) { /* sunucuya ulaşılamadıysa jeton yoluna düş */ }
+
+      const ham = localStorage.getItem(DEPO);
+      if (!ham) return;
       const { a, t } = JSON.parse(ham);
       if (a && t && Date.now() - t < 12 * 60 * 60 * 1000) girisYap(a);
       else localStorage.removeItem(DEPO);
-    }
+    })();
   } catch (e) {}
 </script>
 </body>
@@ -1768,7 +2344,7 @@ export async function adminRoutes(server: FastifyInstance) {
   });
 
   server.get('/admin/api/models', async (request, reply) => {
-    if (!yoneticiMi(request as never)) {
+    if (!(await hesapOturumuMu(request as never))) {
       return reply.status(401).send({ error: 'Unauthorized.' });
     }
     const { data, error } = await supabase
@@ -1802,7 +2378,7 @@ export async function adminRoutes(server: FastifyInstance) {
   }
 
   server.post('/admin/api/models', async (request, reply) => {
-    if (!yoneticiMi(request as never)) {
+    if (!(await hesapOturumuMu(request as never))) {
       return reply.status(401).send({ error: 'Unauthorized.' });
     }
     const g = request.body as {
@@ -1843,7 +2419,7 @@ export async function adminRoutes(server: FastifyInstance) {
   });
 
   server.patch('/admin/api/models/:id', async (request, reply) => {
-    if (!yoneticiMi(request as never)) {
+    if (!(await hesapOturumuMu(request as never))) {
       return reply.status(401).send({ error: 'Unauthorized.' });
     }
     const { id } = request.params as { id: string };
@@ -1881,7 +2457,7 @@ export async function adminRoutes(server: FastifyInstance) {
   //
   // Portalda olduğu gibi iki sorgu: özet dönemin tamamından, tablo sayfa sayfa.
   server.get('/admin/api/requests', async (request, reply) => {
-    if (!yoneticiMi(request as never)) {
+    if (!(await hesapOturumuMu(request as never))) {
       return reply.status(401).send({ error: 'Unauthorized.' });
     }
 
@@ -2000,13 +2576,13 @@ export async function adminRoutes(server: FastifyInstance) {
   // Buradan oluşturulunca ad, tür ve izinler tek yerden kontrollü giriliyor.
 
   server.get('/admin/api/customers', async (request, reply) => {
-    if (!yoneticiMi(request as never)) {
+    if (!(await hesapOturumuMu(request as never))) {
       return reply.status(401).send({ error: 'Unauthorized.' });
     }
 
     const { data: musteriler, error } = await supabase
       .from('clients')
-      .select('id, name, is_active, client_type, allowed_domains, allowed_models, created_at')
+      .select('id, name, is_active, client_type, allowed_domains, allowed_models, max_output_price, created_at')
       .order('created_at', { ascending: false });
     if (error) return reply.status(500).send({ error: 'Could not read customers.' });
 
@@ -2017,7 +2593,7 @@ export async function adminRoutes(server: FastifyInstance) {
     let anahtarlar: unknown[] | null = null;
     const ilk = await supabase
       .from('client_keys')
-      .select('id, client_id, environment, is_active, created_at, key_prefix')
+      .select('id, client_id, environment, is_active, created_at, key_prefix, label, user_id')
       .order('created_at', { ascending: false });
     if (ilk.error) {
       const geri = await supabase
@@ -2059,7 +2635,7 @@ export async function adminRoutes(server: FastifyInstance) {
   });
 
   server.post('/admin/api/customers', async (request, reply) => {
-    if (!yoneticiMi(request as never)) {
+    if (!(await hesapOturumuMu(request as never))) {
       return reply.status(401).send({ error: 'Unauthorized.' });
     }
 
@@ -2102,7 +2678,7 @@ export async function adminRoutes(server: FastifyInstance) {
   });
 
   server.patch('/admin/api/customers/:id', async (request, reply) => {
-    if (!yoneticiMi(request as never)) {
+    if (!(await hesapOturumuMu(request as never))) {
       return reply.status(401).send({ error: 'Unauthorized.' });
     }
 
@@ -2110,9 +2686,16 @@ export async function adminRoutes(server: FastifyInstance) {
     const g = request.body as {
       name?: string; is_active?: boolean; client_type?: string;
       allowed_models?: string[]; allowed_domains?: string[];
+      max_output_price?: number | null;
     };
 
     const guncelleme: Record<string, unknown> = {};
+    if (g.max_output_price !== undefined) {
+      // Panelde 1M başına giriliyor, veritabanında 1K başına saklanıyor —
+      // model_catalog ile aynı ölçek.
+      guncelleme.max_output_price =
+        g.max_output_price === null ? null : Number(g.max_output_price);
+    }
     if (typeof g.name === 'string' && g.name.trim()) guncelleme.name = g.name.trim();
     if (typeof g.is_active === 'boolean') guncelleme.is_active = g.is_active;
     if (typeof g.client_type === 'string') guncelleme.client_type = g.client_type;
@@ -2124,7 +2707,7 @@ export async function adminRoutes(server: FastifyInstance) {
 
     const { data, error } = await supabase
       .from('clients').update(guncelleme).eq('id', id)
-      .select('id, name, is_active, client_type, allowed_domains, allowed_models, created_at')
+      .select('id, name, is_active, client_type, allowed_domains, allowed_models, max_output_price, created_at')
       .single();
     if (error) return reply.status(500).send({ error: 'Could not update the customer.' });
     return { musteri: data };
@@ -2133,7 +2716,7 @@ export async function adminRoutes(server: FastifyInstance) {
   // Yeni anahtar. Kaybolan anahtar geri getirilemez (yalnızca karması saklanıyor),
   // bu yüzden çözüm yenisini vermek. Eskisi isteğe bağlı olarak kapatılıyor.
   server.post('/admin/api/customers/:id/keys', async (request, reply) => {
-    if (!yoneticiMi(request as never)) {
+    if (!(await hesapOturumuMu(request as never))) {
       return reply.status(401).send({ error: 'Unauthorized.' });
     }
 
@@ -2158,7 +2741,7 @@ export async function adminRoutes(server: FastifyInstance) {
     };
 
     let ekleme = await supabase.from('client_keys').insert([satir])
-      .select('id, client_id, environment, is_active, created_at, key_prefix').single();
+      .select('id, client_id, environment, is_active, created_at, key_prefix, label, user_id').single();
     if (ekleme.error) {
       // key_prefix sütunu yoksa öneksiz yazıyoruz.
       delete satir.key_prefix;
@@ -2172,7 +2755,7 @@ export async function adminRoutes(server: FastifyInstance) {
   });
 
   server.patch('/admin/api/keys/:id', async (request, reply) => {
-    if (!yoneticiMi(request as never)) {
+    if (!(await hesapOturumuMu(request as never))) {
       return reply.status(401).send({ error: 'Unauthorized.' });
     }
 
@@ -2194,7 +2777,7 @@ export async function adminRoutes(server: FastifyInstance) {
   // Requests ekranı tek tek kayıtları gösteriyor; burası aynı verinin
   // toplamı: kim harcıyor, hangi model, sistemde bakım isteyen ne var.
   server.get('/admin/api/overview', async (request, reply) => {
-    if (!yoneticiMi(request as never)) {
+    if (!(await hesapOturumuMu(request as never))) {
       return reply.status(401).send({ error: 'Unauthorized.' });
     }
 
@@ -2340,7 +2923,7 @@ export async function adminRoutes(server: FastifyInstance) {
   // maliyet raporları kime ait olduğu belirsiz satırlarla dolar.
   // İşi biten müşteri için doğru yol askıya almak, silmek değil.
   server.delete('/admin/api/customers/:id', async (request, reply) => {
-    if (!yoneticiMi(request as never)) {
+    if (!(await hesapOturumuMu(request as never))) {
       return reply.status(401).send({ error: 'Unauthorized.' });
     }
 
@@ -2368,7 +2951,7 @@ export async function adminRoutes(server: FastifyInstance) {
   // Portaldaki dışa aktarmayla aynı biçim: noktalı virgül ayraç, ondalıkta
   // virgül, başta BOM — Türkçe Excel dosyayı böyle doğru açıyor.
   server.get('/admin/api/export', async (request, reply) => {
-    if (!yoneticiMi(request as never)) {
+    if (!(await hesapOturumuMu(request as never))) {
       return reply.status(401).send({ error: 'Unauthorized.' });
     }
 
@@ -2436,7 +3019,7 @@ export async function adminRoutes(server: FastifyInstance) {
   // Burası o körlüğü kapatıyor: dış kaynakla farkı gösteriyor, kararı bırakıyor.
 
   server.get('/admin/api/prices', async (request, reply) => {
-    if (!yoneticiMi(request as never)) {
+    if (!(await hesapOturumuMu(request as never))) {
       return reply.status(401).send({ error: 'Unauthorized.' });
     }
 
@@ -2607,7 +3190,7 @@ export async function adminRoutes(server: FastifyInstance) {
   // yenisi bir süre birlikte yayında kalıyor, ikisini de saklarsak geçiş
   // döneminde hiçbir şey kırılmıyor.
   server.post('/admin/api/prices/map', async (request, reply) => {
-    if (!yoneticiMi(request as never)) {
+    if (!(await hesapOturumuMu(request as never))) {
       return reply.status(401).send({ error: 'Unauthorized.' });
     }
     const g = request.body as { id?: string; source_ids?: string[]; litellm_ids?: string[] };
@@ -2636,7 +3219,7 @@ export async function adminRoutes(server: FastifyInstance) {
   // Yalnızca eşleştirmeye ekleme yapıyor; fiyata dokunmuyor. Fiyat değişimi
   // ayrı bir onay adımı olarak kalıyor.
   server.post('/admin/api/prices/rematch', async (request, reply) => {
-    if (!yoneticiMi(request as never)) {
+    if (!(await hesapOturumuMu(request as never))) {
       return reply.status(401).send({ error: 'Unauthorized.' });
     }
 
@@ -2756,7 +3339,7 @@ export async function adminRoutes(server: FastifyInstance) {
   // gösterirse müşteriye eksik fatura çıkarırız, yüksek gösterirse fazla.
   // Fazla faturalandırma daha ağır bir hata, o yüzden zamlar onay bekliyor.
   server.post('/admin/api/prices/apply', async (request, reply) => {
-    if (!yoneticiMi(request as never)) {
+    if (!(await hesapOturumuMu(request as never))) {
       return reply.status(401).send({ error: 'Unauthorized.' });
     }
 
@@ -2849,7 +3432,7 @@ export async function adminRoutes(server: FastifyInstance) {
   // zaten bir talep. Portala düğme koymadan da müşterinin ne istediğini
   // biliyoruz.
   server.get('/admin/api/access-requests', async (request, reply) => {
-    if (!yoneticiMi(request as never)) {
+    if (!(await hesapOturumuMu(request as never))) {
       return reply.status(401).send({ error: 'Unauthorized.' });
     }
 
@@ -2929,7 +3512,7 @@ export async function adminRoutes(server: FastifyInstance) {
   // yarış durumu doğuruyor: talep listesinden verilen izin, o sırada açık
   // duran bir düzenleme panelinin eski listesiyle geri alınabilirdi.
   server.post('/admin/api/customers/:id/allow', async (request, reply) => {
-    if (!yoneticiMi(request as never)) {
+    if (!(await hesapOturumuMu(request as never))) {
       return reply.status(401).send({ error: 'Unauthorized.' });
     }
 
@@ -3252,7 +3835,7 @@ export async function adminRoutes(server: FastifyInstance) {
     const gizli = process.env.CRON_SECRET;
     const baslik = request.headers['x-cron-secret'];
     const vercelCron = String(request.headers['user-agent'] ?? '').includes('vercel-cron');
-    const yonetici = yoneticiMi(request as never);
+    const yonetici = await yoneticiMi(request as never);
 
     if (!yonetici && !vercelCron && (!gizli || baslik !== gizli)) {
       return reply.status(401).send({ error: 'Unauthorized.' });
@@ -3264,7 +3847,7 @@ export async function adminRoutes(server: FastifyInstance) {
 
   // Olay geçmişi — panelde "son değişiklikler" olarak gösteriliyor.
   server.get('/admin/api/price-events', async (request, reply) => {
-    if (!yoneticiMi(request as never)) {
+    if (!(await hesapOturumuMu(request as never))) {
       return reply.status(401).send({ error: 'Unauthorized.' });
     }
     const { data, error } = await supabase
@@ -3274,5 +3857,258 @@ export async function adminRoutes(server: FastifyInstance) {
       .limit(60);
     if (error) return { olaylar: [], tabloYok: true };
     return { olaylar: data ?? [] };
+  });
+
+  // ---------------- müşteri kullanıcıları ----------------
+  //
+  // Portala artık e-posta ve şifreyle giriliyor. Hesapları müşteri kendi
+  // açmıyor: B2B bir üründe kendi kaydolma açmak e-posta doğrulama, sahte
+  // kayıt engelleme ve spam derdi getiriyor; hiçbiri şu an gerekli değil.
+  // Hesabı yönetici açıyor, ilk şifreyi müşteriye iletiyor.
+
+  server.get('/admin/api/customers/:id/users', async (request, reply) => {
+    if (!(await hesapOturumuMu(request as never))) {
+      return reply.status(401).send({ error: 'Unauthorized.' });
+    }
+    const { id } = request.params as { id: string };
+
+    const { data, error } = await supabase
+      .from('users')
+      .select('id, email, role, created_at, last_login_at')
+      .eq('client_id', id)
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      const eksik = /relation|does not exist|users/i.test(String(error.message));
+      return reply.status(eksik ? 428 : 500).send({
+        error: eksik
+          ? 'Account tables are missing. Run giris-sistemi.sql first.'
+          : 'Could not read users.'
+      });
+    }
+    return { kullanicilar: data ?? [] };
+  });
+
+  server.post('/admin/api/customers/:id/users', async (request, reply) => {
+    if (!(await hesapOturumuMu(request as never))) {
+      return reply.status(401).send({ error: 'Unauthorized.' });
+    }
+    const { id } = request.params as { id: string };
+    const g = request.body as { email?: string; password?: string; role?: string };
+
+    const { data: musteri } = await supabase
+      .from('clients').select('id').eq('id', id).limit(1);
+    if (!(musteri ?? []).length) return reply.status(404).send({ error: 'Customer not found.' });
+
+    // Şifre verilmezse üretiyoruz. Yöneticinin şifre uydurması, zayıf ve
+    // tekrar eden şifreler demek.
+    const sifre = String(g?.password ?? '').trim() || uretilmisSifre();
+    const sonuc = await hesapOlustur('musteri', String(g?.email ?? ''), sifre, id);
+    if (!sonuc.ok) return reply.status(400).send({ error: sonuc.hata });
+
+    if (g?.role === 'owner') {
+      await supabase.from('users').update({ role: 'owner' }).eq('id', sonuc.hesap.id);
+    }
+
+    // Şifre yalnızca burada dönüyor; veritabanında karması duruyor.
+    return { kullanici: { ...sonuc.hesap, role: g?.role === 'owner' ? 'owner' : 'member' }, sifre };
+  });
+
+  server.patch('/admin/api/users/:id', async (request, reply) => {
+    if (!(await hesapOturumuMu(request as never))) {
+      return reply.status(401).send({ error: 'Unauthorized.' });
+    }
+    const { id } = request.params as { id: string };
+    const g = request.body as { role?: string; password?: string; email?: string };
+
+    if (typeof g?.email === 'string' && g.email.trim()) {
+      const e = g.email.trim().toLowerCase();
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) {
+        return reply.status(400).send({ error: 'Enter a valid email address.' });
+      }
+      const { data: cakisan } = await supabase
+        .from('users').select('id').eq('email', e).neq('id', id).limit(1);
+      if ((cakisan ?? []).length) {
+        return reply.status(409).send({ error: 'This email address is already registered.' });
+      }
+      const { error } = await supabase.from('users').update({ email: e }).eq('id', id);
+      if (error) return reply.status(500).send({ error: 'Could not update the email address.' });
+      return { guncellendi: true, email: e };
+    }
+
+    // Şifre sıfırlama: mevcut şifre sorulmuyor, yönetici zaten yetkili.
+    // İlk sürümde e-posta ile sıfırlama yok; müşteri unutursa yönetici veriyor.
+    if (typeof g?.password === 'string' || g?.password === '') {
+      const yeni = String(g.password ?? '').trim() || uretilmisSifre();
+      const kusur = sifreKusuru(yeni);
+      if (kusur) return reply.status(400).send({ error: kusur });
+
+      const sonuc = await sifreDegistir('musteri', id, null, yeni);
+      if (!sonuc.ok) return reply.status(400).send({ error: sonuc.hata });
+      return { sifirlandi: true, sifre: yeni };
+    }
+
+    if (g?.role === 'owner' || g?.role === 'member') {
+      const { error } = await supabase.from('users').update({ role: g.role }).eq('id', id);
+      if (error) return reply.status(500).send({ error: 'Could not update the user.' });
+      return { guncellendi: true };
+    }
+
+    return reply.status(400).send({ error: 'Nothing to update.' });
+  });
+
+  server.delete('/admin/api/users/:id', async (request, reply) => {
+    if (!(await hesapOturumuMu(request as never))) {
+      return reply.status(401).send({ error: 'Unauthorized.' });
+    }
+    const { id } = request.params as { id: string };
+
+    // Kullanıcının sahip olduğu anahtarlar silinmiyor: kod onlarla çalışmaya
+    // devam ediyor. Yalnızca sahipsiz kalıyorlar, ortak anahtar oluyorlar.
+    // Kişi ayrıldı diye çalışan bir servisi durdurmak istemiyoruz.
+    await supabase.from('client_keys').update({ user_id: null }).eq('user_id', id);
+
+    const { error } = await supabase.from('users').delete().eq('id', id);
+    if (error) return reply.status(500).send({ error: 'Could not remove the user.' });
+    return { silindi: true };
+  });
+
+  // Anahtara ad ve sahip atama.
+  server.patch('/admin/api/keys/:id/owner', async (request, reply) => {
+    if (!(await hesapOturumuMu(request as never))) {
+      return reply.status(401).send({ error: 'Unauthorized.' });
+    }
+    const { id } = request.params as { id: string };
+    const g = request.body as { label?: string; user_id?: string | null };
+
+    const guncelleme: Record<string, unknown> = {};
+    if (typeof g?.label === 'string') guncelleme.label = g.label.trim() || null;
+    if (g?.user_id !== undefined) guncelleme.user_id = g.user_id || null;
+    if (!Object.keys(guncelleme).length) {
+      return reply.status(400).send({ error: 'Nothing to update.' });
+    }
+
+    const { data, error } = await supabase
+      .from('client_keys').update(guncelleme).eq('id', id)
+      .select('id, label, user_id').single();
+    if (error) return reply.status(500).send({ error: 'Could not update the key.' });
+    return { anahtar: data };
+  });
+
+  // ---------------- yönetici oturumu ----------------
+
+  const URETIM = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
+
+  server.post('/admin/api/session', async (request, reply) => {
+    const g = request.body as { email?: string; password?: string } | undefined;
+    const eposta = String(g?.email ?? '').trim();
+    const sifre = String(g?.password ?? '');
+    if (!eposta || !sifre) {
+      return reply.status(400).send({ error: 'Email and password are required.' });
+    }
+
+    const sonuc = await girisDogrula('yonetici', eposta, sifre);
+    if (!sonuc.ok) {
+      // Hangi kısmın yanlış olduğunu söylemiyoruz.
+      return reply.status(401).send({ error: 'Email or password is not correct.' });
+    }
+
+    reply.header('set-cookie', cerezYaz(CEREZ_ADI.yonetici, sonuc.cerez, URETIM));
+    return { hesap: { id: sonuc.hesap.id, email: sonuc.hesap.email } };
+  });
+
+  server.delete('/admin/api/session', async (_request, reply) => {
+    reply.header('set-cookie', cerezSil(CEREZ_ADI.yonetici, URETIM));
+    return { cikildi: true };
+  });
+
+  server.get('/admin/api/me', async (request, reply) => {
+    const hesap = await oturumdakiHesap('yonetici', request.headers.cookie);
+    if (hesap) return { hesap: { id: hesap.id, email: hesap.email }, yol: 'hesap' };
+
+    // Jetonla girilmişse de oturum sayılıyor, ama hesabı yok.
+    if (await yoneticiMi(request as never)) return { hesap: null, yol: 'jeton' };
+    return reply.status(401).send({ error: 'No active session.' });
+  });
+
+  // Yönetici hesapları. İlk hesap ADMIN_TOKEN ile açılıyor; sonrasında
+  // hesaplar birbirini açabiliyor.
+  server.get('/admin/api/admins', async (request, reply) => {
+    if (!(await yoneticiMi(request as never))) {
+      return reply.status(401).send({ error: 'Unauthorized.' });
+    }
+    const { data, error } = await supabase
+      .from('admin_users').select('id, email, created_at, last_login_at')
+      .order('created_at', { ascending: true });
+    if (error) {
+      const eksik = /relation|does not exist/i.test(String(error.message));
+      return reply.status(eksik ? 428 : 500).send({
+        error: eksik ? 'Run giris-sistemi.sql first.' : 'Could not read administrators.'
+      });
+    }
+    return { yoneticiler: data ?? [] };
+  });
+
+  server.post('/admin/api/admins', async (request, reply) => {
+    if (!(await yoneticiMi(request as never))) {
+      return reply.status(401).send({ error: 'Unauthorized.' });
+    }
+    const g = request.body as { email?: string; password?: string };
+    const sifre = String(g?.password ?? '').trim() || uretilmisSifre();
+    const sonuc = await hesapOlustur('yonetici', String(g?.email ?? ''), sifre);
+    if (!sonuc.ok) return reply.status(400).send({ error: sonuc.hata });
+    return { yonetici: sonuc.hesap, sifre };
+  });
+
+  server.patch('/admin/api/admins/:id', async (request, reply) => {
+    if (!(await yoneticiMi(request as never))) {
+      return reply.status(401).send({ error: 'Unauthorized.' });
+    }
+    const { id } = request.params as { id: string };
+    const g = request.body as { password?: string; email?: string };
+
+    // E-posta değiştirme. Adres giriş kimliği olduğu için tekil kalmalı;
+    // veritabanı dizini son savunma, burada da bakıyoruz ki anlamlı bir
+    // hata mesajı dönebilelim.
+    if (typeof g?.email === 'string' && g.email.trim()) {
+      const e = g.email.trim().toLowerCase();
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) {
+        return reply.status(400).send({ error: 'Enter a valid email address.' });
+      }
+      const { data: cakisan } = await supabase
+        .from('admin_users').select('id').eq('email', e).neq('id', id).limit(1);
+      if ((cakisan ?? []).length) {
+        return reply.status(409).send({ error: 'This email address is already registered.' });
+      }
+      const { error } = await supabase.from('admin_users').update({ email: e }).eq('id', id);
+      if (error) return reply.status(500).send({ error: 'Could not update the email address.' });
+      return { guncellendi: true, email: e };
+    }
+
+    const yeni = String(g?.password ?? '').trim() || uretilmisSifre();
+    const kusur = sifreKusuru(yeni);
+    if (kusur) return reply.status(400).send({ error: kusur });
+
+    const sonuc = await sifreDegistir('yonetici', id, null, yeni);
+    if (!sonuc.ok) return reply.status(400).send({ error: sonuc.hata });
+    return { sifirlandi: true, sifre: yeni };
+  });
+
+  server.delete('/admin/api/admins/:id', async (request, reply) => {
+    if (!(await yoneticiMi(request as never))) {
+      return reply.status(401).send({ error: 'Unauthorized.' });
+    }
+    const { id } = request.params as { id: string };
+
+    // Son yönetici silinmesin: hiç hesap kalmazsa panele yalnızca
+    // ADMIN_TOKEN ile girilebilir ve o da bir gün kaldırılacak.
+    const { data } = await supabase.from('admin_users').select('id');
+    if ((data ?? []).length <= 1) {
+      return reply.status(409).send({ error: 'Cannot remove the last administrator.' });
+    }
+
+    const { error } = await supabase.from('admin_users').delete().eq('id', id);
+    if (error) return reply.status(500).send({ error: 'Could not remove the administrator.' });
+    return { silindi: true };
   });
 }

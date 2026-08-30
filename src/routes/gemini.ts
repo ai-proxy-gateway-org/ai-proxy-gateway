@@ -16,6 +16,8 @@ export async function geminiRoutes(server: FastifyInstance) {
       return reply.status(security.status).send({ error: security.error });
     }
     const clientId = security.clientId;
+    const keyId = security.keyId;
+    const maxOutputPrice = security.maxOutputPrice;
     const allowedModels = security.allowedModels;
 
     // Gemini'nin kendi uç noktası `models/{model}:generateContent` biçiminde.
@@ -26,9 +28,9 @@ export async function geminiRoutes(server: FastifyInstance) {
       return reply.status(400).send({ error: 'Model name is missing from the URL.' });
     }
 
-    const authorization = await authorizeModel('gemini', requestedModel, allowedModels);
+    const authorization = await authorizeModel('gemini', requestedModel, allowedModels, maxOutputPrice);
     if (!authorization.ok) {
-      void logDeniedRequest(clientId, 'gemini', requestedModel, authorization.error);
+      void logDeniedRequest(clientId, 'gemini', requestedModel, authorization.error, keyId);
       return reply.status(authorization.status).send({ error: authorization.error });
     }
 
@@ -37,6 +39,7 @@ export async function geminiRoutes(server: FastifyInstance) {
       body: request.body,
       reply,
       clientId,
+      keyId,
       provider: 'gemini',
       model: requestedModel
     });

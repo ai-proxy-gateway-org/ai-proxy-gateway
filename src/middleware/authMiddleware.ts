@@ -17,6 +17,7 @@ export async function verifyClient(providedApiKey: string) {
     const { data: keyData, error: keyError } = await supabase
       .from('client_keys')
       .select(`
+        id,
         is_active,
         environment,
         clients (
@@ -44,6 +45,9 @@ export async function verifyClient(providedApiKey: string) {
 
     return {
       success: true,
+      // Anahtarın kimliği: isteğin hangi anahtarla geldiği kayda yazılıyor,
+      // böylece bir şirketin harcaması anahtar bazında kırılabiliyor.
+      keyId: keyData.id,
       client: {
         id: clientDetails.id,
         name: clientDetails.name,

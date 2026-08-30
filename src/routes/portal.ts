@@ -12,6 +12,10 @@
 import type { FastifyInstance } from 'fastify';
 import { STIL, YAZI_TIPI } from '../ui/stil.js';
 import { verifyClient } from '../middleware/authMiddleware.js';
+import {
+  girisDogrula, oturumdakiHesap, sifreDegistir, CEREZ_ADI
+} from '../core/kimlik.js';
+import { cerezYaz, cerezSil } from '../utils/hesap.js';
 import { supabase } from '../services/db.js';
 import { hashApiKey } from '../utils/auth.js';
 import { checkRateLimit } from '../middleware/rateLimiter.js';
@@ -25,7 +29,18 @@ const SAYFA = `<!doctype html>
 <title>Usage Portal</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23111214'/%3E%3Ctext x='16' y='22' font-family='system-ui,sans-serif' font-size='14' font-weight='700' fill='white' text-anchor='middle'%3EAP%3C/text%3E%3C/svg%3E">
 ${YAZI_TIPI}
-<style>${STIL}</style>
+<style>${STIL}
+  /* Giriş yolu seçimi: hesap ya da anahtar. Anahtar yolu geçici — hesaplar
+     yerleşince kaldırılacak, o yüzden ikincil duruyor. */
+  .girisSekme { display:flex; gap:.3rem; background:var(--sunk); padding:.25rem;
+    border-radius:9px; margin:.6rem 0 1.1rem; }
+  .girisSekme button { flex:1; padding:.45rem .6rem; font:inherit; font-size:.86rem;
+    border:0; border-radius:7px; background:none; color:var(--ink-3); cursor:pointer; }
+  .girisSekme button.secili { background:var(--surface); color:var(--ink); font-weight:500;
+    box-shadow:0 1px 2px rgba(0,0,0,.06); }
+  .alanEtiket { display:block; font-size:.85rem; color:var(--ink-3); }
+  .alanEtiket input { margin-top:.35rem; }
+</style>
 </head>
 <body>
 
@@ -42,12 +57,37 @@ ${YAZI_TIPI}
     </div>
     <div class="kart">
       <div class="baslikkucuk">Usage Portal</div>
-      <div class="yardim" style="margin:.35rem 0 .9rem">
-        Sign in with the <code>sk-proxy-</code> key you were given.
+
+      <div class="girisSekme" id="girisSekme">
+        <button data-yol="hesap" class="secili">Email</button>
+        <button data-yol="anahtar">API key</button>
       </div>
-      <input id="anahtar" type="password" placeholder="sk-proxy-..." autocomplete="off">
-      <button class="dugme koyu" id="btn" style="width:100%;margin-top:.7rem">Sign in</button>
-      <div class="yardim" style="margin-top:.7rem">Your session stays open for 12 hours.</div>
+
+      <div id="yolHesap">
+        <label class="alanEtiket">Email
+          <input id="eposta" type="email" placeholder="you@company.com" autocomplete="username">
+        </label>
+        <label class="alanEtiket" style="margin-top:.7rem">Password
+          <input id="sifre" type="password" placeholder="••••••••••" autocomplete="current-password">
+        </label>
+        <button class="dugme koyu" id="btnHesap" style="width:100%;margin-top:.9rem">Sign in</button>
+        <div class="yardim" style="margin-top:.7rem">
+          Accounts are created by your provider. Forgot your password? Ask them to reset it.
+        </div>
+      </div>
+
+      <div id="yolAnahtar" class="gizli">
+        <div class="yardim" style="margin:.35rem 0 .9rem">
+          Sign in with the <code>sk-proxy-</code> key you were given.
+        </div>
+        <input id="anahtar" type="password" placeholder="sk-proxy-..." autocomplete="off">
+        <button class="dugme koyu" id="btn" style="width:100%;margin-top:.7rem">Sign in</button>
+        <div class="yardim" style="margin-top:.7rem">
+          Signing in with a key still works, but accounts are the way forward:
+          changing your key no longer locks you out.
+        </div>
+      </div>
+
       <div class="uyari gizli" id="hata"></div>
     </div>
   </div>
@@ -126,6 +166,13 @@ ${YAZI_TIPI}
         <!-- GENEL BAKIŞ -->
         <section data-bolum="genel">
           <div class="metrikkart" id="ozet"></div>
+          <div class="kart gizli" id="benimKart" style="margin-top:1rem">
+            <div class="baslikkucuk">Your usage</div>
+            <div class="yardim" style="margin:.3rem 0 .9rem">
+              Requests sent with the keys you own, within the selected period.
+            </div>
+            <div class="hesap" id="benimSatir"></div>
+          </div>
           <div class="ikincil-olculer" id="ekstra"></div>
           <div class="kart" style="margin-top:.85rem">
             <div class="grafikUst">
@@ -138,8 +185,18 @@ ${YAZI_TIPI}
 
         <!-- KULLANIM -->
         <section data-bolum="kullanim" class="gizli">
-          <div class="satirbasi"><div class="baslikkucuk">By model</div></div>
+          <div class="satirbasi" style="margin-top:0"><div class="baslikkucuk">By model</div></div>
           <div class="tablokart"><div class="kaydir"><table id="kirilim"></table></div></div>
+
+          <div class="satirbasi">
+            <div class="baslikkucuk">By key</div>
+            <div class="sayac" id="anahtarSayac"></div>
+          </div>
+          <div class="tablokart"><div class="kaydir"><table id="anahtarTablo"></table></div></div>
+          <div class="yardim" style="margin-top:.8rem">
+            Keys with an owner count as that person's usage. Shared service keys belong to the
+            whole company and are not attributed to anyone.
+          </div>
         </section>
 
         <!-- İSTEKLER -->
@@ -191,6 +248,26 @@ ${YAZI_TIPI}
 
         <!-- AYARLAR -->
         <section data-bolum="ayarlar" class="gizli">
+          <div class="kart gizli" id="hesapKart" style="max-width:44rem;margin-bottom:.85rem">
+            <div class="baslikkucuk">Your account</div>
+            <div class="yardim" style="margin-top:.35rem" id="hesapBilgi"></div>
+
+            <div class="formSatir" style="margin-top:1.2rem;grid-template-columns:1fr 1fr">
+              <label>Current password
+                <input id="sifreEski" type="password" autocomplete="current-password"></label>
+              <label>New password
+                <input id="sifreYeni" type="password" autocomplete="new-password"
+                       placeholder="at least 10 characters"></label>
+            </div>
+            <button class="dugme koyu" id="sifreDegistir" style="margin-top:1.1rem">
+              Change password</button>
+            <div class="yardim" style="margin-top:.7rem">
+              Changing your password signs you out everywhere, including sessions you forgot
+              about on other devices.
+            </div>
+            <div class="uyari gizli" id="sifreNot"></div>
+          </div>
+
           <div class="kart" style="max-width:44rem">
             <div class="baslikkucuk">Export usage records</div>
             <div class="yardim" style="margin-top:.35rem">
@@ -206,7 +283,7 @@ ${YAZI_TIPI}
             </dl>
 
             <button class="dugme koyu" id="disaAktar" style="margin-top:1.4rem">
-              CSV olarak indir</button>
+              Download CSV</button>
             <div class="yardim gizli" id="disaAktarNot" style="margin-top:.7rem"></div>
           </div>
 
@@ -275,6 +352,14 @@ ${YAZI_TIPI}
     } catch (e) {}
   };
   const $ = (id) => document.getElementById(id);
+  // Anahtar adları veritabanından geliyor; HTML'e basmadan önce kaçırıyoruz.
+  const kacir = (t) => String(t == null ? '' : t)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+
+  // Anahtarla girildiyse başlık ekleniyor; oturumla girildiyse çerez zaten
+  // gidiyor ve anahtar elimizde yok.
+  const basliklar = () => anahtar ? { authorization: 'Bearer ' + anahtar } : {};
 
   // --- Tema: sistem tercihini izler, elle değiştirilirse hatırlar ---
   const AY = '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>';
@@ -734,7 +819,7 @@ ${YAZI_TIPI}
     }
     try {
       const c = await fetch('/portal/api/usage?gun='+gun+'&offset='+offset+
-        (sadeceHata ? '&durum=hata' : ''), { headers:{ authorization:'Bearer '+anahtar } });
+        (sadeceHata ? '&durum=hata' : ''), { headers: basliklar() });
       if (!c.ok) throw new Error('sunucu');
       const v = await c.json();
       toplam = v.toplam;
@@ -761,6 +846,8 @@ ${YAZI_TIPI}
                 '</td><td class="sayi">'+m.ciktiToken+'</td>'+
                 '<td class="sayi">'+para(m.maliyet)+'</td></tr>';
             }).join('')+'</tbody>' : '';
+
+        anahtarKirilimiCiz(v);
       }
       if (!v.kayitlar.length && !ekle) {
         $('tablo').innerHTML = '';
@@ -800,20 +887,141 @@ ${YAZI_TIPI}
         }
         return;
       }
-      anahtar = d; hesap = v; anahtarYaz(d);
-      document.title = v.name + ' · Usage Portal';
-      $('menuMusteri').textContent = v.name;
-      hesapCiz();
-      $('girisEkran').classList.add('gizli');
-      $('uygulama').classList.remove('gizli');
-      bolumGoster('genel');
-      offset = 0; kullanimGetir(false);
+      anahtar = d; anahtarYaz(d);
+      uygulamayaGir(v);
     } catch (e) {
       $('hata').textContent = 'Could not reach the server.'; $('hata').classList.remove('gizli');
     } finally { $('btn').disabled = false; }
   }
 
+  // Anahtar bazında kırılım ve "senin kullanımın".
+  //
+  // Kişi bazında ayırmak mümkün değil: ağ geçidine gelen istekte insan yok,
+  // anahtar var. Sahibi olan anahtarın harcaması o kişinin sayılıyor; ortak
+  // servis anahtarları şirkete ait kalıyor.
+  function anahtarKirilimiCiz(v) {
+    const b = v.benimOzet;
+    // Anahtarla girildiyse kullanıcı kimliği yok, "senin kullanımın" da yok.
+    $('benimKart').classList.toggle('gizli', !b);
+    if (b) {
+      const pay = v.ozet.maliyet ? (b.maliyet / v.ozet.maliyet) * 100 : 0;
+      $('benimSatir').innerHTML =
+        '<div class="sat"><span>Requests</span><span>' + b.istek + '</span></div>' +
+        '<div class="sat"><span>Tokens</span><span>' + b.token + '</span></div>' +
+        '<div class="sat toplam"><span>Your cost</span><span>' + para(b.maliyet) + '</span></div>' +
+        '<div class="sat"><span>Share of company spend</span><span>%' + pay.toFixed(0) + '</span></div>';
+    }
+
+    const liste = v.anahtarKirilimi || [];
+    $('anahtarSayac').textContent = liste.length + (liste.length === 1 ? ' key' : ' keys');
+    const enB = Math.max(...liste.map(a => a.maliyet), 0) || 1;
+
+    $('anahtarTablo').innerHTML = liste.length
+      ? '<thead><tr><th>Key</th><th>Share</th><th>Owner</th><th>Requests</th><th>Cost</th></tr></thead><tbody>' +
+        liste.map(a => {
+          const genislik = (a.maliyet / enB) * 100;
+          const sahip = a.benim
+            ? '<span class="hap ok">you</span>'
+            : a.ortak ? '<span class="hap">shared</span>' : '<span class="hap">—</span>';
+          return '<tr><td>' + kacir(a.ad) +
+            (a.aktif === false ? ' <span class="hap">revoked</span>' : '') + '</td>' +
+            '<td><div class="oran"><div class="oranCubuk"><i style="width:' +
+              genislik.toFixed(1) + '%"></i></div></div></td>' +
+            '<td>' + sahip + '</td>' +
+            '<td class="sayi">' + a.istek + '</td>' +
+            '<td class="sayi">' + para(a.maliyet) + '</td></tr>';
+        }).join('') + '</tbody>'
+      : '';
+  }
+
+  // Giriş yolu ne olursa olsun uygulamaya aynı şekilde giriliyor.
+  function uygulamayaGir(v) {
+    hesap = v;
+    document.title = v.name + ' · Usage Portal';
+    $('menuMusteri').textContent = v.name;
+    hesapCiz();
+    $('girisEkran').classList.add('gizli');
+    $('uygulama').classList.remove('gizli');
+    bolumGoster('genel');
+    offset = 0; kullanimGetir(false);
+  }
+
+  // E-posta ve şifreyle giriş. Oturum çerezle taşınıyor, anahtar saklanmıyor.
+  async function hesapGirisi() {
+    const e = $('eposta').value.trim(), s = $('sifre').value;
+    if (!e || !s) return;
+    $('btnHesap').disabled = true; $('hata').classList.add('gizli');
+    try {
+      const c = await fetch('/portal/api/session', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: e, password: s })
+      });
+      const v = await c.json();
+      if (!c.ok) {
+        $('hata').textContent = v.error || 'Sign-in failed.';
+        $('hata').classList.remove('gizli');
+        return;
+      }
+      anahtar = null; anahtarYaz(null);
+      $('sifre').value = '';
+      uygulamayaGir(v);
+    } catch (err) {
+      $('hata').textContent = 'Could not reach the server.';
+      $('hata').classList.remove('gizli');
+    } finally { $('btnHesap').disabled = false; }
+  }
+
+  $('girisSekme').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    [...$('girisSekme').children].forEach(x => x.classList.toggle('secili', x === b));
+    $('yolHesap').classList.toggle('gizli', b.dataset.yol !== 'hesap');
+    $('yolAnahtar').classList.toggle('gizli', b.dataset.yol !== 'anahtar');
+    $('hata').classList.add('gizli');
+  });
+
+  $('sifreDegistir').addEventListener('click', async () => {
+    const eski = $('sifreEski').value, yeni = $('sifreYeni').value;
+    const not = $('sifreNot');
+    not.classList.add('gizli');
+    if (!eski || !yeni) return;
+
+    $('sifreDegistir').disabled = true;
+    try {
+      const c = await fetch('/portal/api/password', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ current: eski, next: yeni })
+      });
+      const v = await c.json();
+      if (!c.ok) {
+        not.textContent = v.error || 'Could not change the password.';
+        not.classList.remove('gizli');
+        return;
+      }
+      // Sunucu şifre değişince oturumu düşürüyor: eski çerezlerin izi artık
+      // tutmuyor. Kullanıcıyı giriş ekranına alıyoruz.
+      $('sifreEski').value = ''; $('sifreYeni').value = '';
+      alert('Password changed. Please sign in again.');
+      anahtar = null; hesap = null; anahtarYaz(null);
+      $('uygulama').classList.add('gizli');
+      $('girisEkran').classList.remove('gizli');
+    } catch (e) {
+      not.textContent = 'Could not reach the server.';
+      not.classList.remove('gizli');
+    } finally { $('sifreDegistir').disabled = false; }
+  });
+
+  $('btnHesap').addEventListener('click', hesapGirisi);
+  $('eposta').addEventListener('keydown', e => { if (e.key === 'Enter') $('sifre').focus(); });
+  $('sifre').addEventListener('keydown', e => { if (e.key === 'Enter') hesapGirisi(); });
+
   function ayarlarTazele() {
+    // Hesap kartı yalnızca e-posta ile girildiğinde çıkıyor; anahtarla giren
+    // için değiştirilecek bir şifre yok.
+    const h = hesap && hesap.hesap;
+    $('hesapKart').classList.toggle('gizli', !h);
+    if (h) {
+      $('hesapBilgi').innerHTML = 'Signed in as <b>' + kacir(h.email) + '</b>';
+    }
     $('disaAktarDonem').textContent =
       gun === 0 ? 'All time' : 'Last ' + gun + ' days';
     $('disaAktarAdet').textContent = toplam ? toplam + ' requests' : '—';
@@ -826,8 +1034,7 @@ ${YAZI_TIPI}
     d.disabled = true; d.textContent = 'Preparing...';
     $('disaAktarNot').classList.add('gizli');
     try {
-      const c = await fetch('/portal/api/export?gun=' + gun,
-        { headers:{ authorization:'Bearer ' + anahtar } });
+      const c = await fetch('/portal/api/export?gun=' + gun, { headers: basliklar() });
       if (!c.ok) throw new Error('sunucu');
       const metin = await c.text();
       const bag = document.createElement('a');
@@ -854,9 +1061,12 @@ ${YAZI_TIPI}
   $('tema').addEventListener('click', temaDegistir);
   $('temaKose').addEventListener('click', temaDegistir);
 
-  $('cikis').addEventListener('click', () => {
+  $('cikis').addEventListener('click', async () => {
+    // Çerez sunucu tarafında siliniyor; yalnızca yerelde temizlemek oturumu
+    // kapatmazdı, çerez bir sonraki açılışta yine geçerli olurdu.
+    try { await fetch('/portal/api/session', { method: 'DELETE' }); } catch (e) {}
     anahtar = null; hesap = null; anahtarYaz(null);
-    $('anahtar').value = ''; $('ozet').innerHTML = '';
+    $('anahtar').value = ''; $('sifre').value = ''; $('ozet').innerHTML = '';
     $('uygulama').classList.add('gizli'); $('girisEkran').classList.remove('gizli');
   });
   $('filtre').addEventListener('click', e => {
@@ -885,9 +1095,20 @@ ${YAZI_TIPI}
     $('yenile').disabled = false; $('yenile').textContent = 'Refresh';
   });
 
-  // Sayfa yenilendiyse saklanan anahtarla sessizce gir.
-  const saklanan = anahtarOku();
-  if (saklanan) girisYap(saklanan);
+  // Sayfa açılışında oturum var mı diye bakılıyor.
+  //
+  // Önce çerez: hesapla giriş yapılmışsa sunucu kimliği zaten biliyor ve
+  // hiçbir şey saklamamıza gerek yok. Yoksa eskiden saklanan anahtara
+  // düşülüyor — mevcut müşteriler bir sürüm yükseltmesiyle kapıda kalmasın.
+  (async () => {
+    try {
+      const c = await fetch('/portal/api/me');
+      if (c.ok) { uygulamayaGir(await c.json()); return; }
+    } catch (e) { /* sunucuya ulaşılamadıysa anahtar yoluna düş */ }
+
+    const saklanan = anahtarOku();
+    if (saklanan) girisYap(saklanan);
+  })();
 </script>
 </body>
 </html>`;
@@ -950,6 +1171,156 @@ export async function portalRoutes(server: FastifyInstance) {
     };
   });
 
+  // İsteği kimin yaptığını çözüyor. İki yol da kabul ediliyor:
+  //
+  //   1. Oturum çerezi — e-posta/şifre ile giriş yapmış kullanıcı
+  //   2. Bearer anahtarı — eski yöntem
+  //
+  // İkisi bir süre yan yana duracak: mevcut müşteriler anahtarla giriyor ve
+  // bir sürüm yükseltmesiyle kapıda kalmaları kabul edilemez. Hesaplar
+  // yerleşince anahtarla giriş kaldırılacak, anahtar yalnızca ağ geçidi
+  // isteklerinde kullanılacak.
+  async function portalKimligi(request: {
+    headers: Record<string, unknown>;
+  }): Promise<{ clientId: string; kullaniciId: string | null } | null> {
+    const hesap = await oturumdakiHesap(
+      'musteri', request.headers.cookie as string | undefined
+    );
+    if (hesap?.clientId) return { clientId: hesap.clientId, kullaniciId: hesap.id };
+
+    const baslik = request.headers.authorization as string | undefined;
+    const apiKey = baslik?.startsWith('Bearer ') ? baslik.slice(7).trim() : undefined;
+    if (!apiKey) return null;
+
+    const sonuc = await verifyClient(apiKey);
+    if (!sonuc.success || !sonuc.client) return null;
+    // Anahtarla girişte "senin kullanımın" diye bir şey yok: anahtar kişiye
+    // değil şirkete ait.
+    return { clientId: String(sonuc.client.id), kullaniciId: null };
+  }
+
+  // Müşterinin görünen bilgileri. Hem anahtarla hem oturumla giriş sonrası
+  // aynı yapı dönüyor ki arayüz ikisini ayırt etmek zorunda kalmasın.
+  async function musteriOzeti(clientId: string, apiKey?: string) {
+    const { data: musteri } = await supabase
+      .from('clients')
+      .select('id, name, allowed_models, allowed_domains, client_type')
+      .eq('id', clientId)
+      .single();
+    if (!musteri) return null;
+
+    const m = musteri as {
+      id: string; name: string;
+      allowed_models: string[] | null; allowed_domains: string[] | null;
+      client_type: string | null;
+    };
+
+    // Anahtarla girildiyse o anahtarın kaydı, oturumla girildiyse müşterinin
+    // en yeni canlı anahtarı gösteriliyor.
+    let anahtarKaydi: {
+      environment?: string; is_active?: boolean; created_at?: string; key_prefix?: string | null;
+    } | null = null;
+
+    if (apiKey) {
+      const { data } = await supabase
+        .from('client_keys')
+        .select('environment, is_active, created_at, key_prefix')
+        .eq('key_hash', hashApiKey(apiKey))
+        .limit(1);
+      anahtarKaydi = (data ?? [])[0] ?? null;
+    } else {
+      const { data } = await supabase
+        .from('client_keys')
+        .select('environment, is_active, created_at, key_prefix')
+        .eq('client_id', clientId)
+        .eq('is_active', true)
+        .order('created_at', { ascending: false })
+        .limit(1);
+      anahtarKaydi = (data ?? [])[0] ?? null;
+    }
+
+    return {
+      clientId: m.id,
+      name: m.name,
+      allowedModels: m.allowed_models ?? [],
+      allowedDomains: m.allowed_domains ?? [],
+      clientType: m.client_type ?? 'server-based',
+      anahtar: anahtarKaydi
+        ? {
+            // Oturumla girişte açık anahtar elimizde yok; saklanan önek
+            // gösteriliyor. Göçten önce üretilmiş anahtarlarda önek de yok.
+            onEk: apiKey ? apiKey.slice(0, 11) : (anahtarKaydi.key_prefix ?? null),
+            sonEk: apiKey ? apiKey.slice(-4) : null,
+            ortam: anahtarKaydi.environment ?? '—',
+            aktif: anahtarKaydi.is_active ?? true,
+            olusturma: anahtarKaydi.created_at ?? null
+          }
+        : null
+    };
+  }
+
+  const URETIM = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
+
+  // E-posta ve şifreyle giriş.
+  server.post('/portal/api/session', async (request, reply) => {
+    const g = request.body as { email?: string; password?: string } | undefined;
+    const eposta = String(g?.email ?? '').trim();
+    const sifre = String(g?.password ?? '');
+
+    if (!eposta || !sifre) {
+      return reply.status(400).send({ error: 'Email and password are required.' });
+    }
+
+    const sonuc = await girisDogrula('musteri', eposta, sifre);
+
+    // Hız limiti yalnızca başarısız denemelerde — aynı ofisten yanlış şifre
+    // deneyen biri doğru şifreyi bilen kişiyi kilitlemesin.
+    if (!sonuc.ok) {
+      const hiz = await checkRateLimit(`portal-oturum:${request.ip}`, 10, 60);
+      if (!hiz.success) {
+        return reply.status(429).send({ error: 'Too many failed attempts. Try again in a minute.' });
+      }
+      // Hangi kısmın yanlış olduğunu söylemiyoruz: "e-posta bulunamadı"
+      // demek, hangi adreslerin kayıtlı olduğunu sızdırır.
+      return reply.status(401).send({ error: 'Email or password is not correct.' });
+    }
+
+    reply.header('set-cookie', cerezYaz(CEREZ_ADI.musteri, sonuc.cerez, URETIM));
+    const ozet = await musteriOzeti(sonuc.hesap.clientId!);
+    return { ...ozet, hesap: { id: sonuc.hesap.id, email: sonuc.hesap.email } };
+  });
+
+  server.delete('/portal/api/session', async (_request, reply) => {
+    reply.header('set-cookie', cerezSil(CEREZ_ADI.musteri, URETIM));
+    return { cikildi: true };
+  });
+
+  // Sayfa açıldığında oturum var mı diye bakılıyor.
+  server.get('/portal/api/me', async (request, reply) => {
+    const hesap = await oturumdakiHesap('musteri', request.headers.cookie);
+    if (!hesap?.clientId) return reply.status(401).send({ error: 'No active session.' });
+
+    const ozet = await musteriOzeti(hesap.clientId);
+    if (!ozet) return reply.status(401).send({ error: 'No active session.' });
+    return { ...ozet, hesap: { id: hesap.id, email: hesap.email } };
+  });
+
+  server.post('/portal/api/password', async (request, reply) => {
+    const hesap = await oturumdakiHesap('musteri', request.headers.cookie);
+    if (!hesap) return reply.status(401).send({ error: 'No active session.' });
+
+    const g = request.body as { current?: string; next?: string } | undefined;
+    const sonuc = await sifreDegistir(
+      'musteri', hesap.id, String(g?.current ?? ''), String(g?.next ?? '')
+    );
+    if (!sonuc.ok) return reply.status(400).send({ error: sonuc.hata });
+
+    // Şifre değişince eski çerezlerin izi tutmuyor; kullanıcının kendi
+    // oturumu da düşüyor, bu yüzden çerezi temizliyoruz.
+    reply.header('set-cookie', cerezSil(CEREZ_ADI.musteri, URETIM));
+    return { degisti: true };
+  });
+
   // Müşterinin kendi kullanım kayıtları.
   //
   // Hangi client'ın kayıtlarının döneceği, istekte gelen bir alandan değil
@@ -960,16 +1331,10 @@ export async function portalRoutes(server: FastifyInstance) {
   //   2. Tablo satırları sayfa sayfa geliyor.
   // Tek sorgu olsaydı "daha fazla yükle" bastıkça toplam maliyet değişirdi.
   server.get('/portal/api/usage', async (request, reply) => {
-    const baslik = request.headers.authorization;
-    const apiKey = baslik?.startsWith('Bearer ') ? baslik.slice(7).trim() : undefined;
-
-    if (!apiKey) return reply.status(401).send({ error: 'Key required.' });
-
-    const sonuc = await verifyClient(apiKey);
-    if (!sonuc.success || !sonuc.client) {
-      return reply.status(401).send({ error: 'Key not recognized.' });
-    }
-    const clientId = String(sonuc.client.id);
+    // Oturum çerezi ya da anahtar — ikisi de kabul.
+    const kimlik = await portalKimligi(request as never);
+    if (!kimlik) return reply.status(401).send({ error: 'Sign in to continue.' });
+    const clientId = kimlik.clientId;
 
     const sorgu = request.query as { gun?: string; offset?: string; durum?: string };
     const sadeceHata = sorgu.durum === 'hata';
@@ -989,7 +1354,7 @@ export async function portalRoutes(server: FastifyInstance) {
     const { data: tumu, error: hata1 } = await donemFiltresi(
       supabase
         .from('logs')
-        .select('provider, model, status, input_tokens, output_tokens, cost, created_at, latency_ms')
+        .select('provider, model, status, input_tokens, output_tokens, cost, created_at, latency_ms, key_id')
         .eq('client_id', clientId)
         .limit(5000) as any
     );
@@ -998,7 +1363,7 @@ export async function portalRoutes(server: FastifyInstance) {
     const donem = (tumu ?? []) as Array<{
       provider: string; model: string; status: string; created_at: string;
       input_tokens: number | null; output_tokens: number | null;
-      cost: number | null; latency_ms: number | null;
+      cost: number | null; latency_ms: number | null; key_id: string | null;
     }>;
 
     const ozet = donem.reduce(
@@ -1068,7 +1433,7 @@ export async function portalRoutes(server: FastifyInstance) {
       const oncekiSon = new Date(Date.now() - gun * 24 * 60 * 60 * 1000).toISOString();
       const { data: onceki } = await supabase
         .from('logs')
-        .select('status, input_tokens, output_tokens, cost')
+        .select('status, input_tokens, output_tokens, cost, key_id')
         .eq('client_id', clientId)
         .gte('created_at', oncekiBas)
         .lt('created_at', oncekiSon)
@@ -1114,10 +1479,67 @@ export async function portalRoutes(server: FastifyInstance) {
       sonIstek: sonKayit
     };
 
+    // --- anahtar bazında kırılım ---
+    //
+    // "Kim ne harcadı" sorusunun cevabı kişi değil anahtar: ağ geçidine gelen
+    // istekte insan yok. Sahibi olan anahtarlar bir kişiye bağlı, sahibi
+    // olmayanlar ortak servis anahtarı ve kimsenin kendi kullanımı sayılmıyor.
+    const { data: anahtarListesi } = await supabase
+      .from('client_keys')
+      .select('id, label, environment, is_active, user_id, key_prefix')
+      .eq('client_id', clientId);
+
+    const anahtarBilgi = new Map(
+      ((anahtarListesi ?? []) as Array<{
+        id: string; label: string | null; environment: string;
+        is_active: boolean; user_id: string | null; key_prefix: string | null;
+      }>).map((a) => [a.id, a])
+    );
+
+    const kirilimSayac = new Map<string, { istek: number; maliyet: number; token: number }>();
+    for (const k of donem) {
+      const anahtar = String((k as { key_id?: string | null }).key_id ?? 'atanmamis');
+      const o = kirilimSayac.get(anahtar) ?? { istek: 0, maliyet: 0, token: 0 };
+      o.istek += 1;
+      o.maliyet += Number(k.cost ?? 0);
+      o.token += (k.input_tokens ?? 0) + (k.output_tokens ?? 0);
+      kirilimSayac.set(anahtar, o);
+    }
+
+    const anahtarKirilimi = [...kirilimSayac.entries()].map(([id, o]) => {
+      const a = anahtarBilgi.get(id);
+      return {
+        keyId: id === 'atanmamis' ? null : id,
+        // key_id sütunundan önceki kayıtlarda anahtar bilgisi yok.
+        ad: a?.label ?? (id === 'atanmamis' ? 'Unattributed' : (a?.key_prefix ?? 'Unknown key')),
+        ortam: a?.environment ?? null,
+        aktif: a?.is_active ?? null,
+        benim: !!(kimlik.kullaniciId && a?.user_id === kimlik.kullaniciId),
+        ortak: !!a && !a.user_id,
+        ...o
+      };
+    }).sort((x, y) => y.maliyet - x.maliyet);
+
+    // Oturumla girildiyse "senin kullanımın" hesaplanabiliyor. Anahtarla
+    // girişte kullanıcı kimliği yok, bu yüzden null dönüyor ve arayüz
+    // yalnızca şirket toplamını gösteriyor.
+    const benimOzet = kimlik.kullaniciId
+      ? anahtarKirilimi.filter((a) => a.benim).reduce(
+          (acc, a) => ({
+            istek: acc.istek + a.istek,
+            maliyet: acc.maliyet + a.maliyet,
+            token: acc.token + a.token
+          }),
+          { istek: 0, maliyet: 0, token: 0 }
+        )
+      : null;
+
     return {
       ozet,
       oncekiOzet,
       ekstra,
+      benimOzet,
+      anahtarKirilimi,
       // Fiyat listesi arayüze gönderiliyor: istek detayında maliyet hesabı
       // yeniden yapılıp kayıtlı değerle karşılaştırılabilsin.
       fiyatlar: await priceList(),
@@ -1135,15 +1557,10 @@ export async function portalRoutes(server: FastifyInstance) {
   // virgülü ondalık ayracı sayıyor, virgülle ayrılmış dosyayı tek sütuna
   // yapıştırıyor. Başa BOM ekleniyor, yoksa Türkçe karakterler bozuluyor.
   server.get('/portal/api/export', async (request, reply) => {
-    const baslik = request.headers.authorization;
-    const apiKey = baslik?.startsWith('Bearer ') ? baslik.slice(7).trim() : undefined;
-    if (!apiKey) return reply.status(401).send({ error: 'Key required.' });
-
-    const sonuc = await verifyClient(apiKey);
-    if (!sonuc.success || !sonuc.client) {
-      return reply.status(401).send({ error: 'Key not recognized.' });
-    }
-    const clientId = String(sonuc.client.id);
+    // Oturum çerezi ya da anahtar — ikisi de kabul.
+    const kimlik = await portalKimligi(request as never);
+    if (!kimlik) return reply.status(401).send({ error: 'Sign in to continue.' });
+    const clientId = kimlik.clientId;
 
     const gun = Number((request.query as { gun?: string }).gun ?? 30);
     const baslangic = gun > 0

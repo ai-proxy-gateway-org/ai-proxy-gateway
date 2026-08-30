@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { forwardToProvider } from '../core/proxyForward.js';
-import { authorizeModel } from '../core/modelAuthorization.js';
+import { authorizeModel, modeliKisiyeAc } from '../core/modelAuthorization.js';
 import { logDeniedRequest } from '../core/logCapture.js';
 import { runSecurityChain } from '../core/security.js';
 
@@ -18,6 +18,7 @@ export async function openaiRoutes(server: FastifyInstance) {
     const clientId = security.clientId;
     const keyId = security.keyId;
     const maxOutputPrice = security.maxOutputPrice;
+    const userId = security.userId;
     const allowedModels = security.allowedModels;
 
     const body = request.body as { model?: string } | undefined;
@@ -32,11 +33,18 @@ export async function openaiRoutes(server: FastifyInstance) {
       return reply.status(authorization.status).send({ error: authorization.error });
     }
 
+    // Fiyat tavanı sayesinde geçtiyse model bu kişiye kalıcı olarak açılıyor:
+    // izin listesi panelde kimin neye eriştiğini gerçekten göstersin diye.
+    if (authorization.yol === 'fiyat' && userId) {
+      void modeliKisiyeAc(userId, 'openai', requestedModel);
+    }
+
     await forwardToProvider({
       body: request.body,
       reply,
       clientId,
       keyId,
+      userId,
       provider: 'openai',
       model: requestedModel
     });

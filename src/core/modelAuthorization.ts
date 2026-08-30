@@ -13,9 +13,15 @@
 // bulunabileceği için yalnız model adı belirsiz kalırdı.
 
 import { isKnownModel, modelKey, priceFor } from './modelCatalog.js';
+import { supabase } from '../services/db.js';
 import type { ProviderName } from './providerConfig.js';
 
-export type AuthorizationResult = { ok: true } | { ok: false; status: number; error: string };
+// Geçiş hangi yoldan sağlandı: listede yazdığı için mi, yoksa fiyatı tavanın
+// altında olduğu için mi. Çağıran taraf ikisini ayırt etmek zorunda: fiyat
+// yoluyla geçen model o kişinin listesine yazılıyor (bkz. security.ts).
+export type AuthorizationResult =
+  | { ok: true; yol: 'liste' | 'fiyat' }
+  | { ok: false; status: number; error: string };
 
 // Yetki listesi parametre olarak alınıyor: güvenlik zinciri client kaydını zaten
 // okuduğu için ikinci bir veritabanı turu gerekmiyor.
@@ -59,7 +65,7 @@ export async function authorizeModel(
     };
   }
 
-  if (allowedModels.includes(modelKey(provider, model))) return { ok: true };
+  if (allowedModels.includes(modelKey(provider, model))) return { ok: true, yol: 'liste' };
 
   // İzin listesinde yok — tavanın altında mı?
   if (typeof maxOutputPrice === 'number' && maxOutputPrice > 0) {
@@ -68,7 +74,7 @@ export async function authorizeModel(
     // Fiyatı bilinmeyen model tavana göre değerlendirilemez; kapalı kalıyor.
     // "Bilmiyorsak geçir" demek, pahalı bir modelin fiyatı girilmediği için
     // açılması demekti.
-    if (fiyat && fiyat.output <= maxOutputPrice) return { ok: true };
+    if (fiyat && fiyat.output <= maxOutputPrice) return { ok: true, yol: 'fiyat' };
 
     if (fiyat) {
       return {
@@ -89,4 +95,35 @@ export async function authorizeModel(
       `Model '${model}' is not enabled for your account. ` +
       `Your request has been recorded and is awaiting review.`
   };
+}
+
+// Fiyat tavanının altındaki bir modeli İSTEYEN KİŞİYE kalıcı olarak açar.
+//
+// Tavan önce herkese açık bir kural gibi çalışıyordu: "$20'nin altındaki her
+// model herkese açık". İşe yarıyordu ama panelde kimin neye eriştiği
+// görünmüyordu — kimse istemediği hâlde bütün modeller herkeste açık
+// sayılıyordu, izin listeleri de boş kalıyordu.
+//
+// Artık tavan bir ONAY KURALI: ucuz bir modeli ilk kez çağıran kişiye o model
+// yazılıyor, isteyen kişide açık kalıyor, istemeyen kişide kapalı. Pahalı
+// modeller değişmedi — onlar reddediliyor ve panele talep olarak düşüyor.
+//
+// İstek yolunu bekletmiyoruz: yazma başarısız olsa bile istek zaten geçti,
+// bir sonraki çağrıda tekrar denenir.
+export async function modeliKisiyeAc(
+  userId: string, provider: ProviderName, model: string
+): Promise<void> {
+  const anahtar = modelKey(provider, model);
+  try {
+    const { data } = await supabase
+      .from('users').select('allowed_models').eq('id', userId).single();
+    const mevcut = ((data as { allowed_models: string[] | null } | null)?.allowed_models) ?? [];
+    if (mevcut.includes(anahtar)) return;
+    await supabase
+      .from('users')
+      .update({ allowed_models: [...mevcut, anahtar] })
+      .eq('id', userId);
+  } catch {
+    // Sessiz: erişim zaten verildi, kayıt bir sonraki istekte tamamlanır.
+  }
 }

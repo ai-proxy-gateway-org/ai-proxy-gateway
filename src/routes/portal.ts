@@ -12,6 +12,7 @@
 import type { FastifyInstance } from 'fastify';
 import { STIL, YAZI_TIPI } from '../ui/stil.js';
 import { verifyClient } from '../middleware/authMiddleware.js';
+import { butceDurumu } from '../core/butce.js';
 import {
   girisDogrula, oturumdakiHesap, sifreDegistir, CEREZ_ADI
 } from '../core/kimlik.js';
@@ -166,6 +167,15 @@ ${YAZI_TIPI}
         <!-- GENEL BAKIŞ -->
         <section data-bolum="genel">
           <div class="metrikkart" id="ozet"></div>
+          <div class="kart gizli" id="butceKart" style="margin-top:1rem">
+            <div class="baslikkucuk">Budget</div>
+            <div class="yardim" style="margin:.3rem 0 .9rem">
+              Requests stop when a limit is used up. Daily resets at midnight,
+              monthly on the first.
+            </div>
+            <div id="butceSatir"></div>
+          </div>
+
           <div class="kart gizli" id="benimKart" style="margin-top:1rem">
             <div class="baslikkucuk">Your usage</div>
             <div class="yardim" style="margin:.3rem 0 .9rem">
@@ -635,13 +645,27 @@ ${YAZI_TIPI}
   }
 
   function hesapCiz() {
-    const a = hesap.anahtar;
-    $('anahtarBilgi').innerHTML =
-      '<dt>Key</dt><dd class="mono">' + a.onEk + '••••••••' + a.sonEk + '</dd>' +
-      '<dt>Status</dt><dd>' + (a.aktif ? '<span class="hap ok">active</span>'
-                                      : '<span class="hap err">inactive</span>') + '</dd>' +
-      '<dt>Environment</dt><dd>' + a.ortam + '</dd>' +
-      '<dt>Created</dt><dd>' + (a.olusturma ? gunTarih(a.olusturma) : '—') + '</dd>';
+    const liste = hesap.anahtarlar || [];
+
+    // Anahtarın açık hali hiçbir zaman saklanmıyor — yalnızca ilk on bir
+    // karakteri. Ondan öncesinde üretilenlerde o da yok; "null••••null" yerine
+    // durumu açıkça yazıyoruz.
+    $('anahtarBilgi').innerHTML = liste.length
+      ? liste.map(a =>
+          '<dt>' + (a.ad ? kacir(a.ad) : '<span class="yardim">unnamed</span>') +
+          (a.buOturum ? ' <span class="hap ok">this session</span>' : '') +
+          (a.benim ? ' <span class="hap ok">yours</span>'
+                   : a.ortak ? ' <span class="hap">shared</span>' : '') +
+          '</dt><dd>' +
+          '<span class="mono">' +
+          (a.onEk ? kacir(a.onEk) + '••••••••' : '<span class="yardim">hidden</span>') +
+          '</span>' +
+          ' · ' + kacir(a.ortam) +
+          ' · ' + (a.aktif ? '<span class="hap ok">active</span>'
+                           : '<span class="hap">revoked</span>') +
+          ' · ' + (a.olusturma ? gunTarih(a.olusturma) : '—') +
+          '</dd>').join('')
+      : '<dt>Keys</dt><dd class="yardim">No keys yet.</dd>';
     $('izinBilgi').innerHTML =
       '<dt>Client type</dt><dd>' + (hesap.clientType === 'browser-based'
         ? 'Browser-based' : 'Server-based') + '</dd>' +
@@ -848,6 +872,7 @@ ${YAZI_TIPI}
             }).join('')+'</tbody>' : '';
 
         anahtarKirilimiCiz(v);
+        butceCiz(v);
       }
       if (!v.kayitlar.length && !ekle) {
         $('tablo').innerHTML = '';
@@ -899,6 +924,42 @@ ${YAZI_TIPI}
   // Kişi bazında ayırmak mümkün değil: ağ geçidine gelen istekte insan yok,
   // anahtar var. Sahibi olan anahtarın harcaması o kişinin sayılıyor; ortak
   // servis anahtarları şirkete ait kalıyor.
+  // Bütçe çubuğu. Sayı tek başına "ne kadar kaldı"yı hissettirmiyor;
+  // dolan kısmı görmek daha hızlı okunuyor.
+  function butceCubuk(etiket, harcama, sinir) {
+    if (sinir === null || sinir === undefined) return '';
+    const oran = sinir > 0 ? Math.min(100, (harcama / sinir) * 100) : 0;
+    const kalan = Math.max(0, sinir - harcama);
+    // %80 uyarı eşiği: dolmadan önce fark edilsin.
+    const renk = oran >= 100 ? 'var(--kirmizi)' : oran >= 80 ? 'var(--sari)' : 'var(--yesil)';
+    return '<div style="margin-bottom:1rem">' +
+      '<div class="oran" style="justify-content:space-between;margin-bottom:.35rem">' +
+      '<span class="yardim">' + etiket + '</span>' +
+      '<span class="yardim">' + para(harcama) + ' of $' + sinir +
+      ' · <b>' + para(kalan) + ' left</b></span></div>' +
+      '<div class="oranCubuk"><i style="width:' + oran.toFixed(1) + '%;background:' + renk + '"></i></div>' +
+      (oran >= 100
+        ? '<div class="yardim" style="margin-top:.35rem;color:var(--kirmizi)">' +
+          'Used up — requests are being rejected.</div>'
+        : oran >= 80
+          ? '<div class="yardim" style="margin-top:.35rem;color:var(--sari)">' +
+            'Almost used up.</div>'
+          : '') +
+      '</div>';
+  }
+
+  function butceCiz(v) {
+    const b = v.benimButce, s = v.sirketButce;
+    const parca =
+      (b ? butceCubuk('Your daily limit', b.gunlukHarcama, b.gunlukSinir) +
+           butceCubuk('Your monthly limit', b.aylikHarcama, b.aylikSinir) : '') +
+      (s ? butceCubuk('Company — today', s.gunlukHarcama, s.gunlukSinir) +
+           butceCubuk('Company — this month', s.aylikHarcama, s.aylikSinir) : '');
+
+    $('butceKart').classList.toggle('gizli', !parca);
+    if (parca) $('butceSatir').innerHTML = parca;
+  }
+
   function anahtarKirilimiCiz(v) {
     const b = v.benimOzet;
     // Anahtarla girildiyse kullanıcı kimliği yok, "senin kullanımın" da yok.
@@ -1149,26 +1210,9 @@ export async function portalRoutes(server: FastifyInstance) {
     }
 
     // Anahtarın kendisi değil, hakkındaki bilgiler dönüyor.
-    const { data: anahtarKaydi } = await supabase
-      .from('client_keys')
-      .select('environment, is_active, created_at')
-      .eq('key_hash', hashApiKey(apiKey))
-      .single();
-
-    return {
-      clientId: String(sonuc.client.id),
-      name: String(sonuc.client.name),
-      allowedModels: (sonuc.client.allowed_models as string[] | null) ?? [],
-      allowedDomains: (sonuc.client.allowed_domains as string[] | null) ?? [],
-      clientType: String(sonuc.client.client_type ?? 'server-based'),
-      anahtar: {
-        onEk: apiKey.slice(0, 11),
-        sonEk: apiKey.slice(-4),
-        ortam: anahtarKaydi?.environment ?? '—',
-        aktif: anahtarKaydi?.is_active ?? true,
-        olusturma: anahtarKaydi?.created_at ?? null
-      }
-    };
+    // Oturumla girişle aynı yapı: arayüz ikisini ayırt etmek zorunda kalmasın.
+    const ozet = await musteriOzeti(String(sonuc.client.id), apiKey);
+    return ozet;
   });
 
   // İsteği kimin yaptığını çözüyor. İki yol da kabul ediliyor:
@@ -1201,7 +1245,7 @@ export async function portalRoutes(server: FastifyInstance) {
 
   // Müşterinin görünen bilgileri. Hem anahtarla hem oturumla giriş sonrası
   // aynı yapı dönüyor ki arayüz ikisini ayırt etmek zorunda kalmasın.
-  async function musteriOzeti(clientId: string, apiKey?: string) {
+  async function musteriOzeti(clientId: string, apiKey?: string, kullaniciId?: string | null) {
     const { data: musteri } = await supabase
       .from('clients')
       .select('id, name, allowed_models, allowed_domains, client_type')
@@ -1215,29 +1259,35 @@ export async function portalRoutes(server: FastifyInstance) {
       client_type: string | null;
     };
 
-    // Anahtarla girildiyse o anahtarın kaydı, oturumla girildiyse müşterinin
-    // en yeni canlı anahtarı gösteriliyor.
-    let anahtarKaydi: {
-      environment?: string; is_active?: boolean; created_at?: string; key_prefix?: string | null;
-    } | null = null;
+    // Müşterinin bütün anahtarları listeleniyor.
+    //
+    // Önceden yalnızca bir tanesi gösteriliyordu ve oturumla girişte açık
+    // anahtar elimizde olmadığı için "null••••null" gibi bir şey çıkıyordu.
+    // Artık anahtarların adı, ortamı ve sahibi var; hepsini göstermek hem
+    // doğru hem faydalı — kullanım kırılımı da bu adlarla eşleşiyor.
+    const { data: anahtarSatirlari } = await supabase
+      .from('client_keys')
+      .select('id, label, environment, is_active, created_at, key_prefix, user_id')
+      .eq('client_id', clientId)
+      .order('created_at', { ascending: false });
 
-    if (apiKey) {
-      const { data } = await supabase
-        .from('client_keys')
-        .select('environment, is_active, created_at, key_prefix')
-        .eq('key_hash', hashApiKey(apiKey))
-        .limit(1);
-      anahtarKaydi = (data ?? [])[0] ?? null;
-    } else {
-      const { data } = await supabase
-        .from('client_keys')
-        .select('environment, is_active, created_at, key_prefix')
-        .eq('client_id', clientId)
-        .eq('is_active', true)
-        .order('created_at', { ascending: false })
-        .limit(1);
-      anahtarKaydi = (data ?? [])[0] ?? null;
-    }
+    const anahtarlar = ((anahtarSatirlari ?? []) as Array<{
+      id: string; label: string | null; environment: string; is_active: boolean;
+      created_at: string; key_prefix: string | null; user_id: string | null;
+    }>).map((a) => ({
+      id: a.id,
+      ad: a.label,
+      // Açık anahtar hiçbir zaman saklanmıyor; yalnızca önek var. Göçten önce
+      // üretilenlerde o da yok — arayüz bunu "hidden" olarak gösteriyor.
+      onEk: a.key_prefix,
+      ortam: a.environment,
+      aktif: a.is_active,
+      olusturma: a.created_at,
+      benim: !!(kullaniciId && a.user_id === kullaniciId),
+      ortak: !a.user_id,
+      // Anahtarla girildiyse hangi anahtarla girildiği işaretleniyor.
+      buOturum: !!(apiKey && a.key_prefix && apiKey.startsWith(a.key_prefix))
+    }));
 
     return {
       clientId: m.id,
@@ -1245,17 +1295,7 @@ export async function portalRoutes(server: FastifyInstance) {
       allowedModels: m.allowed_models ?? [],
       allowedDomains: m.allowed_domains ?? [],
       clientType: m.client_type ?? 'server-based',
-      anahtar: anahtarKaydi
-        ? {
-            // Oturumla girişte açık anahtar elimizde yok; saklanan önek
-            // gösteriliyor. Göçten önce üretilmiş anahtarlarda önek de yok.
-            onEk: apiKey ? apiKey.slice(0, 11) : (anahtarKaydi.key_prefix ?? null),
-            sonEk: apiKey ? apiKey.slice(-4) : null,
-            ortam: anahtarKaydi.environment ?? '—',
-            aktif: anahtarKaydi.is_active ?? true,
-            olusturma: anahtarKaydi.created_at ?? null
-          }
-        : null
+      anahtarlar
     };
   }
 
@@ -1286,7 +1326,7 @@ export async function portalRoutes(server: FastifyInstance) {
     }
 
     reply.header('set-cookie', cerezYaz(CEREZ_ADI.musteri, sonuc.cerez, URETIM));
-    const ozet = await musteriOzeti(sonuc.hesap.clientId!);
+    const ozet = await musteriOzeti(sonuc.hesap.clientId!, undefined, sonuc.hesap.id);
     return { ...ozet, hesap: { id: sonuc.hesap.id, email: sonuc.hesap.email } };
   });
 
@@ -1300,7 +1340,7 @@ export async function portalRoutes(server: FastifyInstance) {
     const hesap = await oturumdakiHesap('musteri', request.headers.cookie);
     if (!hesap?.clientId) return reply.status(401).send({ error: 'No active session.' });
 
-    const ozet = await musteriOzeti(hesap.clientId);
+    const ozet = await musteriOzeti(hesap.clientId, undefined, hesap.id);
     if (!ozet) return reply.status(401).send({ error: 'No active session.' });
     return { ...ozet, hesap: { id: hesap.id, email: hesap.email } };
   });
@@ -1534,11 +1574,40 @@ export async function portalRoutes(server: FastifyInstance) {
         )
       : null;
 
+    // Kalan bütçe. Kişi kendi limitini görmeli — sürpriz "istekleriniz
+    // durdu" mesajı almasın, dolmadan önce fark etsin.
+    const { data: kisiSatir } = kimlik.kullaniciId
+      ? await supabase.from('users')
+          .select('monthly_budget, daily_budget')
+          .eq('id', kimlik.kullaniciId).limit(1)
+      : { data: null };
+    const kisiLimit = (kisiSatir ?? [])[0] as
+      { monthly_budget: number | null; daily_budget: number | null } | undefined;
+
+    const { data: sirketSatir } = await supabase
+      .from('clients').select('monthly_budget, daily_budget').eq('id', clientId).limit(1);
+    const sirketLimit = (sirketSatir ?? [])[0] as
+      { monthly_budget: number | null; daily_budget: number | null } | undefined;
+
+    const benimButce = kimlik.kullaniciId
+      ? await butceDurumu(kimlik.kullaniciId, {
+          aylik: kisiLimit?.monthly_budget ?? null,
+          gunluk: kisiLimit?.daily_budget ?? null
+        })
+      : null;
+
+    const sirketButce = await butceDurumu(clientId, {
+      aylik: sirketLimit?.monthly_budget ?? null,
+      gunluk: sirketLimit?.daily_budget ?? null
+    }, 'sirket');
+
     return {
       ozet,
       oncekiOzet,
       ekstra,
       benimOzet,
+      benimButce,
+      sirketButce,
       anahtarKirilimi,
       // Fiyat listesi arayüze gönderiliyor: istek detayında maliyet hesabı
       // yeniden yapılıp kayıtlı değerle karşılaştırılabilsin.

@@ -20,6 +20,7 @@ import {
   ikiKaynaktanOku, fiyatlaYenidenEslestir, liteAdaylari
 } from '../core/priceSource.js';
 import { priceList, invalidateCatalog, catalogInfo } from '../core/modelCatalog.js';
+import { butceDurumu } from '../core/butce.js';
 
 // Ret mesajları müşteriye yol göstersin diye değiştirildi; eski kayıtlar
 // eski metinle duruyor. Süzgeçler ikisini de tanımak zorunda, yoksa
@@ -28,7 +29,12 @@ function katalogRedMi(mesaj: string): boolean {
   return mesaj.includes('is not defined') || mesaj.includes('is not available on this gateway');
 }
 function yetkiRedMi(mesaj: string): boolean {
-  return mesaj.includes('not authorized') || mesaj.includes('is not enabled for your account');
+  return mesaj.includes('not authorized')
+    || mesaj.includes('is not enabled for your account')
+    // Fiyat tavanı reddi ayrı bir cümle kuruyor ("costs $30.00 per 1M output
+    // tokens, above your limit of $20.00"). Bu da bir taleptir: kişi modeli
+    // istedi, pahalı olduğu için geçemedi.
+    || mesaj.includes('above your limit of');
 }
 // Sağlayıcının reddettiği istekler. Metin Türkçeden İngilizceye çevrildi;
 // eski kayıtlar eski metinle duruyor, ikisi de tanınmalı.
@@ -134,6 +140,35 @@ ${YAZI_TIPI}
   .secim input { accent-color:var(--mavi); margin:0; }
   .secimKutu .secim .nokta-s { margin-right:0; }
 
+  /* Model listesi hap yerine satır düzeninde.
+     Her satırda modelin adı, fiyatı ve tavana göre durumu var; hap biçiminde
+     nowrap olduğu için açıklamanın yarısı kesiliyordu. */
+  .secimListe { display:block; }
+  .secimListe .secim { display:flex; width:100%; white-space:normal;
+    border-radius:8px; padding:.5rem .7rem; margin-bottom:.35rem;
+    align-items:flex-start; line-height:1.45; }
+  .secimListe .secim:last-child { margin-bottom:0; }
+  /* Fiyat kuralıyla zaten açık olanlar: kutu boş olsa da çalışıyorlar. */
+  .secimListe .secim.acik { background:var(--sunk); }
+  .secimListe .secim .hap { margin-left:.4rem; }
+  /* Fiyat kuralıyla açılan modeller: karar değil, sonuç. */
+  .rozet.fiyattan { opacity:.72; border-style:dashed; }
+  /* Bütün model adları yazılıyor; sütun içinde sarmalı. */
+  td .rozet { display:inline-block; margin:.1rem .25rem .1rem 0; }
+  #kiTablo td:nth-child(2) { max-width:26rem; white-space:normal; }
+  /* Şirket listesinde kapalı: işaretlemenin etkisi yok. */
+  .secimListe .secim.engelli { opacity:.6; }
+  /* Kilitli kutu normal görünüyor; yalnız imleç değişiyor. */
+  .secimListe .secim input.kilit { cursor:default; }
+  .secimListe .secim input { margin-top:.15rem; flex:none; }
+  .secimListe .secim .yardim { margin-left:auto; padding-left:.9rem; text-align:right;
+    flex:0 1 auto; }
+  @media (max-width: 34rem) {
+    .secimListe .secim { flex-wrap:wrap; }
+    .secimListe .secim .yardim { margin-left:1.6rem; padding-left:0; text-align:left;
+      flex-basis:100%; }
+  }
+
   /* Anahtar bir kez gösteriliyor; kırılmadan tamamı okunabilmeli. */
   .anahtarKutu { margin-top:.8rem; padding:.85rem 1rem; border-radius:10px;
     background:var(--sunk); border:1px solid var(--line-2); }
@@ -144,6 +179,23 @@ ${YAZI_TIPI}
     border:1px solid var(--line-2); border-radius:8px; background:var(--surface);
     color:var(--ink); width:100%; }
   .yanpanelGovde .secim input { width:auto; padding:0; }
+
+  /* Kaydet çubuğu çekmecenin altına yapışık.
+     Model listesi, fiyat tavanı ve bütçe alt alta durduğu için düğme
+     ekranın dışında kalıyordu: kutucuk işaretlenip kaydedilmeden
+     kapatılabiliyordu. */
+  .kaydetCubugu { position:sticky; bottom:0; z-index:2;
+    display:flex; gap:.6rem; align-items:center; flex-wrap:wrap;
+    margin:1.1rem -1.4rem -1.4rem; padding:.9rem 1.4rem;
+    background:var(--surface); border-top:1px solid var(--line-2); }
+  .kaydetCubugu .degisti { font-size:.8rem; color:var(--mavi); margin-left:auto; }
+
+  /* Kısa bildirim. Kaydetmenin bir şeyi düşürdüğünü söylemek için. */
+  .bildirim { position:fixed; left:50%; bottom:1.6rem; transform:translateX(-50%);
+    z-index:60; padding:.65rem 1.1rem; border-radius:999px; font-size:.85rem;
+    background:var(--ink); color:var(--surface); box-shadow:0 6px 24px rgba(0,0,0,.28);
+    opacity:0; transition:opacity .18s ease; pointer-events:none; }
+  .bildirim.gorunur { opacity:1; }
 
   /* Dashboard */
   #oOzet { grid-template-columns:repeat(3,1fr); }
@@ -261,9 +313,9 @@ ${YAZI_TIPI}
       <button data-bolum="modeller">
         <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/></svg>
         Models</button>
-      <button data-bolum="musteriler">
+      <button data-bolum="kisiler">
         <svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2 20c0-3.3 3.1-6 7-6s7 2.7 7 6M17 11h5M19.5 8.5v5"/></svg>
-        Customers</button>
+        People</button>
       <button data-bolum="istekler">
         <svg viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
         Requests</button>
@@ -302,7 +354,7 @@ ${YAZI_TIPI}
         </div>
         <button class="dugme cerceveli" id="yenile">Refresh</button>
         <button class="dugme koyu" id="ekleAc">+ Add model</button>
-        <button class="dugme koyu gizli" id="mEkleAc">+ Add customer</button>
+        <button class="dugme koyu gizli" id="mEkleAc">+ Add person</button>
         <button class="dugme cerceveli gizli" id="disaAktar">Download CSV</button>
       </div>
     </div>
@@ -316,6 +368,7 @@ ${YAZI_TIPI}
       <div class="yukleniyor gizli" id="yukleniyor">Loading...</div>
 
       <section data-bolum="ozet">
+        <div class="kart gizli" id="oTalep" style="margin-bottom:1.25rem"></div>
         <div class="metrikkart" id="oOzet" style="margin-bottom:1.25rem"></div>
 
         <div class="kart" style="margin-bottom:1.25rem">
@@ -354,6 +407,22 @@ ${YAZI_TIPI}
       </section>
 
       <section data-bolum="modeller" class="gizli">
+      <div class="kart" style="margin-bottom:1.25rem">
+        <div class="baslikkucuk" style="margin:0">How prices stay current</div>
+        <div class="yardim" style="margin-top:.4rem;line-height:1.6">
+          Every night at 03:00 each price is compared against two independent
+          sources. When both agree, the new price is applied on its own &mdash;
+          up or down, no approval needed. Spend is worked out from these
+          numbers, so a stale price would quietly understate what we are
+          actually spending.<br>
+          Two cases still wait for a person, and they show up in
+          <b>Price audit</b>: <b>a model only one source lists</b>, where there
+          is nothing to cross-check against, and <b>a jump larger than 50%</b>,
+          which is usually a glitch at the source.<br>
+          <b>Set price</b> appears only on models no source carries at all.
+          Everywhere else the nightly check owns the number.
+        </div>
+      </div>
       <div class="kart gizli" id="ekleKart" style="max-width:52rem;margin-bottom:1.25rem">
         <div class="baslikkucuk">Add a new model</div>
         <div class="yardim" style="margin:.35rem 0 1.2rem">
@@ -384,66 +453,75 @@ ${YAZI_TIPI}
       <div class="yardim" style="margin-top:.8rem" id="altNot"></div>
       </section>
 
-      <section data-bolum="musteriler" class="gizli">
+      <section data-bolum="kisiler" class="gizli">
+
         <div class="kart gizli" id="mEkleKart" style="max-width:52rem;margin-bottom:1.25rem">
-          <div class="baslikkucuk">Add a new customer</div>
+          <div class="baslikkucuk">Add a person</div>
           <div class="yardim" style="margin:.35rem 0 1.2rem">
-            A key is generated on creation and shown only once. Only the hash is stored,
-            so it cannot be recovered later.
+            They sign in to the portal with this address. A password is generated and
+            shown once unless you set one.
           </div>
           <div class="formSatir">
-            <label>Customer name<input id="mAd" placeholder="Acme Corp"></label>
-            <label>Type
-              <select id="mTur">
-                <option value="server-based">Server-based</option>
-                <option value="browser-based">Browser-based</option>
-              </select></label>
-            <label>Environment
-              <select id="mOrtam">
-                <option value="production">Production</option>
-                <option value="staging">Staging</option>
-                <option value="local">Local</option>
+            <label>Email<input id="kiEposta" placeholder="person@company.com"></label>
+            <label>Password<input id="kiSifre" type="text" placeholder="optional"></label>
+            <label>Role
+              <select id="kiRol">
+                <option value="member">Member</option>
+                <option value="owner">Owner</option>
               </select></label>
           </div>
-          <div style="margin-top:1.1rem">
-            <div class="baslikkucuk" style="font-size:.82rem">Allowed models</div>
-            <div class="yardim" style="margin:.3rem 0 .7rem">
-              A customer with no model selected cannot make any request.
-            </div>
-            <div id="mModeller" class="secimKutu"></div>
+          <div class="yardim" style="margin-top:.7rem">
+            Owners can manage people and keys. Everyone sees the company total either way.
           </div>
-          <label style="display:block;margin-top:1.1rem;max-width:26rem">Allowed domains
-            <input id="mAlan" placeholder="app.acme.com, acme.com">
-            <span class="yardim">Browser-based customers only. Comma separated.</span></label>
+
+          <div class="bolumBaslik" style="margin-top:1.3rem;font-size:.85rem">
+            Which models can they use?</div>
+          <div class="secimKutu" id="kiModeller"></div>
+
           <div style="display:flex;gap:.6rem;margin-top:1.2rem">
-            <button class="dugme koyu" id="mEkleKaydet">Create customer</button>
-            <button class="dugme cerceveli" id="mEkleIptal">Cancel</button>
+            <button class="dugme koyu" id="kiEkleKaydet">Create person</button>
+            <button class="dugme cerceveli" id="kiEkleIptal">Cancel</button>
           </div>
-          <div class="uyari gizli" id="mEkleHata"></div>
+          <div class="uyari gizli" id="kiEkleHata"></div>
         </div>
 
-        <div class="kart gizli" id="talepKart" style="margin-bottom:1.25rem">
-          <div class="satirbasi" style="margin-top:0">
-            <div class="baslikkucuk">Access requests</div>
-            <div class="sayac" id="talepSayac"></div>
-          </div>
-          <div class="yardim" style="margin:-.3rem 0 .9rem">
-            Customers who called a model they could not use. Taken from rejected
-            requests — no separate request form needed. A row marked
-            <b>model inactive</b> also needs activating on the Models screen.
-          </div>
-          <div class="kaydir"><table id="talepTablo"></table></div>
-        </div>
+        <div class="kart" id="politikaKart" style="margin-bottom:1.25rem"></div>
 
         <div class="satirbasi" style="margin-top:0">
-          <input id="mArama" class="aramaKutu" placeholder="Search customers...">
-          <div class="sayac" id="mSayac"></div>
+          <div class="baslikkucuk">People</div>
+          <div class="sayac" id="kiSayac"></div>
         </div>
         <div class="tablokart">
-          <div class="kaydir"><table id="mTablo"></table></div>
-          <div class="bosdurum gizli" id="mBos"></div>
+          <div class="kaydir"><table id="kiTablo"></table></div>
+          <div class="bosdurum gizli" id="kiBos"></div>
         </div>
-        <div class="yardim" style="margin-top:.8rem" id="mAltNot"></div>
+        <div class="yardim" style="margin-top:.8rem" id="kiAltNot"></div>
+
+        <div class="satirbasi">
+          <div class="baslikkucuk">Access requests</div>
+          <div class="sayac" id="talepSayac"></div>
+        </div>
+        <div class="yardim" style="margin:-.3rem 0 .9rem">
+          Someone called a model they could not use. Taken from rejected requests —
+          no separate request form needed.
+        </div>
+        <div class="tablokart">
+          <div class="kaydir"><table id="talepTablo"></table></div>
+          <div class="bosdurum gizli" id="talepBos"></div>
+        </div>
+
+        <div class="satirbasi">
+          <div class="baslikkucuk">Shared keys</div>
+          <div class="sayac" id="ortakSayac"></div>
+        </div>
+        <div class="yardim" style="margin:-.3rem 0 .9rem">
+          Keys with no owner — background services, cron jobs. Their spend counts
+          towards the company but is not attributed to anyone.
+        </div>
+        <div class="tablokart">
+          <div class="kaydir"><table id="ortakTablo"></table></div>
+          <div class="bosdurum gizli" id="ortakBos"></div>
+        </div>
       </section>
 
       <section data-bolum="yoneticiler" class="gizli">
@@ -614,6 +692,22 @@ ${YAZI_TIPI}
     return c.json();
   }
 
+  // Fiyatın nereden geldiğini tek bakışta söyleyen rozet.
+  //
+  // "Edit price neden var, fiyatlar zaten her gece güncellenmiyor mu"
+  // sorusunun cevabı bu sütun: gece işi her fiyatı uygulamıyor. Zam,
+  // tek kaynaklı model ve %50'yi aşan sıçrama insana bırakılıyor.
+  function fiyatKaynagiHap(kaynak, kontrolTarihi) {
+    if (kaynak === 'verified')
+      return '<span class="hap ok" title="Both price sources agree">both sources</span>';
+    if (kaynak === 'openrouter' || kaynak === 'litellm' || kaynak === 'source')
+      return '<span class="hap" title="Only one source lists this model — ' +
+        'changes wait for your approval">one source</span>';
+    return '<span class="hap"' + (kontrolTarihi ? '' : ' style="opacity:.75"') +
+      ' title="Typed in by hand. Nightly checks still compare it against the ' +
+      'sources.">entered by hand</span>';
+  }
+
   function tabloCiz() {
     if (!modeller.length) {
       $('tablo').innerHTML = '';
@@ -626,19 +720,26 @@ ${YAZI_TIPI}
     $('bos').classList.add('gizli');
     $('tablo').innerHTML =
       '<thead><tr><th>Model</th><th>Provider</th><th>Input</th><th>Output</th>' +
-      '<th>Price checked</th><th>Status</th><th></th></tr></thead><tbody>' +
+      '<th>Price from</th><th>Last checked</th><th>Status</th><th></th></tr></thead><tbody>' +
       modeller.map(m =>
         '<tr data-id="' + m.id + '">' +
         '<td>' + nokta(m.provider) + m.model + '</td>' +
         '<td>' + (SAGLAYICI[m.provider] || m.provider) + '</td>' +
         '<td class="sayi">' + milyon(m.input_price) + '</td>' +
         '<td class="sayi">' + milyon(m.output_price) + '</td>' +
+        '<td>' + fiyatKaynagiHap(m.fiyatKaynagi, m.price_checked_at) + '</td>' +
         '<td class="sayi">' + gunTarih(m.price_checked_at) + '</td>' +
         '<td>' + (m.is_active
           ? '<span class="hap ok">active</span>'
           : '<span class="hap">inactive</span>') + '</td>' +
         '<td class="islem">' +
-          '<button class="satirDugme" data-eylem="fiyat">Edit price</button>' +
+          // Kaynaklar modeli tanıyorsa fiyatı gece işi yönetiyor; elle
+          // düzenleme düğmesi orada yalnızca yanlış rakam girme fırsatı
+          // olurdu. Düğme sadece hiçbir kaynağın tanımadığı satırlarda —
+          // orada insandan başka bilgi verecek kimse yok.
+          (m.fiyatKaynagi === 'manual'
+            ? '<button class="satirDugme" data-eylem="fiyat">Set price</button>'
+            : '') +
           '<button class="satirDugme' + (m.is_active ? ' tehlike' : '') + '" data-eylem="durum">' +
             (m.is_active ? 'Deactivate' : 'Activate') + '</button>' +
         '</td></tr>'
@@ -653,12 +754,26 @@ ${YAZI_TIPI}
   const BASLIK = {
     ozet:       ['Dashboard', 'Traffic, spend and system health'],
     modeller:   ['Models',    'Model catalog and pricing'],
-    musteriler: ['Customers', 'Accounts, keys and model access'],
+    kisiler:    ['People',    'Who can use the gateway, and what they can reach'],
     istekler:   ['Requests',  'All requests across customers'],
     fiyatlar:     ['Price audit', 'Stored prices checked against a live source'],
     yoneticiler:  ['Administrators', 'Who can sign in to this console']
   };
   let bolum = 'ozet';
+
+  let bildirimZaman = null;
+  function bildir(metin) {
+    let e = $('bildirim');
+    if (!e) {
+      e = document.createElement('div');
+      e.id = 'bildirim'; e.className = 'bildirim';
+      document.body.appendChild(e);
+    }
+    e.textContent = metin;
+    e.classList.add('gorunur');
+    clearTimeout(bildirimZaman);
+    bildirimZaman = setTimeout(() => e.classList.remove('gorunur'), 2600);
+  }
 
   function bolumGoster(yeni) {
     bolum = yeni;
@@ -669,11 +784,12 @@ ${YAZI_TIPI}
     $('sayfaBaslik').textContent = BASLIK[yeni][0];
     $('sayfaAlt').textContent = BASLIK[yeni][1];
     $('ekleAc').classList.toggle('gizli', yeni !== 'modeller');
-    $('mEkleAc').classList.toggle('gizli', yeni !== 'musteriler');
+    $('mEkleAc').classList.toggle('gizli', false);
+    $('mEkleAc').classList.toggle('gizli', yeni !== 'kisiler');
     $('disaAktar').classList.toggle('gizli', yeni !== 'istekler');
     $('filtre').classList.toggle('gizli', yeni !== 'istekler' && yeni !== 'ozet');
     if (yeni === 'istekler') istekYukle(false);
-    if (yeni === 'musteriler') musteriYukle();
+    if (yeni === 'kisiler') kisilerYukle();
     if (yeni === 'ozet') ozetYukle();
     if (yeni === 'fiyatlar') fiyatYukle();
     if (yeni === 'yoneticiler') yoneticileriYukle();
@@ -905,111 +1021,479 @@ ${YAZI_TIPI}
   });
 
 
-  // ---------------- müşteriler ----------------
-  let musterilerListe = [], acikMusteri = null, sonKullanicilar = [];
-
-  function modelSecimKutusu(kapsayici, secili) {
+  // Model kutucukları. Katalogdaki aktif modellerden kuruluyor; fiyatı da
+  // yazıyor ki "hangisi pahalı" görünsün.
+  function modelSecimKutusu(kapsayici, secili, tavan) {
     const aktif = modeller.filter(m => m.is_active);
     if (!aktif.length) {
       kapsayici.innerHTML = '<div class="yardim">No active models in the catalog yet.</div>';
       return;
     }
-    kapsayici.innerHTML = aktif.map(m => {
-      const anahtar = m.provider + '/' + m.model;
-      return '<label class="secim"><input type="checkbox" value="' + kacir(anahtar) + '"' +
-        (secili.includes(anahtar) ? ' checked' : '') + '>' +
-        nokta(m.provider) + kacir(m.model) + '</label>';
-    }).join('');
+    // Fiyat yanında duruyor çünkü asıl karar bu: pahalı bir modeli
+    // işaretlemek onu tavanın üstünde de olsa açmak demek.
+    // Ucuz modeller kutu işaretsiz olsa da çalışıyor: fiyat tavanı ayrı bir
+    // izin yolu. Kutuya bakıp "kapalı" sanmamak için bu satırlar açıkça
+    // "open" rozetiyle işaretleniyor.
+    kapsayici.classList.add('secimListe');
+    kapsayici.innerHTML =
+      '<div class="yardim" style="margin:0 0 .5rem">' +
+      'Prices are dollars per million output tokens. A model under the price ' +
+      'limit opens on its own the first time this person asks for it; anything ' +
+      'above the limit needs a tick here.</div>' +
+      aktif.map(m => {
+        const anahtar = m.provider + '/' + m.model;
+        const fiyat = (m.output_price || 0) * 1000;
+        const isaretli = secili.includes(anahtar);
+        const tavanVar = tavan !== null && tavan !== undefined;
+        const ucuz = tavanVar && fiyat <= tavan;
+        // Her kutu gerçek: işaretliyse o kişide açık, değilse kapalı.
+        // Tavanın altındakiler için not, kendiliğinden açılacaklarını söylüyor.
+        return '<label class="secim">' +
+          '<input type="checkbox" value="' + kacir(anahtar) + '"' +
+          (isaretli ? ' checked' : '') + '>' +
+          nokta(m.provider) + kacir(m.model) +
+          ' <span class="yardim">$' + fiyat.toFixed(2) + '/1M' +
+          (isaretli
+            ? ''
+            : ucuz
+              ? ' &middot; under the limit — opens by itself the first time they ask for it'
+              : tavanVar
+                ? ' &middot; over the limit — tick to grant it'
+                : ' &middot; no price limit set, so only a tick opens it') +
+          '</span></label>';
+      }).join('');
   }
+
+  // Kilitli kutular fiyat kuralıyla açık olanlar; onları listeye yazmak
+  // gereksiz istisna üretirdi ve tavan düşürüldüğünde açık kalırlardı.
   const secilenModeller = (kapsayici) =>
     [...kapsayici.querySelectorAll('input:checked')].map(i => i.value);
 
-  function mTabloCiz() {
-    // Arama yalnızca yüklü listeyi süzüyor; sunucuya gitmiyor. 21 müşteride
-    // fark etmez ama liste büyüdüğünde sayfalamaya çevrilmesi gerekir.
-    const arama = ($('mArama').value || '').trim().toLowerCase();
-    const gorunen = arama
-      ? musterilerListe.filter(m => (m.name || '').toLowerCase().includes(arama))
-      : musterilerListe;
+  // ---------------- kişiler ----------------
+  //
+  // Panelin ana ekranı. Servis şirket içinde kullanılıyor; yönetilen şey
+  // kişiler: kim neye erişebiliyor, ne harcamış.
+  //
+  // Şirket (clients) arka planda tek satır olarak duruyor ve "politika"
+  // olarak sunuluyor: herkes için üst sınır. Tablo kaldırılmadı çünkü
+  // ileride takım kavramı gerekebilir.
+  let kisiler = [], sirket = null, ortak = null, talepler = [];
 
-    $('mSayac').textContent = arama
-      ? gorunen.length + ' of ' + musterilerListe.length
-      : musterilerListe.length + ' customer' + (musterilerListe.length === 1 ? '' : 's');
+  // Bir kişinin gerçekten çağırabildiği modeller.
+  //
+  // İki yol var ve ikisi de sayılıyor:
+  //   1. kişinin listesinde işaretli VE şirket listesinde de açık
+  //   2. fiyatı etkin tavanın altında (işaret gerekmiyor)
+  // Sıralama önce işaretliler, çünkü onlar bilinçli kararlar.
+  // Kişinin gerçekten erişebildiği modeller = kendi listesi.
+  //
+  // Eskiden buraya "fiyatı tavanın altında olan her model" de ekleniyordu,
+  // çünkü tavan herkese açık bir kuraldı. Artık tavan bir onay kuralı: ucuz
+  // bir modeli ilk çağıran kişiye o model yazılıyor. Yani liste kimin neye
+  // eriştiğini doğrudan gösteriyor, türetmeye gerek kalmadı.
+  function etkinModeller(k) {
+    return (k.allowed_models || [])
+      .filter(m => modeller.some(x => x.is_active && x.provider + '/' + x.model === m))
+      .map(m => ({ ad: m, fiyattan: false }));
+  }
 
-    if (arama && !gorunen.length) {
-      $('mTablo').innerHTML = '';
-      $('mBos').innerHTML = '<div class="simge">◷</div><h3>No match</h3>' +
-        '<p>No customer name contains &ldquo;' + kacir(arama) + '&rdquo;.</p>';
-      $('mBos').classList.remove('gizli');
-      $('mAltNot').textContent = '';
+  // Kalan bütçeyi tek satırda özetliyor. Sayılar Redis sayacından geliyor;
+  // dönem bitince sayaç kendiliğinden sıfırlanıyor.
+  function butceOzet(b) {
+    if (!b) return '';
+    const parca = [];
+    if (b.gunlukSinir !== null) {
+      const kalan = Math.max(0, b.gunlukSinir - b.gunlukHarcama);
+      parca.push('today ' + para(b.gunlukHarcama) + ' of $' + b.gunlukSinir +
+        ' · ' + para(kalan) + ' left');
+    }
+    if (b.aylikSinir !== null) {
+      const kalan = Math.max(0, b.aylikSinir - b.aylikHarcama);
+      parca.push('this month ' + para(b.aylikHarcama) + ' of $' + b.aylikSinir +
+        ' · ' + para(kalan) + ' left');
+    }
+    return parca.join(' — ') || 'no limit set';
+  }
+
+  function politikaCiz() {
+    if (!sirket) { $('politikaKart').innerHTML = ''; return; }
+    const tavan = sirket.max_output_price;
+
+    $('politikaKart').innerHTML =
+      '<div class="baslikkucuk">Company rules</div>' +
+      '<div class="yardim" style="margin:.35rem 0 1.1rem">' +
+      'The defaults for everyone at ' + kacir(sirket.name) + '. ' +
+      'A person can be given tighter limits on their own row; whichever is ' +
+      'lower applies.</div>' +
+
+      // Şirket model listesi kaldırıldı: modeli tamamen kapatmak Models
+      // sekmesindeki aktiflik bayrağının işi, kişiye açmak da kişi satırının.
+      // Aradaki üçüncü liste hiçbir şey eklemiyor, sadece sessiz hata
+      // üretiyordu.
+      '<div class="bolumBaslik" style="font-size:.85rem">Price limit</div>' +
+      '<div class="yardim" style="margin:.3rem 0 .7rem">' +
+      'The default for everyone. Any model priced under this works without ' +
+      'approval, so a cheap new model is usable the day it appears; anything ' +
+      'above it is refused and shows up as a request. A person can be given a ' +
+      'lower limit, or an individual exception, on their own row. ' +
+      'This is a rate per million tokens, unrelated to the budget below.</div>' +
+      '<div class="formSatir" style="grid-template-columns:1fr 2fr">' +
+      '<label>Highest price allowed<input id="poTavan" type="number" step="0.01" min="0" ' +
+      'placeholder="no cap" value="' + (tavan ? (tavan * 1000).toFixed(2) : '') + '"></label>' +
+      '<div class="yardim" style="align-self:end;padding-bottom:.55rem">' +
+      'dollars per million output tokens</div></div>' +
+
+      '<div class="bolumBaslik" style="margin-top:1.4rem;font-size:.85rem">Company budget</div>' +
+      '<div class="yardim" style="margin:.3rem 0 .7rem">' +
+      'Requests stop when this is used up. The daily figure keeps a runaway script ' +
+      'from burning the month in an hour.</div>' +
+      '<div class="formSatir" style="grid-template-columns:1fr 1fr 2fr">' +
+      '<label>Per month<input id="poAy" type="number" step="1" min="0" placeholder="none" value="' +
+        (sirket.monthly_budget ?? '') + '"></label>' +
+      '<label>Per day<input id="poGun" type="number" step="1" min="0" placeholder="none" value="' +
+        (sirket.daily_budget ?? '') + '"></label>' +
+      '<div class="yardim" style="align-self:end;padding-bottom:.55rem">' +
+      butceOzet(sirket.butce) + '</div></div>' +
+
+      '<div style="display:flex;gap:.6rem;margin-top:1.2rem">' +
+      '<button class="dugme koyu" id="poKaydet">Save rules</button></div>' +
+      '<div class="uyari gizli" id="poHata"></div>';
+
+    $('poKaydet').onclick = async () => {
+      $('poKaydet').disabled = true;
+      const t = $('poTavan').value.trim();
+      try {
+        const ay = $('poAy').value.trim(), gun = $('poGun').value.trim();
+        await api('/customers/' + sirket.id, { method: 'PATCH', body: JSON.stringify({
+          max_output_price: t === '' ? null : Number(t) / 1000,
+          monthly_budget: ay === '' ? null : Number(ay),
+          daily_budget: gun === '' ? null : Number(gun)
+        })});
+        await kisilerYukle();
+      } catch (e) {
+        $('poHata').textContent = e.message; $('poHata').classList.remove('gizli');
+      } finally { $('poKaydet').disabled = false; }
+    };
+  }
+
+  function kisiTabloCiz() {
+    $('kiSayac').textContent = kisiler.length + (kisiler.length === 1 ? ' person' : ' people');
+    if (!kisiler.length) {
+      $('kiTablo').innerHTML = '';
+      $('kiBos').innerHTML = '<div class="simge">◷</div><h3>No people yet</h3>' +
+        '<p>Add someone so they can sign in to the portal and get a key.</p>';
+      $('kiBos').classList.remove('gizli');
+      $('kiAltNot').textContent = '';
       return;
     }
+    $('kiBos').classList.add('gizli');
 
-    if (!musterilerListe.length) {
-      $('mTablo').innerHTML = '';
-      $('mBos').innerHTML = '<div class="simge">◷</div><h3>No customers yet</h3>' +
-        '<p>Create the first customer to issue a key.</p>';
-      $('mBos').classList.remove('gizli');
-      $('mAltNot').textContent = '';
-      return;
-    }
-    $('mBos').classList.add('gizli');
-    $('mTablo').innerHTML =
-      '<thead><tr><th>Customer</th><th>Type</th><th>Access</th><th>Keys</th>' +
-      '<th class="sayi">Requests</th><th>Last seen</th><th>Status</th></tr></thead><tbody>' +
-      gorunen.map((m) => {
-        const i = musterilerListe.indexOf(m);
-        const izin = (m.allowed_models || []).length;
-        const canli = (m.anahtarlar || []).filter(a => a.is_active).length;
+    $('kiTablo').innerHTML =
+      '<thead><tr><th>Person</th><th>Can use</th><th>Today</th><th>This month</th>' +
+      '<th>Keys</th><th class="sayi">Requests</th><th>Last seen</th><th></th></tr></thead><tbody>' +
+      kisiler.map((k, i) => {
+        const izinli = k.allowed_models || [];
+        const canli = (k.anahtarlar || []).filter(a => a.is_active).length;
+        const u = k.kullanim || {};
+        const b = k.butce;
+
+        // Sütun GERÇEKTEN kullanabildiklerini gösteriyor, sadece işaretli
+        // listeyi değil. İkisi aynı şey değil: fiyat tavanının altındaki
+        // modeller hiç işaretlenmeden çalışıyor. Önce yalnızca işaretliler
+        // yazılıyordu ve sütun "Can use" dediği hâlde yalan söylüyordu —
+        // Umur gpt-4o kullanabiliyordu ama listede yoktu.
+        const etkin = etkinModeller(k);
+        const modelYazi = etkin.length
+          ? etkin.map(m =>
+              '<span class="rozet' + (m.fiyattan ? ' fiyattan' : '') + '"' +
+              ' title="' + (m.fiyattan ? 'Open because its price is under the limit'
+                                       : 'Ticked for this person') + '">' +
+              kacir(m.ad.split('/')[1]) + '</span>').join('')
+          : '<span class="hap bek">nothing</span>';
+
         return '<tr class="tiklanir" data-i="' + i + '">' +
-          '<td>' + kacir(m.name) + '</td>' +
-          '<td>' + (m.client_type === 'browser-based' ? 'Browser' : 'Server') + '</td>' +
-          '<td>' + (m.max_output_price
-            ? '≤ $' + (m.max_output_price * 1000).toFixed(2) + '/1M' +
-              (izin ? ' <span class="yardim">+' + izin + '</span>' : '')
-            : izin
-              ? izin + ' allowed'
-              : '<span class="hap bek">none</span>') + '</td>' +
-          '<td>' + (canli
-            ? canli + ' active'
-            : '<span class="hap">no key</span>') + '</td>' +
-          '<td class="sayi">' + bin(m.istek) + '</td>' +
-          '<td class="sayi">' + (m.sonIstek
-            ? new Date(m.sonIstek).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
-            : '—') + '</td>' +
-          '<td>' + (m.is_active
-            ? '<span class="hap ok">active</span>'
-            : '<span class="hap">suspended</span>') + '</td></tr>';
+          '<td>' + kacir(k.email) +
+            (k.role === 'owner' ? ' <span class="hap ok">owner</span>' : '') + '</td>' +
+          '<td>' + modelYazi + '</td>' +
+          // Harcama ile bütçe aynı dönemden okunuyor: yan yana duran iki sayı
+          // farklı dönemleri gösterirse karşılaştırılamaz.
+          '<td class="sayi">' + (b && b.gunlukSinir !== null
+            ? para(b.gunlukHarcama) + ' <span class="yardim">/ $' + b.gunlukSinir + '</span>' +
+              (b.asildi === 'gunluk' ? ' <span class="hap err">used up</span>' : '')
+            : para((b && b.gunlukHarcama) || 0)) + '</td>' +
+          '<td class="sayi">' + (b && b.aylikSinir !== null
+            ? para(b.aylikHarcama) + ' <span class="yardim">/ $' + b.aylikSinir + '</span>' +
+              (b.asildi === 'aylik' ? ' <span class="hap err">used up</span>' : '')
+            : para((b && b.aylikHarcama) || 0)) + '</td>' +
+          '<td>' + (canli ? canli : '<span class="hap">none</span>') + '</td>' +
+          '<td class="sayi">' + bin(u.istek || 0) +
+            ((u.hata || 0) ? ' <span class="hap err">' + u.hata + '</span>' : '') + '</td>' +
+          '<td class="sayi">' + (u.son ? gunTarih(u.son) : '—') + '</td>' +
+          '<td class="islem"><button class="satirDugme" data-ac="' + i + '">Manage</button></td></tr>';
       }).join('') + '</tbody>';
 
-    // Uyarı sayısı her zaman listenin tamamından: arama yaparken sorunların
-    // gizlenmesi istenmiyor.
-    const izinsiz = musterilerListe.filter(m => !(m.allowed_models || []).length).length;
-    const bosMusteri = musterilerListe.filter(m => !m.istek && !(m.allowed_models || []).length).length;
-    $('mAltNot').textContent =
-      (izinsiz ? izinsiz + ' with no allowed model — these cannot make requests' : 'All customers have model access') +
-      (bosMusteri ? ' · ' + bosMusteri + ' of them never sent a request and can be deleted' : '');
+    const izinsiz = kisiler.filter(k => !(k.allowed_models || []).length && !k.max_output_price).length;
+    const anahtarsiz = kisiler.filter(k => !(k.anahtarlar || []).length).length;
+    $('kiAltNot').textContent =
+      (izinsiz ? izinsiz + ' with no model access — their requests are rejected' : 'Everyone has model access') +
+      (anahtarsiz ? ' · ' + anahtarsiz + ' without a key' : '');
   }
 
-  // Erişim talepleri: reddedilen 403'lerden türetiliyor.
-  let talepler = [];
+  function ortakTabloCiz() {
+    const liste = (ortak && ortak.anahtarlar) || [];
+    $('ortakSayac').textContent = liste.length + (liste.length === 1 ? ' key' : ' keys');
+    if (!liste.length) {
+      $('ortakTablo').innerHTML = '';
+      $('ortakBos').innerHTML = '<div class="simge">◷</div><h3>No shared keys</h3>' +
+        '<p>Every key belongs to someone.</p>';
+      $('ortakBos').classList.remove('gizli');
+      return;
+    }
+    $('ortakBos').classList.add('gizli');
+    const u = (ortak && ortak.kullanim) || {};
+    $('ortakTablo').innerHTML =
+      '<thead><tr><th>Key</th><th>Environment</th><th>Created</th><th>Status</th></tr></thead><tbody>' +
+      liste.map(a => '<tr>' +
+        '<td>' + (a.key_prefix ? '<code class="onek">' + kacir(a.key_prefix) + '…</code> ' : '') +
+          kacir(a.label || 'unnamed') + '</td>' +
+        '<td>' + kacir(a.environment) + '</td>' +
+        '<td class="sayi">' + gunTarih(a.created_at) + '</td>' +
+        '<td>' + (a.is_active ? '<span class="hap ok">active</span>'
+                              : '<span class="hap">revoked</span>') + '</td></tr>').join('') +
+      '</tbody>';
+    $('ortakSayac').textContent = liste.length + ' keys · ' + bin(u.istek || 0) + ' requests';
+  }
 
   function talepCiz() {
-    if (!talepler.length) { $('talepKart').classList.add('gizli'); return; }
-    $('talepKart').classList.remove('gizli');
     $('talepSayac').textContent = talepler.length + ' pending';
+    if (!talepler.length) {
+      $('talepTablo').innerHTML = '';
+      $('talepBos').innerHTML = '<div class="simge">◷</div><h3>Nothing pending</h3>' +
+        '<p>No one has been turned away from a model.</p>';
+      $('talepBos').classList.remove('gizli');
+      return;
+    }
+    $('talepBos').classList.add('gizli');
     $('talepTablo').innerHTML =
-      '<thead><tr><th>Customer</th><th>Model</th><th class="sayi">Attempts</th>' +
-      '<th>Last try</th><th></th></tr></thead><tbody>' +
-      talepler.map((t, i) => '<tr>' +
+      '<thead><tr><th>Person</th><th>Model</th><th>Why it was refused</th>' +
+      '<th class="sayi">Attempts</th><th>Last try</th><th></th></tr></thead><tbody>' +
+      talepler.map((t, i) => {
+        // Her sebebin çözümü farklı; düğme de ona göre.
+        const sebepler = {
+          'not-granted':   ['Not ticked for this person', 'Allow'],
+          'too-expensive': ['Pricier than their price limit', 'Allow'],
+          'model-inactive':['Model is switched off in the catalog', 'Allow'],
+          'not-in-catalog':['Not in the catalog at all', 'Allow']
+        };
+        const [aciklama, dugme] = sebepler[t.sebep] || ['Refused', 'Allow'];
+        return '<tr>' +
         '<td>' + kacir(t.musteri) + '</td>' +
-        '<td>' + nokta(t.provider) + kacir(t.model) +
-          (t.modelAktif ? '' : ' <span class="hap bek">model inactive</span>') + '</td>' +
+        '<td>' + nokta(t.provider) + kacir(t.model) + '</td>' +
+        '<td>' + aciklama +
+          (t.sebep === 'model-inactive'
+            ? '<br><span class="yardim">Switch it on under Models first</span>'
+            : t.sebep === 'not-in-catalog'
+              ? '<br><span class="yardim">Add it under Models first</span>'
+              : '') + '</td>' +
         '<td class="sayi">' + bin(t.adet) + '</td>' +
         '<td class="sayi">' + gunTarih(t.son) + '</td>' +
-        '<td class="islem"><button class="satirDugme" data-talep="' + i + '">Allow</button></td>' +
-        '</tr>').join('') + '</tbody>';
+        '<td class="islem">' +
+          (t.sebep === 'not-in-catalog'
+            ? '<span class="yardim">—</span>'
+            : '<button class="satirDugme" data-talep="' + i + '">' + dugme + '</button>') +
+        '</td></tr>';
+      }).join('') + '</tbody>';
   }
+
+  async function kisilerYukle() {
+    $('uyari').classList.add('gizli');
+    if (!kisiler.length) $('yukleniyor').classList.remove('gizli');
+    try {
+      // Katalog da lazım: "Can use" sütunu ve izin kutuları fiyatlara
+      // bakıyor. Models sekmesine hiç girilmeden People açılırsa liste boş
+      // kalıyordu.
+      const [v, t, mm] = await Promise.all([
+        api('/people'), api('/access-requests'), api('/models')
+      ]);
+      kisiler = v.kisiler; sirket = v.sirket; ortak = v.ortak;
+      talepler = t.talepler;
+      modeller = mm.modeller;
+      politikaCiz(); kisiTabloCiz(); ortakTabloCiz(); talepCiz();
+    } catch (e) {
+      $('uyari').textContent = e.message;
+      $('uyari').classList.remove('gizli');
+    } finally {
+      $('yukleniyor').classList.add('gizli');
+    }
+  }
+
+  // Kişi detayı: erişim, anahtarlar, hesap işlemleri.
+  function kisiAc(k) {
+    const u = k.kullanim || {};
+    $('ypBaslik').textContent = k.email;
+    $('ypZaman').textContent = (k.role === 'owner' ? 'Owner' : 'Member') + ' since ' +
+      new Date(k.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+
+    const tavan = k.max_output_price;
+    $('ypGovde').innerHTML =
+      '<div class="bolumBaslik">Usage</div><dl class="ozellik">' +
+      '<dt>Requests</dt><dd>' + bin(u.istek || 0) + '</dd>' +
+      '<dt>Cost</dt><dd>' + para(u.maliyet || 0) + '</dd>' +
+      '<dt>Last request</dt><dd>' + (u.son
+        ? new Date(u.son).toLocaleString('en-GB', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' })
+        : 'never') + '</dd></dl>' +
+
+      '<div class="bolumBaslik">Which models they can use</div>' +
+      '<div class="yardim" style="margin-bottom:.7rem">' +
+      'Applies to requests sent with the keys this person owns. Ticked means ' +
+      'open to them. Cheap models tick themselves the first time they are ' +
+      'asked for; expensive ones wait for you.</div>' +
+      '<div id="ypModeller" class="secimKutu"></div>' +
+      '<div class="bolumBaslik" style="margin-top:1.3rem;font-size:.85rem">Price limit</div>' +
+      '<div class="yardim" style="margin:.3rem 0 .7rem">' +
+      'Decides <b>which</b> models they may use, not how much they may spend. ' +
+      'Anything cheaper than this works without being ticked above. ' +
+      'This is a rate per million tokens — a single reply costs a tiny fraction ' +
+      'of it, so it never eats into the budget below.</div>' +
+      '<div class="formSatir" style="grid-template-columns:1fr 2fr">' +
+      '<label>Highest price<input id="ypTavan" type="number" step="0.01" min="0" ' +
+      'placeholder="no cap" value="' + (tavan ? (tavan * 1000).toFixed(2) : '') + '"></label>' +
+      '<div class="yardim" style="align-self:end;padding-bottom:.55rem">' +
+      'dollars per million output tokens</div></div>' +
+      '<div class="bolumBaslik" style="margin-top:1.4rem;font-size:.85rem">Budget</div>' +
+      '<div class="yardim" style="margin:.3rem 0 .7rem">' +
+      'Real money actually spent. Requests stop once it runs out. Switching to a ' +
+      'pricier model does not use any of it up on its own.<br>' + butceOzet(k.butce) + '</div>' +
+      '<div class="formSatir" style="grid-template-columns:1fr 1fr">' +
+      '<label>Per month<input id="ypAy" type="number" step="1" min="0" placeholder="company default" value="' +
+        (k.monthly_budget ?? '') + '"></label>' +
+      '<label>Per day<input id="ypGun" type="number" step="1" min="0" placeholder="company default" value="' +
+        (k.daily_budget ?? '') + '"></label></div>' +
+
+      '<div class="kaydetCubugu">' +
+      '<button class="dugme koyu" id="ypKaydet">Save access</button>' +
+      '<button class="dugme cerceveli" id="ypRol">' +
+        (k.role === 'owner' ? 'Make member' : 'Make owner') + '</button>' +
+      '<button class="dugme cerceveli tehlike" id="ypSil">Remove</button>' +
+      '<span class="degisti gizli" id="ypDegisti">Unsaved changes</span></div>' +
+      '<div class="uyari gizli" id="ypHata"></div>' +
+
+      '<div class="bolumBaslik" style="margin-top:1.8rem">Keys</div>' +
+      '<div class="hesap" id="ypAnahtarlar">' +
+      ((k.anahtarlar || []).length
+        ? k.anahtarlar.map(a =>
+            '<div class="sat"><span>' +
+            (a.key_prefix ? '<code class="onek">' + kacir(a.key_prefix) + '…</code> ' : '') +
+            kacir(a.label || 'unnamed') + ' · ' + kacir(a.environment) + ' · ' +
+            gunTarih(a.created_at) + '</span><span>' +
+            (a.is_active
+              ? '<button class="satirDugme tehlike" data-anahtar="' + a.id + '">Revoke</button>'
+              : '<span class="hap">revoked</span>') + '</span></div>').join('')
+        : '<div class="sat"><span>No key yet</span><span></span></div>') + '</div>' +
+      '<label class="secim" style="margin-top:.7rem"><input type="checkbox" id="ypEskiKapat">Revoke existing keys</label>' +
+      '<button class="dugme cerceveli" id="ypYeniAnahtar" style="margin-top:.7rem">Issue key</button>' +
+
+      '<div class="bolumBaslik" style="margin-top:1.8rem">Account</div>' +
+      '<div class="dugmeler" style="display:flex;gap:.6rem">' +
+      '<button class="dugme cerceveli" id="ypEposta">Change email</button>' +
+      '<button class="dugme cerceveli" id="ypSifre">Reset password</button></div>';
+
+    modelSecimKutusu($('ypModeller'), k.allowed_models || [], (() => {
+      const kt = k.max_output_price, st = sirket && sirket.max_output_price;
+      const e = (kt != null && st != null) ? Math.min(kt, st) : (kt != null ? kt : st);
+      return e == null ? null : e * 1000;
+    })());
+    panelAc();
+
+    // Bir şey değiştiği anda çubukta belirsin — kaydetmeden kapatmayı önler.
+    ['ypModeller', 'ypTavan', 'ypAy', 'ypGun'].forEach(id => {
+      const e = $(id);
+      if (e) e.addEventListener('change', () => $('ypDegisti').classList.remove('gizli'));
+    });
+
+    $('ypKaydet').onclick = async () => {
+      const t = $('ypTavan').value.trim();
+      $('ypKaydet').disabled = true;
+      try {
+        const ay = $('ypAy').value.trim(), gun = $('ypGun').value.trim();
+        await api('/users/' + k.id + '/permissions', { method: 'PATCH', body: JSON.stringify({
+          allowed_models: secilenModeller($('ypModeller')),
+          max_output_price: t === '' ? null : Number(t) / 1000,
+          monthly_budget: ay === '' ? null : Number(ay),
+          daily_budget: gun === '' ? null : Number(gun)
+        })});
+        // kisilerYukle talepleri de yeniden çekiyor; verilen izin varsa
+        // talep hem buradan hem Dashboard şeridinden düşüyor.
+        const oncekiTalep = talepler.length;
+        await kisilerYukle();
+        detayKapat();
+        if (talepler.length < oncekiTalep) {
+          const dusen = oncekiTalep - talepler.length;
+          bildir(dusen + (dusen === 1 ? ' access request' : ' access requests') + ' cleared');
+        }
+      } catch (e) {
+        $('ypHata').textContent = e.message; $('ypHata').classList.remove('gizli');
+      } finally { $('ypKaydet').disabled = false; }
+    };
+
+    $('ypRol').onclick = async () => {
+      try {
+        await api('/users/' + k.id, { method: 'PATCH',
+          body: JSON.stringify({ role: k.role === 'owner' ? 'member' : 'owner' }) });
+        await kisilerYukle(); detayKapat();
+      } catch (e) { $('ypHata').textContent = e.message; $('ypHata').classList.remove('gizli'); }
+    };
+
+    $('ypSil').onclick = async () => {
+      if (!confirm('Remove ' + k.email + '? Keys they own stay active and become shared.')) return;
+      try {
+        await api('/users/' + k.id, { method: 'DELETE' });
+        await kisilerYukle(); detayKapat();
+      } catch (e) { $('ypHata').textContent = e.message; $('ypHata').classList.remove('gizli'); }
+    };
+
+    $('ypEposta').onclick = () => epostaKutusuAc($('ypEposta'), k.email, async (yeni) => {
+      await api('/users/' + k.id, { method: 'PATCH', body: JSON.stringify({ email: yeni }) });
+      await kisilerYukle(); detayKapat();
+    });
+
+    $('ypSifre').onclick = () => sifreSifirlamaAc($('ypSifre'), async (yeni) => {
+      const v = await api('/users/' + k.id, { method: 'PATCH', body: JSON.stringify({ password: yeni }) });
+      alert('New password: ' + v.sifre + '\\n\\nShown once — copy it now.');
+    });
+
+    $('ypYeniAnahtar').onclick = async () => {
+      const kapat = $('ypEskiKapat').checked;
+      if (kapat && !confirm('Existing keys stop working immediately. Continue?')) return;
+      try {
+        const v = await api('/customers/' + k.client_id + '/keys', {
+          method: 'POST', body: JSON.stringify({ eskileriKapat: kapat, user_id: k.id })
+        });
+        await kisilerYukle();
+        alert('New key:\\n\\n' + v.anahtar + '\\n\\nShown once — copy it now.');
+        detayKapat();
+      } catch (e) { $('ypHata').textContent = e.message; $('ypHata').classList.remove('gizli'); }
+    };
+
+    $('ypAnahtarlar').onclick = async (e) => {
+      const d = e.target.closest('[data-anahtar]'); if (!d) return;
+      if (!confirm('Revoke this key? Requests using it will be rejected.')) return;
+      try {
+        await api('/keys/' + d.dataset.anahtar, { method: 'PATCH', body: JSON.stringify({ is_active: false }) });
+        await kisilerYukle();
+        const yeni = kisiler.find(x => x.id === k.id);
+        if (yeni) kisiAc(yeni);
+      } catch (err) { $('ypHata').textContent = err.message; $('ypHata').classList.remove('gizli'); }
+    };
+  }
+
+  $('kiTablo').addEventListener('click', e => {
+    const d = e.target.closest('[data-ac]') || e.target.closest('tr.tiklanir');
+    if (!d) return;
+    const i = Number(d.dataset.ac !== undefined ? d.dataset.ac : d.dataset.i);
+    const k = kisiler[i];
+    if (k) kisiAc(k);
+  });
 
   $('talepTablo').addEventListener('click', async (e) => {
     const d = e.target.closest('[data-talep]'); if (!d) return;
@@ -1017,10 +1501,23 @@ ${YAZI_TIPI}
     if (!confirm('Allow ' + t.musteri + ' to use ' + t.modelAnahtar + '?')) return;
     d.disabled = true;
     try {
-      await api('/customers/' + t.clientId + '/allow', {
-        method: 'POST', body: JSON.stringify({ model: t.modelAnahtar })
-      });
-      await musteriYukle();
+      // Talep kişiye ait: iznini o kişinin listesine ekliyoruz.
+      const kisi = t.userId
+        ? kisiler.find(x => x.id === t.userId)
+        : kisiler.find(x => x.email === t.musteri);
+      if (kisi) {
+        await api('/users/' + kisi.id + '/permissions', {
+          method: 'PATCH',
+          body: JSON.stringify({
+            allowed_models: [...new Set([...(kisi.allowed_models || []), t.modelAnahtar])]
+          })
+        });
+      } else {
+        await api('/customers/' + t.clientId + '/allow', {
+          method: 'POST', body: JSON.stringify({ model: t.modelAnahtar })
+        });
+      }
+      await kisilerYukle();
     } catch (err) {
       $('uyari').textContent = err.message;
       $('uyari').classList.remove('gizli');
@@ -1028,342 +1525,46 @@ ${YAZI_TIPI}
     }
   });
 
-  async function musteriYukle() {
-    $('uyari').classList.add('gizli');
-    if (!musterilerListe.length) $('yukleniyor').classList.remove('gizli');
-    try {
-      const [m, t] = await Promise.all([api('/customers'), api('/access-requests')]);
-      musterilerListe = m.musteriler;
-      talepler = t.talepler;
-      talepCiz();
-      mTabloCiz();
-    } catch (e) {
-      $('uyari').textContent = 'Could not load customers. ' + e.message;
-      $('uyari').classList.remove('gizli');
-    } finally {
-      $('yukleniyor').classList.add('gizli');
-    }
-  }
-
-  // ---- yeni müşteri ----
+  // Yeni kişi.
   $('mEkleAc').addEventListener('click', () => {
     $('mEkleKart').classList.toggle('gizli');
     if (!$('mEkleKart').classList.contains('gizli')) {
-      modelSecimKutusu($('mModeller'), []);
-      $('mAd').focus();
+      // Varsayılan olarak şirketin izin verdiği modeller işaretli geliyor:
+      // en sık istenen bu, ve boş bırakılırsa kişi hiçbir şey yapamıyor.
+      modelSecimKutusu($('kiModeller'), (sirket && sirket.allowed_models) || [],
+        sirket && sirket.max_output_price != null ? sirket.max_output_price * 1000 : null);
+      $('kiEposta').focus();
     }
   });
-  $('mEkleIptal').addEventListener('click', () => {
+  $('kiEkleIptal').addEventListener('click', () => {
     $('mEkleKart').classList.add('gizli');
-    $('mEkleHata').classList.add('gizli');
-    $('mAd').value = ''; $('mAlan').value = '';
+    $('kiEkleHata').classList.add('gizli');
+    $('kiEposta').value = ''; $('kiSifre').value = '';
   });
-
-  $('mEkleKaydet').addEventListener('click', async () => {
-    const ad = $('mAd').value.trim();
-    if (!ad) { $('mEkleHata').textContent = 'Customer name is required.';
-      $('mEkleHata').classList.remove('gizli'); return; }
-
-    $('mEkleHata').classList.add('gizli');
-    $('mEkleKaydet').disabled = true;
+  $('kiEkleKaydet').addEventListener('click', async () => {
+    const e = $('kiEposta').value.trim();
+    if (!e) return;
+    $('kiEkleKaydet').disabled = true; $('kiEkleHata').classList.add('gizli');
     try {
-      const v = await api('/customers', { method: 'POST', body: JSON.stringify({
-        name: ad,
-        client_type: $('mTur').value,
-        environment: $('mOrtam').value,
-        allowed_models: secilenModeller($('mModeller')),
-        allowed_domains: $('mAlan').value.split(',').map(x => x.trim()).filter(Boolean)
-      })});
-      $('mEkleIptal').click();
-      await musteriYukle();
-      anahtarGoster(v.musteri, v.anahtar, true);
-    } catch (e) {
-      $('mEkleHata').textContent = e.message;
-      $('mEkleHata').classList.remove('gizli');
-    } finally {
-      $('mEkleKaydet').disabled = false;
-    }
-  });
-
-  // ---- anahtar bir kez gösterilir ----
-  function anahtarGoster(musteri, anahtar, yeniMi) {
-    $('ypBaslik').textContent = musteri.name;
-    $('ypZaman').textContent = yeniMi ? 'Customer created' : 'New key issued';
-    $('ypGovde').innerHTML =
-      '<div class="bolumBaslik">API key</div>' +
-      '<div class="dogrula bek">This is the only time the key is shown. ' +
-      'Only its hash is stored, so it cannot be recovered later.</div>' +
-      '<div class="anahtarKutu"><code id="ypAnahtar">' + kacir(anahtar) + '</code></div>' +
-      '<button class="dugme koyu" id="ypKopyala" style="margin-top:.8rem">Copy key</button>' +
-      '<div class="bolumBaslik" style="margin-top:1.6rem">How the customer uses it</div>' +
-      '<div class="hesap"><div class="sat"><span>Authorization</span>' +
-      '<span>Bearer &lt;key&gt;</span></div>' +
-      '<div class="sat"><span>Portal</span><span>/portal</span></div></div>';
-    panelAc();
-    $('ypKopyala').addEventListener('click', async () => {
-      try {
-        await navigator.clipboard.writeText(anahtar);
-        $('ypKopyala').textContent = 'Copied';
-        setTimeout(() => { if ($('ypKopyala')) $('ypKopyala').textContent = 'Copy key'; }, 1500);
-      } catch (e) {
-        // Panoya erişim kapalıysa metni seçilebilir bırakmak yeterli.
-        const r = document.createRange(); r.selectNode($('ypAnahtar'));
-        getSelection().removeAllRanges(); getSelection().addRange(r);
-      }
-    });
-  }
-
-  // ---- müşteri detayı ----
-  function musteriAc(m) {
-    acikMusteri = m;
-    const canli = (m.anahtarlar || []).filter(a => a.is_active);
-    $('ypBaslik').textContent = m.name;
-    $('ypZaman').textContent = 'Customer since ' +
-      new Date(m.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
-
-    $('ypGovde').innerHTML =
-      '<div class="bolumBaslik">Summary</div><dl class="ozellik">' +
-      '<dt>Type</dt><dd>' + (m.client_type === 'browser-based' ? 'Browser-based' : 'Server-based') + '</dd>' +
-      '<dt>Requests</dt><dd>' + bin(m.istek) + '</dd>' +
-      '<dt>Last request</dt><dd>' + (m.sonIstek
-        ? new Date(m.sonIstek).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
-        : 'never') + '</dd>' +
-      '<dt>Status</dt><dd>' + (m.is_active
-        ? '<span class="hap ok">active</span>'
-        : '<span class="hap">suspended</span>') + '</dd></dl>' +
-
-      '<div class="bolumBaslik">Price limit</div>' +
-      '<div class="yardim" style="margin-bottom:.7rem">' +
-      'Any model at or below this output price is usable without approval — including ' +
-      'models added later. Leave empty to require the list below for everything.</div>' +
-      '<div class="formSatir" style="grid-template-columns:1fr 2fr">' +
-      '<label>Max output price<input id="ypTavan" type="number" step="0.01" min="0" ' +
-      'placeholder="15.00" value="' +
-      (m.max_output_price ? (m.max_output_price * 1000).toFixed(2) : '') + '"></label>' +
-      '<div class="yardim" style="align-self:end;padding-bottom:.55rem">$ per 1M output tokens</div>' +
-      '</div>' +
-
-      '<div class="bolumBaslik" style="margin-top:1.5rem">Always allowed</div>' +
-      '<div class="yardim" style="margin-bottom:.7rem">' +
-      'Exceptions — these work even above the price limit. Anything not listed and above ' +
-      'the limit is rejected with 403.</div>' +
-      '<div id="ypModeller" class="secimKutu"></div>' +
-
-      '<div class="bolumBaslik" style="margin-top:1.5rem">Allowed domains</div>' +
-      '<input id="ypAlan" value="' + kacir((m.allowed_domains || []).join(', ')) + '" ' +
-      'placeholder="app.acme.com, acme.com">' +
-      '<div class="yardim" style="margin-top:.35rem">' +
-      'Checked for browser-based customers only.</div>' +
-
-      '<div style="display:flex;gap:.6rem;margin-top:1.2rem">' +
-      '<button class="dugme koyu" id="ypKaydet">Save changes</button>' +
-      '<button class="dugme cerceveli' + (m.is_active ? ' tehlike' : '') + '" id="ypDurum">' +
-      (m.is_active ? 'Suspend customer' : 'Reactivate') + '</button>' +
-      // Silme yalnızca hiç isteği olmayan müşteride. Kayıtları olan bir müşteri
-      // silinseydi geçmiş logların sahibi kaybolurdu.
-      (m.istek ? '' :
-        '<button class="dugme cerceveli tehlike" id="ypSil">Delete</button>') +
-      '</div>' +
-      (m.istek
-        ? '<div class="yardim" style="margin-top:.6rem">This customer has ' + bin(m.istek) +
-          ' request' + (m.istek === 1 ? '' : 's') + ' on record and cannot be deleted. ' +
-          'Suspend it instead — the history stays intact.</div>'
-        : '') +
-      '<div class="uyari gizli" id="ypHata"></div>' +
-
-      '<div class="bolumBaslik" style="margin-top:1.8rem">Users</div>' +
-      '<div class="yardim" style="margin-bottom:.7rem">' +
-      'People who sign in to the portal for this customer. The portal shows company-wide ' +
-      'usage to everyone; roles only limit what they can change.</div>' +
-      '<div id="ypKullanicilar"><div class="yardim">Loading...</div></div>' +
-      '<div class="formSatir" style="margin-top:.9rem;grid-template-columns:1.4fr 1.4fr auto auto">' +
-      '<input id="ypYeniEposta" placeholder="person@company.com">' +
-      '<input id="ypYeniSifre" type="text" placeholder="password (optional)">' +
-      '<select id="ypYeniRol"><option value="member">Member</option>' +
-      '<option value="owner">Owner</option></select>' +
-      '<button class="dugme cerceveli" id="ypKullaniciEkle">Add</button></div>' +
-      '<div class="yardim" style="margin-top:.4rem">' +
-      'Leave the password empty and one is generated for you. Either way it is shown ' +
-      'once. There is no email reset yet — if they forget it, reset it here.</div>' +
-
-      '<div class="bolumBaslik" style="margin-top:1.8rem">Keys</div>' +
-      '<div class="hesap" id="ypAnahtarlar">' +
-      ((m.anahtarlar || []).length
-        ? m.anahtarlar.map(a =>
-            '<div class="sat"><span>' +
-            (a.key_prefix
-              ? '<code class="onek">' + kacir(a.key_prefix) + '…</code> '
-              : '<code class="onek soluk">unknown</code> ') +
-            (a.label ? '<b>' + kacir(a.label) + '</b> · ' : '') +
-            a.environment + ' · ' +
-            new Date(a.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) +
-            (a.user_id ? ' · <span class="hap ok">owned</span>' : ' · <span class="hap">shared</span>') +
-            '</span><span>' +
-            '<button class="satirDugme" data-anahtar-duzen="' + a.id + '">Edit</button>' +
-            (a.is_active
-              ? '<button class="satirDugme tehlike" data-anahtar="' + a.id + '">Revoke</button>'
-              : '<span class="hap">revoked</span>') + '</span></div>').join('')
-        : '<div class="sat"><span>No key issued yet</span><span></span></div>') +
-      '</div>' +
-      '<div class="yardim" style="margin:.6rem 0 .8rem">' +
-      'A lost key cannot be recovered — issue a new one instead.</div>' +
-      '<label class="secim"><input type="checkbox" id="ypEskiKapat">Revoke existing keys</label>' +
-      '<button class="dugme cerceveli" id="ypYeniAnahtar" style="margin-top:.8rem">Issue new key</button>';
-
-    modelSecimKutusu($('ypModeller'), m.allowed_models || []);
-    panelAc();
-    kullanicilariYukle(m.id);
-
-    $('ypKullaniciEkle').addEventListener('click', async () => {
-      const e = $('ypYeniEposta').value.trim();
-      if (!e) return;
-      $('ypKullaniciEkle').disabled = true;
-      try {
-        const v = await api('/customers/' + m.id + '/users', {
-          method: 'POST',
-          body: JSON.stringify({
-            email: e,
-            role: $('ypYeniRol').value,
-            // Boş bırakılırsa sunucu üretiyor. Yöneticinin şifre uydurması
-            // zayıf ve tekrar eden şifreler demek, o yüzden varsayılan üretim.
-            password: $('ypYeniSifre').value
-          })
-        });
-        $('ypYeniEposta').value = ''; $('ypYeniSifre').value = '';
-        await kullanicilariYukle(m.id);
-        // Şifre yalnızca burada görünüyor; veritabanında karması duruyor.
-        sifreGoster(v.kullanici.email, v.sifre, 'Account created');
-      } catch (err) {
-        $('ypHata').textContent = err.message; $('ypHata').classList.remove('gizli');
-      } finally { $('ypKullaniciEkle').disabled = false; }
-    });
-
-    $('ypKaydet').addEventListener('click', async () => {
-      $('ypHata').classList.add('gizli'); $('ypKaydet').disabled = true;
-      try {
-        // Panelde 1M başına giriliyor, veritabanında 1K başına saklanıyor.
-        const tavanMetin = $('ypTavan').value.trim();
-        await api('/customers/' + m.id, { method: 'PATCH', body: JSON.stringify({
-          allowed_models: secilenModeller($('ypModeller')),
-          allowed_domains: $('ypAlan').value.split(',').map(x => x.trim()).filter(Boolean),
-          max_output_price: tavanMetin === '' ? null : Number(tavanMetin) / 1000
-        })});
-        await musteriYukle();
-        detayKapat();
-      } catch (e) {
-        $('ypHata').textContent = e.message; $('ypHata').classList.remove('gizli');
-      } finally { $('ypKaydet').disabled = false; }
-    });
-
-    $('ypDurum').addEventListener('click', async () => {
-      if (m.is_active && !confirm('Suspend ' + m.name + '? Their requests will be rejected.')) return;
-      try {
-        await api('/customers/' + m.id, { method: 'PATCH',
-          body: JSON.stringify({ is_active: !m.is_active }) });
-        await musteriYukle();
-        detayKapat();
-      } catch (e) {
-        $('ypHata').textContent = e.message; $('ypHata').classList.remove('gizli');
-      }
-    });
-
-    if ($('ypSil')) {
-      $('ypSil').addEventListener('click', async () => {
-        if (!confirm('Delete ' + m.name + ' permanently? Its keys are removed too.')) return;
-        try {
-          await api('/customers/' + m.id, { method: 'DELETE' });
-          await musteriYukle();
-          detayKapat();
-        } catch (e) {
-          $('ypHata').textContent = e.message; $('ypHata').classList.remove('gizli');
-        }
+      const v = await api('/customers/' + sirket.id + '/users', {
+        method: 'POST',
+        body: JSON.stringify({ email: e, role: $('kiRol').value, password: $('kiSifre').value })
       });
-    }
-
-    $('ypYeniAnahtar').addEventListener('click', async () => {
-      const kapat = $('ypEskiKapat').checked;
-      if (kapat && !confirm('Existing keys will stop working immediately. Continue?')) return;
-      try {
-        const v = await api('/customers/' + m.id + '/keys', { method: 'POST',
-          body: JSON.stringify({ eskileriKapat: kapat }) });
-        await musteriYukle();
-        anahtarGoster(m, v.anahtar, false);
-      } catch (e) {
-        $('ypHata').textContent = e.message; $('ypHata').classList.remove('gizli');
-      }
-    });
-
-    // Anahtara ad ve sahip atama.
-    //
-    // Ad olmadan kırılım anlaşılmıyor: portalda "sk-proxy-91c…" yerine
-    // "ayselin-dev" görünmesi gerekiyor. Sahip ise harcamanın kime ait
-    // sayılacağını belirliyor; boş bırakılırsa ortak servis anahtarı oluyor.
-    $('ypAnahtarlar').addEventListener('click', async (e) => {
-      const duzen = e.target.closest('[data-anahtar-duzen]');
-      if (duzen) {
-        const a = (m.anahtarlar || []).find(x => x.id === duzen.dataset.anahtarDuzen);
-        if (!a) return;
-        const kullanicilar = sonKullanicilar || [];
-        const secenekler = ['<option value="">Shared — no owner</option>']
-          .concat(kullanicilar.map(u =>
-            '<option value="' + u.id + '"' + (a.user_id === u.id ? ' selected' : '') + '>' +
-            kacir(u.email) + '</option>')).join('');
-
-        const kutu = document.createElement('div');
-        kutu.className = 'dogrula bek';
-        kutu.style.marginTop = '.7rem';
-        kutu.innerHTML =
-          '<div class="formSatir" style="grid-template-columns:1fr 1fr">' +
-          '<label>Name<input id="akAd" value="' + kacir(a.label || '') + '" placeholder="ayselin-dev"></label>' +
-          '<label>Owner<select id="akSahip">' + secenekler + '</select></label></div>' +
-          '<div style="display:flex;gap:.6rem;margin-top:.8rem">' +
-          '<button class="dugme koyu" id="akKaydet">Save</button>' +
-          '<button class="dugme cerceveli" id="akIptal">Cancel</button></div>';
-        duzen.closest('.sat').after(kutu);
-        duzen.disabled = true;
-
-        $('akIptal').onclick = () => { kutu.remove(); duzen.disabled = false; };
-        $('akKaydet').onclick = async () => {
-          try {
-            await api('/keys/' + a.id + '/owner', {
-              method: 'PATCH',
-              body: JSON.stringify({ label: $('akAd').value, user_id: $('akSahip').value || null })
-            });
-            await musteriYukle();
-            const yeni = musterilerListe.find(x => x.id === m.id);
-            if (yeni) musteriAc(yeni);
-          } catch (err) {
-            $('ypHata').textContent = err.message; $('ypHata').classList.remove('gizli');
-          }
-        };
-        return;
-      }
-
-      const d = e.target.closest('[data-anahtar]'); if (!d) return;
-      if (!confirm('Revoke this key? Requests using it will be rejected.')) return;
-      try {
-        await api('/keys/' + d.dataset.anahtar, { method: 'PATCH',
-          body: JSON.stringify({ is_active: false }) });
-        await musteriYukle();
-        const yeni = musterilerListe.find(x => x.id === m.id);
-        if (yeni) musteriAc(yeni);
-      } catch (err) {
-        $('ypHata').textContent = err.message; $('ypHata').classList.remove('gizli');
-      }
-    });
-  }
-
-  let aramaZaman = null;
-  $('mArama').addEventListener('input', () => {
-    clearTimeout(aramaZaman);
-    aramaZaman = setTimeout(mTabloCiz, 120);
+      // Model erişimi hesap açıldıktan sonra veriliyor: hesabın kimliği
+      // olmadan izin yazılamıyor.
+      await api('/users/' + v.kullanici.id + '/permissions', {
+        method: 'PATCH',
+        body: JSON.stringify({ allowed_models: secilenModeller($('kiModeller')) })
+      });
+      $('kiEkleIptal').click();
+      await kisilerYukle();
+      alert('Account created — ' + v.kullanici.email + '\\n\\nPassword: ' + v.sifre +
+            '\\n\\nShown once. Send it over a channel you trust.');
+    } catch (err) {
+      $('kiEkleHata').textContent = err.message;
+      $('kiEkleHata').classList.remove('gizli');
+    } finally { $('kiEkleKaydet').disabled = false; }
   });
-
-  $('mTablo').addEventListener('click', e => {
-    const tr = e.target.closest('tr.tiklanir'); if (!tr) return;
-    const m = musterilerListe[Number(tr.dataset.i)]; if (m) musteriAc(m);
-  });
-
 
   // ---------------- genel bakış ----------------
   let oSeri = [];
@@ -1504,12 +1705,44 @@ ${YAZI_TIPI}
               : 'The database could not be read — running on a fallback list. Prices may be stale.');
   }
 
+  // Panodaki bekleyen erişim talebi şeridi.
+  function talepSeridiCiz(liste) {
+    const kutu = $('oTalep');
+    if (!liste.length) { kutu.classList.add('gizli'); return; }
+    kutu.classList.remove('gizli');
+
+    const kisiSayisi = new Set(liste.map(t => t.musteri)).size;
+    const ilk = liste.slice(0, 3).map(t =>
+      '<div style="margin:.25rem 0"><b>' + kacir(t.musteri) + '</b> &rarr; ' +
+      kacir(t.modelAnahtar) + ' <span class="yardim">(' + t.adet +
+      (t.adet === 1 ? ' try' : ' tries') + ')</span></div>').join('');
+
+    kutu.innerHTML =
+      '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap">' +
+      '<div><div class="baslikkucuk" style="margin:0">' +
+      liste.length + (liste.length === 1 ? ' model waiting for approval' : ' models waiting for approval') +
+      '</div><div class="yardim" style="margin:.3rem 0 .5rem">' +
+      'From ' + kisiSayisi + (kisiSayisi === 1 ? ' person' : ' people') +
+      ' who called a model they cannot use yet.</div>' + ilk +
+      (liste.length > 3 ? '<div class="yardim" style="margin-top:.3rem">and ' +
+        (liste.length - 3) + ' more</div>' : '') +
+      '</div><button class="ikincil" id="oTalepGit">Review in People</button></div>';
+
+    $('oTalepGit').onclick = () => bolumGoster('kisiler');
+  }
+
   async function ozetYukle() {
     $('uyari').classList.add('gizli');
     $('yukleniyor').classList.remove('gizli');
     try {
-      const v = await api('/overview?gun=' + gun);
+      // Talepler panoda da gösteriliyor: bekleyen bir onay varsa yöneticinin
+      // People sekmesine girmesini beklemek yerine açılışta görmesi lazım.
+      const [v, t] = await Promise.all([
+        api('/overview?gun=' + gun),
+        api('/access-requests').catch(() => ({ talepler: [] }))
+      ]);
       const o = v.ozet;
+      talepSeridiCiz(t.talepler || []);
       const kart = (ad, deger, aciklama) => '<div class="metrik"><div class="ad">' + ad +
         '</div><div class="aciklama">' + aciklama + '</div><div class="sayi">' + deger + '</div></div>';
       const oran = o.istek ? (o.hata / o.istek * 100) : 0;
@@ -1775,62 +2008,6 @@ ${YAZI_TIPI}
   }
 
   // Müşterinin portal kullanıcıları.
-  async function kullanicilariYukle(clientId) {
-    const kutu = $('ypKullanicilar');
-    if (!kutu) return;
-    try {
-      const v = await api('/customers/' + clientId + '/users');
-      const liste = v.kullanicilar || [];
-      // Anahtar sahibi seçiminde aynı liste kullanılıyor.
-      sonKullanicilar = liste;
-      kutu.innerHTML = liste.length
-        ? '<div class="hesap">' + liste.map(u =>
-            '<div class="sat"><span>' + kacir(u.email) +
-            (u.role === 'owner' ? ' <span class="hap ok">owner</span>' : '') +
-            '<br><span class="yardim">' +
-            (u.last_login_at
-              ? 'last signed in ' + gunTarih(u.last_login_at)
-              : 'never signed in') + '</span></span>' +
-            '<span><button class="satirDugme" data-kul-eposta="' + u.id + '">Change email</button>' +
-            '<button class="satirDugme" data-kul-sifre="' + u.id + '">Reset password</button>' +
-            '<button class="satirDugme tehlike" data-kul-sil="' + u.id + '">Remove</button></span></div>'
-          ).join('') + '</div>'
-        : '<div class="yardim">No portal accounts yet. This customer can still use the API key.</div>';
-
-      kutu.onclick = async (e) => {
-        const eposta = e.target.closest('[data-kul-eposta]');
-        const sifirla = e.target.closest('[data-kul-sifre]');
-        const sil = e.target.closest('[data-kul-sil]');
-        if (eposta) {
-          const u = liste.find(x => x.id === eposta.dataset.kulEposta);
-          epostaKutusuAc(eposta, u ? u.email : '', async (yeniEposta) => {
-            await api('/users/' + eposta.dataset.kulEposta, {
-              method: 'PATCH', body: JSON.stringify({ email: yeniEposta })
-            });
-            await kullanicilariYukle(clientId);
-          });
-          return;
-        }
-        if (sifirla) {
-          sifreSifirlamaAc(sifirla, async (yeni) => {
-            const v2 = await api('/users/' + sifirla.dataset.kulSifre, {
-              method: 'PATCH', body: JSON.stringify({ password: yeni })
-            });
-            sifreGoster('', v2.sifre, 'Password reset');
-            await kullanicilariYukle(clientId);
-          });
-        }
-        if (sil) {
-          if (!confirm('Remove this account? Keys they own stay active and become shared.')) return;
-          await api('/users/' + sil.dataset.kulSil, { method: 'DELETE' });
-          await kullanicilariYukle(clientId);
-        }
-      };
-    } catch (e) {
-      kutu.innerHTML = '<div class="uyari">' + kacir(e.message) + '</div>';
-    }
-  }
-
   // E-posta değiştirme kutusu. Adres giriş kimliği olduğu için değiştirmek
   // girişi de değiştiriyor — kutu bunu söylüyor.
   function epostaKutusuAc(dugme, mevcut, uygula) {
@@ -1916,20 +2093,6 @@ ${YAZI_TIPI}
     $('sfYeni').onkeydown = (e) => { if (e.key === 'Enter') $('sfKaydet').click(); };
   }
 
-  // Üretilen şifre bir kez gösteriliyor; saklanmıyor.
-  function sifreGoster(eposta, sifre, baslik) {
-    const kutu = $('ypKullanicilar');
-    if (!kutu) return;
-    const alan = document.createElement('div');
-    alan.className = 'sifreKutu';
-    alan.innerHTML =
-      '<div class="baslikkucuk" style="font-size:.85rem">' + baslik +
-      (eposta ? ' — ' + kacir(eposta) : '') + '</div>' +
-      '<div class="anahtarKutu" style="margin-top:.6rem"><code>' + kacir(sifre) + '</code></div>' +
-      '<div class="yardim" style="margin-top:.5rem">' +
-      'Shown once. Send it to them over a channel you trust.</div>';
-    kutu.parentNode.insertBefore(alan, kutu.nextSibling);
-  }
 
   // Kırılan eşleştirmeleri fiyat sürekliliğiyle onarır.
   async function fYenidenEslestir() {
@@ -2266,7 +2429,7 @@ ${YAZI_TIPI}
   $('yenile').addEventListener('click', () => {
     if (bolum === 'istekler') { offset = 0; iSatirlar = []; istekYukle(false); }
     else if (bolum === 'ozet') ozetYukle();
-    else if (bolum === 'musteriler') musteriYukle();
+    else if (bolum === 'kisiler') kisilerYukle();
     else if (bolum === 'fiyatlar') fiyatYukle();
     else yukle();
   });
@@ -2349,11 +2512,21 @@ export async function adminRoutes(server: FastifyInstance) {
     }
     const { data, error } = await supabase
       .from('model_catalog')
-      .select('id, provider, model, input_price, output_price, is_active, price_checked_at, updated_at')
+      .select('id, provider, model, input_price, output_price, is_active, ' +
+              'price_checked_at, price_source, updated_at')
       .order('provider', { ascending: true })
       .order('model', { ascending: true });
     if (error) return reply.status(500).send({ error: 'Could not read the catalog.' });
-    return { modeller: data ?? [] };
+
+    // Tabloda "fiyat nereden geldi" sütunu bu alandan besleniyor. Sütunu
+    // eklerken alanı select'e koymayı atlamıştım: her satır boş geliyor,
+    // rozet de boşu "elle girilmiş" sayıp hepsini aynı gösteriyordu.
+    return {
+      modeller: ((data ?? []) as unknown as Array<Record<string, unknown>>).map((m) => ({
+        ...m,
+        fiyatKaynagi: (m.price_source as string | null) ?? 'manual'
+      }))
+    };
   });
 
 
@@ -2687,9 +2860,16 @@ export async function adminRoutes(server: FastifyInstance) {
       name?: string; is_active?: boolean; client_type?: string;
       allowed_models?: string[]; allowed_domains?: string[];
       max_output_price?: number | null;
+      monthly_budget?: number | null; daily_budget?: number | null;
     };
 
     const guncelleme: Record<string, unknown> = {};
+    if (g.monthly_budget !== undefined) {
+      guncelleme.monthly_budget = g.monthly_budget === null ? null : Number(g.monthly_budget);
+    }
+    if (g.daily_budget !== undefined) {
+      guncelleme.daily_budget = g.daily_budget === null ? null : Number(g.daily_budget);
+    }
     if (g.max_output_price !== undefined) {
       // Panelde 1M başına giriliyor, veritabanında 1K başına saklanıyor —
       // model_catalog ile aynı ölçek.
@@ -2721,15 +2901,21 @@ export async function adminRoutes(server: FastifyInstance) {
     }
 
     const { id } = request.params as { id: string };
-    const g = (request.body ?? {}) as { environment?: string; eskileriKapat?: boolean };
+    const g = (request.body ?? {}) as {
+      environment?: string; eskileriKapat?: boolean; user_id?: string | null; label?: string;
+    };
 
     const { data: musteri } = await supabase
       .from('clients').select('id').eq('id', id).single();
     if (!musteri) return reply.status(404).send({ error: 'Customer not found.' });
 
+    // Yalnızca o kişinin anahtarları iptal ediliyor; başkasının anahtarını
+    // kapatmak yan etki olurdu.
     if (g.eskileriKapat) {
-      await supabase.from('client_keys')
+      let kapat = supabase.from('client_keys')
         .update({ is_active: false }).eq('client_id', id);
+      if (g.user_id) kapat = kapat.eq('user_id', g.user_id);
+      await kapat;
     }
 
     const acik = generateProxyKey();
@@ -2739,6 +2925,9 @@ export async function adminRoutes(server: FastifyInstance) {
       environment: String(g.environment ?? 'production'),
       key_prefix: acik.slice(0, 12)
     };
+    // Sahibi olan anahtar o kişinin kullanımı sayılıyor; sahipsizler ortak.
+    if (g.user_id) satir.user_id = g.user_id;
+    if (g.label) satir.label = String(g.label).trim();
 
     let ekleme = await supabase.from('client_keys').insert([satir])
       .select('id, client_id, environment, is_active, created_at, key_prefix, label, user_id').single();
@@ -3438,16 +3627,37 @@ export async function adminRoutes(server: FastifyInstance) {
 
     const { data: hatalar } = await supabase
       .from('logs')
-      .select('client_id, provider, model, error_message, created_at')
+      .select('client_id, key_id, provider, model, error_message, created_at')
       .eq('status', 'error')
       .order('created_at', { ascending: false })
       .limit(3000);
 
+    // Talebi KİŞİYE bağlıyoruz. Ağ geçidi kişiyi görmüyor ama anahtarı
+    // görüyor; anahtarın sahibi talebi yapan kişi. Sahipsiz anahtarlarda
+    // (ortak servisler) kime izin verileceği belli olmadığı için talep
+    // şirkete kalıyor.
+    const { data: anahtarSatir } = await supabase
+      .from('client_keys').select('id, user_id');
+    const anahtarSahibi = new Map(
+      ((anahtarSatir ?? []) as Array<{ id: string; user_id: string | null }>)
+        .map((a) => [a.id, a.user_id])
+    );
+
+    const { data: kisiSatir } = await supabase
+      .from('users').select('id, email, client_id, allowed_models, max_output_price');
+    const kisiler = new Map(
+      ((kisiSatir ?? []) as Array<{
+        id: string; email: string; client_id: string;
+        allowed_models: string[] | null; max_output_price: number | null;
+      }>).map((k) => [k.id, k])
+    );
+
     const { data: musteriler } = await supabase
-      .from('clients').select('id, name, allowed_models, is_active');
+      .from('clients').select('id, name, allowed_models, is_active, max_output_price');
     const musteriHarita = new Map(
       ((musteriler ?? []) as Array<{
-        id: string; name: string; allowed_models: string[] | null; is_active: boolean;
+        id: string; name: string; allowed_models: string[] | null;
+        is_active: boolean; max_output_price: number | null;
       }>).map((m) => [m.id, m])
     );
 
@@ -3458,20 +3668,25 @@ export async function adminRoutes(server: FastifyInstance) {
     // ekliyor, yönetici aktif ediyor — ama talep hiçbir yerde görünmediği
     // için müşterinin bir kez daha denemesi gerekiyordu.
     const { data: katalog } = await supabase
-      .from('model_catalog').select('provider, model, is_active');
+      .from('model_catalog').select('provider, model, is_active, output_price');
+    const katalogSatirlari = (katalog ?? []) as Array<{
+      provider: string; model: string; is_active: boolean; output_price: number | null;
+    }>;
     const katalogDurumu = new Map(
-      ((katalog ?? []) as Array<{ provider: string; model: string; is_active: boolean }>)
-        .map((m) => [`${m.provider}/${m.model}`, m.is_active])
+      katalogSatirlari.map((m) => [`${m.provider}/${m.model}`, m.is_active])
+    );
+    const katalogFiyati = new Map(
+      katalogSatirlari.map((m) => [`${m.provider}/${m.model}`, Number(m.output_price ?? 0)])
     );
 
     const sayac = new Map<string, {
-      clientId: string; musteri: string; modelAnahtar: string;
+      clientId: string; userId: string | null; musteri: string; modelAnahtar: string;
       provider: string; model: string; adet: number; son: string;
-      modelAktif: boolean;
+      sebep: string; modelAktif: boolean;
     }>();
 
     for (const h of (hatalar ?? []) as Array<{
-      client_id: string; provider: string; model: string;
+      client_id: string; key_id: string | null; provider: string; model: string;
       error_message: string | null; created_at: string;
     }>) {
       const mesaj = String(h.error_message ?? '');
@@ -3487,13 +3702,53 @@ export async function adminRoutes(server: FastifyInstance) {
 
       const musteri = musteriHarita.get(String(h.client_id));
       if (!musteri) continue;
-      // Aradan izin verilmişse talep düşmüş demektir.
-      if ((musteri.allowed_models ?? []).includes(modelAnahtar)) continue;
 
-      const anahtar = `${h.client_id}|${modelAnahtar}`;
+      // Anahtarın sahibi varsa talep o kişinin.
+      const sahipId = h.key_id ? anahtarSahibi.get(h.key_id) ?? null : null;
+      const kisi = sahipId ? kisiler.get(sahipId) : undefined;
+
+      // Aradan izin verilmişse talep düşmüş demektir.
+      //
+      // Sahipli anahtarda kişinin listesi, sahipsizde şirketinki.
+      const mevcutIzin = kisi ? (kisi.allowed_models ?? []) : (musteri.allowed_models ?? []);
+      if (mevcutIzin.includes(modelAnahtar)) continue;
+
+      // Fiyat tavanı da bir izin yolu. Liste dışında kalsa bile model
+      // tavanın altındaysa istek şu an geçiyor demektir; talep düşmüştür.
+      //
+      // Bunu atlamak gerçek bir hataydı: ret kaydı eskiydi, aradan tavan
+      // yükselmişti, model çoktan açılmıştı — ama liste hâlâ "onay bekliyor"
+      // diyordu. Yönetici zaten çalışan bir şey için Allow'a basıyordu.
+      const kisiTavan = kisi ? (kisi.max_output_price ?? null) : null;
+      const sirketTavan = musteri.max_output_price ?? null;
+      const etkinTavan = kisiTavan !== null && sirketTavan !== null
+        ? Math.min(kisiTavan, sirketTavan)
+        : (kisiTavan ?? sirketTavan);
+      const ciktiFiyati = katalogFiyati.get(modelAnahtar) ?? null;
+      if (
+        katalogDurumu.get(modelAnahtar) === true &&
+        etkinTavan !== null && ciktiFiyati !== null && ciktiFiyati <= etkinTavan
+      ) continue;
+
+      // Ret sebebi. Üçü de "izin yok" ama çözümleri farklı: birinde model
+      // katalogda yok, birinde pahalı, birinde sadece o kişiye kapalı.
+      // Yönetici ne yapması gerektiğini bilmeli.
+      const sebep = !katalogDurumu.has(modelAnahtar)
+        ? 'not-in-catalog'
+        : katalogDurumu.get(modelAnahtar) !== true
+          ? 'model-inactive'
+          : mesaj.includes('above your limit of')
+            ? 'too-expensive'
+            : 'not-granted';
+
+      const anahtar = `${kisi ? kisi.id : h.client_id}|${modelAnahtar}`;
       const o = sayac.get(anahtar) ?? {
-        clientId: String(h.client_id), musteri: musteri.name, modelAnahtar,
+        clientId: String(h.client_id),
+        userId: kisi ? kisi.id : null,
+        musteri: kisi ? kisi.email : musteri.name,
+        modelAnahtar,
         provider: h.provider, model: h.model, adet: 0, son: h.created_at,
+        sebep,
         // Model pasifse izin vermek tek başına yetmiyor; ekranda söylüyoruz.
         modelAktif: katalogDurumu.get(modelAnahtar) === true
       };
@@ -3672,15 +3927,20 @@ export async function adminRoutes(server: FastifyInstance) {
       const dusus = (kg + kc) < (bg + bc);
       const oran = (bg + bc) > 0 ? Math.abs((kg + kc) - (bg + bc)) / (bg + bc) : 1;
 
-      // Otomatik uygulama üç koşula bağlı. Gözetimsiz çalışan bir işte
-      // eşiği yüksek tutuyoruz: yanlış bir fiyatı gece sessizce uygulamak,
-      // bir gün geç düzeltmekten kötü.
+      // Otomatik uygulama iki koşula bağlı:
       //
-      //   1. düşüş olacak   — artış müşteriye fazla fatura demek, onay ister
-      //   2. iki kaynak uyuşacak — tek kaynağın yanılması denetlenemiyor
-      //   3. değişim %50'yi geçmeyecek — daha büyük sıçrama kaynak hatası
+      //   1. iki kaynak uyuşacak — tek kaynağın yanılması denetlenemiyor
+      //   2. değişim %50'yi geçmeyecek — daha büyük sıçrama kaynak hatası
       //      ihtimalini artırıyor
-      const otomatik = dusus && okuma.dogrulandi && oran <= 0.5;
+      //
+      // Zam da uygulanıyor. Önce yalnızca düşüşler uygulanıyordu; gerekçe
+      // "artışı sessizce uygulamak müşteriye fazla fatura çıkarır" idi ve bu
+      // yanlıştı: kimseye fatura kesmiyoruz, kendi harcamamızı izliyoruz.
+      // Maliyet katalogdaki fiyattan hesaplandığı için eski düşük fiyatta
+      // kalmak harcamayı OLDUĞUNDAN AZ gösteriyor — bütçe eksik sayıyor,
+      // gerçek fatura daha yüksek geliyor. Yani asıl riskli yön güncellememek.
+      const otomatik = okuma.dogrulandi && oran <= 0.5;
+      void dusus;
 
       if (!otomatik) {
         bekleyen.push(ad);
@@ -3688,11 +3948,10 @@ export async function adminRoutes(server: FastifyInstance) {
           tur: 'warning', tetikleyen, model: ad,
           eski_girdi: bg, eski_cikti: bc, yeni_girdi: kg, yeni_cikti: kc,
           kaynak: okuma.okumalar.map((o) => o.kaynak).join(' + '),
-          aciklama: !dusus
-            ? 'Price went up at the source; waiting for approval.'
-            : !okuma.dogrulandi
-              ? 'Only one source carries this model; a drop needs approval.'
-              : `Change of ${(oran * 100).toFixed(0)}% is too large to apply unattended.`
+          aciklama: !okuma.dogrulandi
+            ? 'Only one source carries this model, so the change could not be ' +
+              'cross-checked; waiting for approval.'
+            : `Change of ${(oran * 100).toFixed(0)}% is too large to apply unattended.`
         });
         continue;
       }
@@ -3700,7 +3959,8 @@ export async function adminRoutes(server: FastifyInstance) {
       const { error: h } = await supabase.from('model_catalog').update({
         input_price: kg, output_price: kc,
         price_checked_at: simdi, price_source: 'verified',
-        son_fiyat_notu: `Applied automatically on ${simdi.slice(0, 10)} (both sources agree).`,
+        son_fiyat_notu: `${dusus ? 'Drop' : 'Rise'} applied automatically on ` +
+          `${simdi.slice(0, 10)} (both sources agree).`,
         updated_at: simdi
       }).eq('id', m.id);
       if (h) continue;
@@ -3714,7 +3974,8 @@ export async function adminRoutes(server: FastifyInstance) {
         tur: 'price', tetikleyen, model: ad,
         eski_girdi: bg, eski_cikti: bc, yeni_girdi: kg, yeni_cikti: kc,
         kaynak: okuma.okumalar.map((o) => o.kaynak).join(' + '),
-        aciklama: 'Price drop applied automatically; both sources agree.'
+        aciklama: `Price ${dusus ? 'drop' : 'rise'} applied automatically; ` +
+          'both sources agree.'
       });
     }
 
@@ -3874,7 +4135,7 @@ export async function adminRoutes(server: FastifyInstance) {
 
     const { data, error } = await supabase
       .from('users')
-      .select('id, email, role, created_at, last_login_at')
+      .select('id, email, role, created_at, last_login_at, allowed_models, max_output_price')
       .eq('client_id', id)
       .order('created_at', { ascending: true });
 
@@ -4110,5 +4371,167 @@ export async function adminRoutes(server: FastifyInstance) {
     const { error } = await supabase.from('admin_users').delete().eq('id', id);
     if (error) return reply.status(500).send({ error: 'Could not remove the administrator.' });
     return { silindi: true };
+  });
+
+  // ---------------- kişi bazlı izinler ----------------
+  //
+  // Servis şirket içinde kullanılıyor: yönetilen şey kişiler. "Kim hangi
+  // modeli kullanabilir" kişiye göre değişiyor — bir geliştiriciye pahalı bir
+  // model açılırken bir başkasına açılmayabilir.
+  //
+  // Şirket seviyesindeki izin ve tavan ÜST SINIR olarak duruyor: kişiye
+  // şirketin kapattığı bir model açılamıyor. Aksi halde kişi bazında izin
+  // vermek, şirket politikasını delmenin yolu olurdu.
+  server.patch('/admin/api/users/:id/permissions', async (request, reply) => {
+    if (!(await hesapOturumuMu(request as never))) {
+      return reply.status(401).send({ error: 'Unauthorized.' });
+    }
+
+    const { id } = request.params as { id: string };
+    const g = request.body as {
+      allowed_models?: string[]; max_output_price?: number | null;
+      monthly_budget?: number | null; daily_budget?: number | null;
+    };
+
+    const guncelleme: Record<string, unknown> = {};
+    if (g?.monthly_budget !== undefined) {
+      guncelleme.monthly_budget = g.monthly_budget === null ? null : Number(g.monthly_budget);
+    }
+    if (g?.daily_budget !== undefined) {
+      guncelleme.daily_budget = g.daily_budget === null ? null : Number(g.daily_budget);
+    }
+    if (Array.isArray(g?.allowed_models)) {
+      guncelleme.allowed_models = [...new Set(g.allowed_models.map(String))];
+    }
+    if (g?.max_output_price !== undefined) {
+      guncelleme.max_output_price =
+        g.max_output_price === null ? null : Number(g.max_output_price);
+    }
+    if (!Object.keys(guncelleme).length) {
+      return reply.status(400).send({ error: 'Nothing to update.' });
+    }
+
+    const { data, error } = await supabase
+      .from('users').update(guncelleme).eq('id', id)
+      .select('id, email, allowed_models, max_output_price, monthly_budget, daily_budget').single();
+
+    if (error) {
+      const eksik = /allowed_models|max_output_price|column/i.test(String(error.message));
+      return reply.status(eksik ? 428 : 500).send({
+        error: eksik
+          ? 'Per-user permissions need new columns on users. Run tek-sirket.sql first.'
+          : 'Could not update permissions.'
+      });
+    }
+    return { kullanici: data };
+  });
+
+  // ---------------- kişiler ----------------
+  //
+  // Servis şirket içinde kullanılıyor; yönetilen şey kişiler. Panelin ana
+  // ekranı da bu: kim, neye erişebiliyor, ne harcamış.
+  //
+  // clients tablosu duruyor ama arka planda: tek satır = şirketin kendisi.
+  // Tabloyu kaldırmadık çünkü ileride TAKIM gerekebilir — pazarlama ekibinin
+  // bütçesi ayrı, mobil ekibinin ayrı.
+  server.get('/admin/api/people', async (request, reply) => {
+    if (!(await hesapOturumuMu(request as never))) {
+      return reply.status(401).send({ error: 'Unauthorized.' });
+    }
+
+    const { data: kullanicilar, error } = await supabase
+      .from('users')
+      .select('id, email, role, client_id, created_at, last_login_at, allowed_models, max_output_price, monthly_budget, daily_budget')
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      const eksik = /allowed_models|max_output_price|column|relation/i.test(String(error.message));
+      return reply.status(eksik ? 428 : 500).send({
+        error: eksik ? 'Run tek-sirket.sql first.' : 'Could not read people.'
+      });
+    }
+
+    const { data: sirketler } = await supabase
+      .from('clients')
+      .select('id, name, allowed_models, max_output_price, client_type, allowed_domains, is_active, monthly_budget, daily_budget');
+
+    const { data: anahtarlar } = await supabase
+      .from('client_keys')
+      .select('id, label, environment, is_active, user_id, key_prefix, created_at');
+
+    // Kişi başına kullanım. Anahtar üzerinden bağlanıyor: ağ geçidine gelen
+    // istekte insan yok, anahtar var.
+    const { data: kayitlar } = await supabase
+      .from('logs').select('key_id, status, input_tokens, output_tokens, cost, created_at').limit(10000);
+
+    const anahtarSahibi = new Map(
+      ((anahtarlar ?? []) as Array<{ id: string; user_id: string | null }>)
+        .map((a) => [a.id, a.user_id])
+    );
+
+    type Toplam = { istek: number; hata: number; token: number; maliyet: number; son: string | null };
+    const bos = (): Toplam => ({ istek: 0, hata: 0, token: 0, maliyet: 0, son: null });
+    const kisiToplam = new Map<string, Toplam>();
+    const ortakToplam = bos();
+
+    for (const k of (kayitlar ?? []) as Array<{
+      key_id: string | null; status: string;
+      input_tokens: number | null; output_tokens: number | null;
+      cost: number | null; created_at: string;
+    }>) {
+      const sahip = k.key_id ? anahtarSahibi.get(k.key_id) ?? null : null;
+      const hedef = sahip ? (kisiToplam.get(sahip) ?? bos()) : ortakToplam;
+      hedef.istek += 1;
+      hedef.hata += k.status === 'error' ? 1 : 0;
+      hedef.token += (k.input_tokens ?? 0) + (k.output_tokens ?? 0);
+      hedef.maliyet += Number(k.cost ?? 0);
+      if (!hedef.son || k.created_at > hedef.son) hedef.son = k.created_at;
+      if (sahip) kisiToplam.set(sahip, hedef);
+    }
+
+    const anahtarPerKisi = new Map<string, unknown[]>();
+    for (const a of (anahtarlar ?? []) as Array<{ user_id: string | null }>) {
+      if (!a.user_id) continue;
+      const d = anahtarPerKisi.get(a.user_id) ?? [];
+      d.push(a);
+      anahtarPerKisi.set(a.user_id, d);
+    }
+
+    // Bütçe sayacı Redis'te; kalan miktar oradan okunuyor.
+    const kisiler = await Promise.all(
+      ((kullanicilar ?? []) as Array<Record<string, unknown>>).map(async (u) => {
+        const id = String(u.id);
+        const butce = await butceDurumu(id, {
+          aylik: (u.monthly_budget as number | null) ?? null,
+          gunluk: (u.daily_budget as number | null) ?? null
+        });
+        return {
+          ...u,
+          anahtarlar: anahtarPerKisi.get(id) ?? [],
+          kullanim: kisiToplam.get(id) ?? bos(),
+          butce
+        };
+      })
+    );
+
+    // Sahibi olmayan anahtarlar: ortak servis anahtarları. Kimsenin kendi
+    // kullanımı sayılmıyor ama şirket toplamına giriyor, o yüzden ayrı
+    // gösteriliyor.
+    const ortakAnahtarlar = ((anahtarlar ?? []) as Array<{ user_id: string | null }>)
+      .filter((a) => !a.user_id);
+
+    const sirketSatir = (sirketler ?? [])[0] as Record<string, unknown> | undefined;
+    const sirketButce = sirketSatir
+      ? await butceDurumu(String(sirketSatir.id), {
+          aylik: (sirketSatir.monthly_budget as number | null) ?? null,
+          gunluk: (sirketSatir.daily_budget as number | null) ?? null
+        }, 'sirket')
+      : null;
+
+    return {
+      kisiler,
+      sirket: sirketSatir ? { ...sirketSatir, butce: sirketButce } : null,
+      ortak: { anahtarlar: ortakAnahtarlar, kullanim: ortakToplam }
+    };
   });
 }

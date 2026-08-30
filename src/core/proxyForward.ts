@@ -1,5 +1,7 @@
 import type { FastifyReply } from 'fastify';
 import { logRequestStart, logRequestComplete } from './logCapture.js';
+import { priceFor } from './modelCatalog.js';
+import { harcamaEkle } from './butce.js';
 import { waitUntil } from '@vercel/functions';
 import { buildProviderTarget, prepareBodyForProvider, type ProviderName } from './providerConfig.js';
 
@@ -10,6 +12,8 @@ interface ForwardOptions {
   // İsteğin geldiği anahtar; kayda yazılıyor ki harcama anahtar bazında
   // kırılabilsin.
   keyId?: string | null;
+  // Anahtarın sahibi. Harcama sayacı kişi bazında tutuluyor.
+  userId?: string | null;
   provider: ProviderName;
   model: string;
 }
@@ -30,7 +34,7 @@ function extractOutputTokens(provider: ProviderName, data: any): number | undefi
   return data?.usage?.output_tokens ?? data?.message?.usage?.output_tokens;
 }
 
-export async function forwardToProvider({ body, reply, clientId, keyId, provider, model }: ForwardOptions) {
+export async function forwardToProvider({ body, reply, clientId, keyId, userId, provider, model }: ForwardOptions) {
   const startTime = Date.now();
   const isStreaming = (body as { stream?: boolean } | undefined)?.stream === true;
 
@@ -56,18 +60,31 @@ export async function forwardToProvider({ body, reply, clientId, keyId, provider
   ) => {
     const latencyMs = Date.now() - startTime;
     const yazma = pendingLog
-      .then((logId) => {
-        if (!logId) return;
-        return logRequestComplete(
-          logId,
-          provider,
-          model,
-          inputTokens ?? 0,
-          outputTokens ?? 0,
-          latencyMs,
-          isSuccess,
-          errorMessage
-        );
+      .then(async (logId) => {
+        if (logId) {
+          await logRequestComplete(
+            logId,
+            provider,
+            model,
+            inputTokens ?? 0,
+            outputTokens ?? 0,
+            latencyMs,
+            isSuccess,
+            errorMessage
+          );
+        }
+
+        // Harcamayı sayaca ekle. Maliyet ancak burada biliniyor: istek
+        // başlarken kaç token üretileceği belli değil. Bu yüzden bütçe
+        // kontrolü "şu ana kadarki harcama" üzerinden yapılıyor ve limit
+        // dolmak üzereyken gelen bir istek limiti birkaç sent aşabiliyor.
+        if (!isSuccess) return;
+        const fiyat = await priceFor(provider, model);
+        if (!fiyat) return;
+        const tutar =
+          ((inputTokens ?? 0) / 1000) * fiyat.input +
+          ((outputTokens ?? 0) / 1000) * fiyat.output;
+        await harcamaEkle([userId ?? null, clientId], tutar);
       })
       .catch(() => {
         // Loglama hiçbir koşulda asıl isteği etkilememeli.

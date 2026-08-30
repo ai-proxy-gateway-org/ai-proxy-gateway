@@ -437,12 +437,14 @@ ${YAZI_TIPI}
             else — as a way back in if accounts break.
           </div>
           <div id="yonListe"><div class="yardim">Loading...</div></div>
-          <div class="formSatir" style="margin-top:1.1rem;grid-template-columns:1fr auto">
+          <div class="formSatir" style="margin-top:1.1rem;grid-template-columns:1fr 1fr auto">
             <input id="yonEposta" placeholder="you@company.com">
+            <input id="yonSifre" type="text" placeholder="password (optional)">
             <button class="dugme koyu" id="yonEkle">Add administrator</button>
           </div>
           <div class="yardim" style="margin-top:.4rem">
-            A password is generated and shown once.
+            Leave the password empty and one is generated for you. Either way it is
+            shown once.
           </div>
           <div class="uyari gizli" id="yonHata"></div>
         </div>
@@ -1147,14 +1149,15 @@ ${YAZI_TIPI}
       'People who sign in to the portal for this customer. The portal shows company-wide ' +
       'usage to everyone; roles only limit what they can change.</div>' +
       '<div id="ypKullanicilar"><div class="yardim">Loading...</div></div>' +
-      '<div class="formSatir" style="margin-top:.9rem;grid-template-columns:1fr auto auto">' +
+      '<div class="formSatir" style="margin-top:.9rem;grid-template-columns:1.4fr 1.4fr auto auto">' +
       '<input id="ypYeniEposta" placeholder="person@company.com">' +
+      '<input id="ypYeniSifre" type="text" placeholder="password (optional)">' +
       '<select id="ypYeniRol"><option value="member">Member</option>' +
       '<option value="owner">Owner</option></select>' +
       '<button class="dugme cerceveli" id="ypKullaniciEkle">Add</button></div>' +
       '<div class="yardim" style="margin-top:.4rem">' +
-      'A password is generated and shown once. There is no email reset yet — ' +
-      'if they forget it, reset it here.</div>' +
+      'Leave the password empty and one is generated for you. Either way it is shown ' +
+      'once. There is no email reset yet — if they forget it, reset it here.</div>' +
 
       '<div class="bolumBaslik" style="margin-top:1.8rem">Keys</div>' +
       '<div class="hesap" id="ypAnahtarlar">' +
@@ -1191,9 +1194,15 @@ ${YAZI_TIPI}
       try {
         const v = await api('/customers/' + m.id + '/users', {
           method: 'POST',
-          body: JSON.stringify({ email: e, role: $('ypYeniRol').value })
+          body: JSON.stringify({
+            email: e,
+            role: $('ypYeniRol').value,
+            // Boş bırakılırsa sunucu üretiyor. Yöneticinin şifre uydurması
+            // zayıf ve tekrar eden şifreler demek, o yüzden varsayılan üretim.
+            password: $('ypYeniSifre').value
+          })
         });
-        $('ypYeniEposta').value = '';
+        $('ypYeniEposta').value = ''; $('ypYeniSifre').value = '';
         await kullanicilariYukle(m.id);
         // Şifre yalnızca burada görünüyor; veritabanında karması duruyor.
         sifreGoster(v.kullanici.email, v.sifre, 'Account created');
@@ -1764,12 +1773,13 @@ ${YAZI_TIPI}
         const sifirla = e.target.closest('[data-kul-sifre]');
         const sil = e.target.closest('[data-kul-sil]');
         if (sifirla) {
-          if (!confirm('Generate a new password? The current one stops working.')) return;
-          const v2 = await api('/users/' + sifirla.dataset.kulSifre, {
-            method: 'PATCH', body: JSON.stringify({ password: '' })
+          sifreSifirlamaAc(sifirla, async (yeni) => {
+            const v2 = await api('/users/' + sifirla.dataset.kulSifre, {
+              method: 'PATCH', body: JSON.stringify({ password: yeni })
+            });
+            sifreGoster('', v2.sifre, 'Password reset');
+            await kullanicilariYukle(clientId);
           });
-          sifreGoster('', v2.sifre, 'Password reset');
-          await kullanicilariYukle(clientId);
         }
         if (sil) {
           if (!confirm('Remove this account? Keys they own stay active and become shared.')) return;
@@ -1780,6 +1790,51 @@ ${YAZI_TIPI}
     } catch (e) {
       kutu.innerHTML = '<div class="uyari">' + kacir(e.message) + '</div>';
     }
+  }
+
+  // Şifre sıfırlama kutusu.
+  //
+  // Eskiden düğme doğrudan rastgele bir şifre üretiyordu. Yönetici bazen
+  // kendi belirlediği bir şifreyi vermek istiyor (telefonda okumak,
+  // müşterinin hazırladığı bir şifreyi kullanmak gibi), o yüzden alan açık —
+  // ama boş bırakılırsa yine üretiliyor, çünkü elle uydurulan şifreler zayıf
+  // ve tekrar eden oluyor.
+  function sifreSifirlamaAc(dugme, uygula) {
+    // Aynı anda birden çok kutu açılmasın.
+    document.querySelectorAll('.sifreKutu').forEach(x => x.remove());
+
+    const kutu = document.createElement('div');
+    kutu.className = 'dogrula bek sifreKutu';
+    kutu.style.marginTop = '.7rem';
+    kutu.innerHTML =
+      '<div class="formSatir" style="grid-template-columns:1fr auto auto">' +
+      '<input id="sfYeni" type="text" placeholder="new password (leave empty to generate)">' +
+      '<button class="dugme koyu" id="sfKaydet">Set</button>' +
+      '<button class="dugme cerceveli" id="sfIptal">Cancel</button></div>' +
+      '<div class="yardim" style="margin-top:.5rem">' +
+      'At least 10 characters. The current password stops working immediately and ' +
+      'all their open sessions are signed out.</div>';
+
+    const satir = dugme.closest('.sat') || dugme.parentNode;
+    satir.after(kutu);
+    dugme.disabled = true;
+    $('sfYeni').focus();
+
+    const kapat = () => { kutu.remove(); dugme.disabled = false; };
+    $('sfIptal').onclick = kapat;
+    $('sfKaydet').onclick = async () => {
+      $('sfKaydet').disabled = true;
+      try {
+        await uygula($('sfYeni').value);
+      } catch (e) {
+        kutu.insertAdjacentHTML('beforeend',
+          '<div class="uyari" style="margin-top:.6rem">' + kacir(e.message) + '</div>');
+        $('sfKaydet').disabled = false;
+        return;
+      }
+      kapat();
+    };
+    $('sfYeni').onkeydown = (e) => { if (e.key === 'Enter') $('sfKaydet').click(); };
   }
 
   // Üretilen şifre bir kez gösteriliyor; saklanmıyor.
@@ -1912,12 +1967,13 @@ ${YAZI_TIPI}
         const sil = e.target.closest('[data-yon-sil]');
         try {
           if (sif) {
-            if (!confirm('Generate a new password? The current one stops working.')) return;
-            const v2 = await api('/admins/' + sif.dataset.yonSifre, {
-              method: 'PATCH', body: JSON.stringify({ password: '' })
+            sifreSifirlamaAc(sif, async (yeni) => {
+              const v2 = await api('/admins/' + sif.dataset.yonSifre, {
+                method: 'PATCH', body: JSON.stringify({ password: yeni })
+              });
+              await yoneticileriYukle();
+              yonSifreGoster('Password reset', v2.sifre);
             });
-            await yoneticileriYukle();
-            yonSifreGoster('Password reset', v2.sifre);
           }
           if (sil) {
             if (!confirm('Remove this administrator?')) return;
@@ -1949,8 +2005,11 @@ ${YAZI_TIPI}
     if (!e) return;
     $('yonEkle').disabled = true; $('yonHata').classList.add('gizli');
     try {
-      const v = await api('/admins', { method: 'POST', body: JSON.stringify({ email: e }) });
-      $('yonEposta').value = '';
+      const v = await api('/admins', {
+        method: 'POST',
+        body: JSON.stringify({ email: e, password: $('yonSifre').value })
+      });
+      $('yonEposta').value = ''; $('yonSifre').value = '';
       await yoneticileriYukle();
       yonSifreGoster('Administrator added — ' + v.yonetici.email, v.sifre);
     } catch (err) {

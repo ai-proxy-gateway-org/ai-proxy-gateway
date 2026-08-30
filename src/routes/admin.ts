@@ -169,6 +169,24 @@ ${YAZI_TIPI}
   .onek { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.78rem;
     background:var(--sunk); padding:.1rem .4rem; border-radius:4px; }
   .onek.soluk { color:var(--ink-3); }
+
+  /* Şifre kutusu.
+     .dogrula'yı kullanıyordu ama o flex ve dikey ortalıyor; alan sıkışıyordu.
+     Şifre yazarken hangi karakteri girdiğini görmek gerekiyor, o yüzden geniş
+     ve tek aralıklı yazı tipiyle. Renkler iki temada da açıkça veriliyor. */
+  .sifreKutu { display:block; margin-top:.8rem; padding:.9rem 1rem;
+    border:1px solid var(--sari); border-radius:9px; background:var(--sari-soft); }
+  .sifreKutu .sifreAlan { display:block; width:100%; margin-top:.5rem;
+    padding:.65rem .85rem; font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-size:1rem; letter-spacing:.02em;
+    border:1px solid var(--line-2); border-radius:8px;
+    background:var(--surface); color:var(--ink); }
+  .sifreKutu .sifreAlan::placeholder { color:var(--ink-3); font-family:inherit;
+    font-size:.9rem; letter-spacing:0; }
+  .sifreKutu .sifreAlan:focus { outline:none; border-color:var(--mavi); }
+  .sifreKutu .baslikkucuk { color:var(--ink); }
+  .sifreKutu .yardim { color:var(--ink-3); }
+  .sifreKutu .dugmeler { display:flex; gap:.6rem; margin-top:.8rem; }
   /* Ret mesajları tam gösteriliyor; hücreyi taşırmasın diye sarmalı. */
   .hataMetni { white-space:normal; text-align:left; line-height:1.45;
     max-width:32rem; display:inline-block; }
@@ -580,6 +598,15 @@ ${YAZI_TIPI}
     const bas = { 'content-type': 'application/json' };
     if (jeton) bas.authorization = 'Bearer ' + jeton;
     const c = await fetch('/admin/api' + yol, Object.assign({ headers: bas }, secenek || {}));
+
+    // Oturum düştüyse ekranda "Unauthorized" bırakmak yerine giriş ekranına
+    // dönüyoruz. En sık sebebi kendi şifreni sıfırlaman: şifre değişince
+    // bütün oturumlar düşüyor, kendi oturumun dahil.
+    if (c.status === 401) {
+      oturumBitti();
+      throw new Error('Your session ended. Sign in again.');
+    }
+
     if (!c.ok) {
       const v = await c.json().catch(() => ({}));
       throw new Error(v.error || 'Request failed');
@@ -1764,14 +1791,26 @@ ${YAZI_TIPI}
             (u.last_login_at
               ? 'last signed in ' + gunTarih(u.last_login_at)
               : 'never signed in') + '</span></span>' +
-            '<span><button class="satirDugme" data-kul-sifre="' + u.id + '">Reset password</button>' +
+            '<span><button class="satirDugme" data-kul-eposta="' + u.id + '">Change email</button>' +
+            '<button class="satirDugme" data-kul-sifre="' + u.id + '">Reset password</button>' +
             '<button class="satirDugme tehlike" data-kul-sil="' + u.id + '">Remove</button></span></div>'
           ).join('') + '</div>'
         : '<div class="yardim">No portal accounts yet. This customer can still use the API key.</div>';
 
       kutu.onclick = async (e) => {
+        const eposta = e.target.closest('[data-kul-eposta]');
         const sifirla = e.target.closest('[data-kul-sifre]');
         const sil = e.target.closest('[data-kul-sil]');
+        if (eposta) {
+          const u = liste.find(x => x.id === eposta.dataset.kulEposta);
+          epostaKutusuAc(eposta, u ? u.email : '', async (yeniEposta) => {
+            await api('/users/' + eposta.dataset.kulEposta, {
+              method: 'PATCH', body: JSON.stringify({ email: yeniEposta })
+            });
+            await kullanicilariYukle(clientId);
+          });
+          return;
+        }
         if (sifirla) {
           sifreSifirlamaAc(sifirla, async (yeni) => {
             const v2 = await api('/users/' + sifirla.dataset.kulSifre, {
@@ -1792,6 +1831,43 @@ ${YAZI_TIPI}
     }
   }
 
+  // E-posta değiştirme kutusu. Adres giriş kimliği olduğu için değiştirmek
+  // girişi de değiştiriyor — kutu bunu söylüyor.
+  function epostaKutusuAc(dugme, mevcut, uygula) {
+    document.querySelectorAll('.sifreKutu').forEach(x => x.remove());
+
+    const kutu = document.createElement('div');
+    kutu.className = 'sifreKutu';
+    kutu.innerHTML =
+      '<div class="baslikkucuk" style="font-size:.85rem">Email address</div>' +
+      '<input id="epYeni" class="sifreAlan" type="email" spellcheck="false" ' +
+      'autocapitalize="off" autocorrect="off" value="' + kacir(mevcut) + '">' +
+      '<div class="yardim" style="margin-top:.5rem">' +
+      'This is what they sign in with. The password stays the same.</div>' +
+      '<div class="dugmeler">' +
+      '<button class="dugme koyu" id="epKaydet">Save</button>' +
+      '<button class="dugme cerceveli" id="epIptal">Cancel</button></div>';
+
+    const satir = dugme.closest('.sat') || dugme.parentNode;
+    satir.after(kutu);
+    dugme.disabled = true;
+    $('epYeni').focus();
+
+    const kapat = () => { kutu.remove(); dugme.disabled = false; };
+    $('epIptal').onclick = kapat;
+    $('epKaydet').onclick = async () => {
+      $('epKaydet').disabled = true;
+      try { await uygula($('epYeni').value); } catch (err) {
+        kutu.insertAdjacentHTML('beforeend',
+          '<div class="uyari" style="margin-top:.6rem">' + kacir(err.message) + '</div>');
+        $('epKaydet').disabled = false;
+        return;
+      }
+      kapat();
+    };
+    $('epYeni').onkeydown = (e) => { if (e.key === 'Enter') $('epKaydet').click(); };
+  }
+
   // Şifre sıfırlama kutusu.
   //
   // Eskiden düğme doğrudan rastgele bir şifre üretiyordu. Yönetici bazen
@@ -1804,16 +1880,19 @@ ${YAZI_TIPI}
     document.querySelectorAll('.sifreKutu').forEach(x => x.remove());
 
     const kutu = document.createElement('div');
-    kutu.className = 'dogrula bek sifreKutu';
-    kutu.style.marginTop = '.7rem';
+    kutu.className = 'sifreKutu';
     kutu.innerHTML =
-      '<div class="formSatir" style="grid-template-columns:1fr auto auto">' +
-      '<input id="sfYeni" type="text" placeholder="new password (leave empty to generate)">' +
-      '<button class="dugme koyu" id="sfKaydet">Set</button>' +
-      '<button class="dugme cerceveli" id="sfIptal">Cancel</button></div>' +
+      '<div class="baslikkucuk" style="font-size:.85rem">New password</div>' +
+      '<input id="sfYeni" class="sifreAlan" type="text" spellcheck="false" ' +
+      'autocapitalize="off" autocorrect="off" autocomplete="off" ' +
+      'placeholder="leave empty to generate one">' +
       '<div class="yardim" style="margin-top:.5rem">' +
-      'At least 10 characters. The current password stops working immediately and ' +
-      'all their open sessions are signed out.</div>';
+      'At least 10 characters. Shown as you type so you can read it out. ' +
+      'The current password stops working immediately and all their open sessions ' +
+      'are signed out.</div>' +
+      '<div class="dugmeler">' +
+      '<button class="dugme koyu" id="sfKaydet">Set password</button>' +
+      '<button class="dugme cerceveli" id="sfIptal">Cancel</button></div>';
 
     const satir = dugme.closest('.sat') || dugme.parentNode;
     satir.after(kutu);
@@ -1842,11 +1921,13 @@ ${YAZI_TIPI}
     const kutu = $('ypKullanicilar');
     if (!kutu) return;
     const alan = document.createElement('div');
-    alan.className = 'dogrula bek';
-    alan.style.marginTop = '.8rem';
-    alan.innerHTML = '<b>' + baslik + '</b>' + (eposta ? ' — ' + kacir(eposta) : '') +
+    alan.className = 'sifreKutu';
+    alan.innerHTML =
+      '<div class="baslikkucuk" style="font-size:.85rem">' + baslik +
+      (eposta ? ' — ' + kacir(eposta) : '') + '</div>' +
       '<div class="anahtarKutu" style="margin-top:.6rem"><code>' + kacir(sifre) + '</code></div>' +
-      '<div class="yardim" style="margin-top:.4rem">Shown once. Send it to them over a channel you trust.</div>';
+      '<div class="yardim" style="margin-top:.5rem">' +
+      'Shown once. Send it to them over a channel you trust.</div>';
     kutu.parentNode.insertBefore(alan, kutu.nextSibling);
   }
 
@@ -1942,6 +2023,18 @@ ${YAZI_TIPI}
     if (jetonla) bolumGoster('yoneticiler');
   }
 
+  // Oturum düştüğünde giriş ekranına dön ve sebebini söyle.
+  function oturumBitti(mesaj) {
+    jeton = null; modeller = [];
+    try { localStorage.removeItem(DEPO); } catch (e) {}
+    $('uygulama').classList.add('gizli');
+    $('girisEkran').classList.remove('gizli');
+    $('hata').textContent = mesaj ||
+      'Your session ended — this happens right after your own password is reset. ' +
+      'Sign in with the new one.';
+    $('hata').classList.remove('gizli');
+  }
+
   async function yoneticileriYukle() {
     const kutu = $('yonListe');
     $('yonHata').classList.add('gizli');
@@ -1954,6 +2047,7 @@ ${YAZI_TIPI}
             '<br><span class="yardim">' +
             (y.last_login_at ? 'last signed in ' + gunTarih(y.last_login_at) : 'never signed in') +
             '</span></span><span>' +
+            '<button class="satirDugme" data-yon-eposta="' + y.id + '">Change email</button>' +
             '<button class="satirDugme" data-yon-sifre="' + y.id + '">Reset password</button>' +
             (liste.length > 1
               ? '<button class="satirDugme tehlike" data-yon-sil="' + y.id + '">Remove</button>'
@@ -1963,9 +2057,19 @@ ${YAZI_TIPI}
           'is meant to be a fallback, not the way in.</div>';
 
       kutu.onclick = async (e) => {
+        const eps = e.target.closest('[data-yon-eposta]');
         const sif = e.target.closest('[data-yon-sifre]');
         const sil = e.target.closest('[data-yon-sil]');
         try {
+          if (eps) {
+            const y = liste.find(x => x.id === eps.dataset.yonEposta);
+            epostaKutusuAc(eps, y ? y.email : '', async (yeniEposta) => {
+              await api('/admins/' + eps.dataset.yonEposta, {
+                method: 'PATCH', body: JSON.stringify({ email: yeniEposta })
+              });
+              await yoneticileriYukle();
+            });
+          }
           if (sif) {
             sifreSifirlamaAc(sif, async (yeni) => {
               const v2 = await api('/admins/' + sif.dataset.yonSifre, {
@@ -1992,11 +2096,10 @@ ${YAZI_TIPI}
 
   function yonSifreGoster(baslik, sifre) {
     const alan = document.createElement('div');
-    alan.className = 'dogrula bek';
-    alan.style.marginTop = '.9rem';
-    alan.innerHTML = '<b>' + baslik + '</b>' +
+    alan.className = 'sifreKutu';
+    alan.innerHTML = '<div class="baslikkucuk" style="font-size:.85rem">' + baslik + '</div>' +
       '<div class="anahtarKutu" style="margin-top:.6rem"><code>' + kacir(sifre) + '</code></div>' +
-      '<div class="yardim" style="margin-top:.4rem">Shown once.</div>';
+      '<div class="yardim" style="margin-top:.5rem">Shown once — copy it now.</div>';
     $('yonListe').parentNode.insertBefore(alan, $('yonListe').nextSibling);
   }
 
@@ -3816,7 +3919,22 @@ export async function adminRoutes(server: FastifyInstance) {
       return reply.status(401).send({ error: 'Unauthorized.' });
     }
     const { id } = request.params as { id: string };
-    const g = request.body as { role?: string; password?: string };
+    const g = request.body as { role?: string; password?: string; email?: string };
+
+    if (typeof g?.email === 'string' && g.email.trim()) {
+      const e = g.email.trim().toLowerCase();
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) {
+        return reply.status(400).send({ error: 'Enter a valid email address.' });
+      }
+      const { data: cakisan } = await supabase
+        .from('users').select('id').eq('email', e).neq('id', id).limit(1);
+      if ((cakisan ?? []).length) {
+        return reply.status(409).send({ error: 'This email address is already registered.' });
+      }
+      const { error } = await supabase.from('users').update({ email: e }).eq('id', id);
+      if (error) return reply.status(500).send({ error: 'Could not update the email address.' });
+      return { guncellendi: true, email: e };
+    }
 
     // Şifre sıfırlama: mevcut şifre sorulmuyor, yönetici zaten yetkili.
     // İlk sürümde e-posta ile sıfırlama yok; müşteri unutursa yönetici veriyor.
@@ -3947,7 +4065,26 @@ export async function adminRoutes(server: FastifyInstance) {
       return reply.status(401).send({ error: 'Unauthorized.' });
     }
     const { id } = request.params as { id: string };
-    const g = request.body as { password?: string };
+    const g = request.body as { password?: string; email?: string };
+
+    // E-posta değiştirme. Adres giriş kimliği olduğu için tekil kalmalı;
+    // veritabanı dizini son savunma, burada da bakıyoruz ki anlamlı bir
+    // hata mesajı dönebilelim.
+    if (typeof g?.email === 'string' && g.email.trim()) {
+      const e = g.email.trim().toLowerCase();
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) {
+        return reply.status(400).send({ error: 'Enter a valid email address.' });
+      }
+      const { data: cakisan } = await supabase
+        .from('admin_users').select('id').eq('email', e).neq('id', id).limit(1);
+      if ((cakisan ?? []).length) {
+        return reply.status(409).send({ error: 'This email address is already registered.' });
+      }
+      const { error } = await supabase.from('admin_users').update({ email: e }).eq('id', id);
+      if (error) return reply.status(500).send({ error: 'Could not update the email address.' });
+      return { guncellendi: true, email: e };
+    }
+
     const yeni = String(g?.password ?? '').trim() || uretilmisSifre();
     const kusur = sifreKusuru(yeni);
     if (kusur) return reply.status(400).send({ error: kusur });

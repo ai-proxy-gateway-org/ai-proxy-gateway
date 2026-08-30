@@ -926,6 +926,22 @@ ${YAZI_TIPI}
   // servis anahtarları şirkete ait kalıyor.
   // Bütçe çubuğu. Sayı tek başına "ne kadar kaldı"yı hissettirmiyor;
   // dolan kısmı görmek daha hızlı okunuyor.
+
+  // Kalan tutar, sınırdan ayırt edilebilecek kadar hassas yazılıyor.
+  //
+  // para() basamak sayısını değerin kendi büyüklüğüne göre seçiyor: 4.999836
+  // bir doların üstünde olduğu için "$5.00" oluyordu ve "$0.000164 of $5 ·
+  // $5.00 left" satırı hiç harcama yapılmamış gibi okunuyordu. Harcama varsa
+  // kalan sınıra eşit görünmemeli.
+  const paraKalan = (kalan, sinir) => {
+    const k = Number(kalan), s = Number(sinir);
+    for (const basamak of [2, 4, 6]) {
+      const y = k.toFixed(basamak);
+      if (k >= s || Number(y) < s) return '$' + y;
+    }
+    return '$' + k.toFixed(6);
+  };
+
   function butceCubuk(etiket, harcama, sinir) {
     if (sinir === null || sinir === undefined) return '';
     const oran = sinir > 0 ? Math.min(100, (harcama / sinir) * 100) : 0;
@@ -936,7 +952,7 @@ ${YAZI_TIPI}
       '<div class="oran" style="justify-content:space-between;margin-bottom:.35rem">' +
       '<span class="yardim">' + etiket + '</span>' +
       '<span class="yardim">' + para(harcama) + ' of $' + sinir +
-      ' · <b>' + para(kalan) + ' left</b></span></div>' +
+      ' · <b>' + paraKalan(kalan, sinir) + ' left</b></span></div>' +
       '<div class="oranCubuk"><i style="width:' + oran.toFixed(1) + '%;background:' + renk + '"></i></div>' +
       (oran >= 100
         ? '<div class="yardim" style="margin-top:.35rem;color:var(--kirmizi)">' +
@@ -1259,12 +1275,16 @@ export async function portalRoutes(server: FastifyInstance) {
       client_type: string | null;
     };
 
-    // Müşterinin bütün anahtarları listeleniyor.
+    // Portalda kişi YALNIZCA kendi anahtarlarını ve sahipsiz ortak
+    // anahtarları görüyor.
     //
-    // Önceden yalnızca bir tanesi gösteriliyordu ve oturumla girişte açık
-    // anahtar elimizde olmadığı için "null••••null" gibi bir şey çıkıyordu.
-    // Artık anahtarların adı, ortamı ve sahibi var; hepsini göstermek hem
-    // doğru hem faydalı — kullanım kırılımı da bu adlarla eşleşiyor.
+    // Önce şirketin bütün anahtarları listeleniyordu. Değerler maskeliydi ama
+    // yine de yanlıştı: çalışan, meslektaşının anahtar adını, ortamını ve
+    // durumunu görmek zorunda değil — kendi hesabına girdiğinde kendi
+    // anahtarlarını bekliyor. Ortak anahtarlar listede kalıyor çünkü onların
+    // harcaması şirket toplamına giriyor ve kimseye ait değiller.
+    //
+    // Şirketin tamamını görmek yöneticinin işi; o görünüm panelde duruyor.
     const { data: anahtarSatirlari } = await supabase
       .from('client_keys')
       .select('id, label, environment, is_active, created_at, key_prefix, user_id')
@@ -1287,7 +1307,13 @@ export async function portalRoutes(server: FastifyInstance) {
       ortak: !a.user_id,
       // Anahtarla girildiyse hangi anahtarla girildiği işaretleniyor.
       buOturum: !!(apiKey && a.key_prefix && apiKey.startsWith(a.key_prefix))
-    }));
+    })).filter((a) => {
+      // Kişi girişinde: kendi anahtarları + ortaklar.
+      if (kullaniciId) return a.benim || a.ortak;
+      // Anahtarla girişte kişi bilinmiyor; yalnızca o oturumun anahtarı ve
+      // ortaklar gösteriliyor.
+      return a.buOturum || a.ortak;
+    });
 
     return {
       clientId: m.id,

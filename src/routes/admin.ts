@@ -1099,18 +1099,34 @@ ${YAZI_TIPI}
 
   // Kalan bütçeyi tek satırda özetliyor. Sayılar Redis sayacından geliyor;
   // dönem bitince sayaç kendiliğinden sıfırlanıyor.
+
+  // Kalan tutar, sınırdan ayırt edilebilecek kadar hassas yazılıyor.
+  //
+  // para() basamak sayısını değerin kendi büyüklüğüne göre seçiyor: 4.999836
+  // bir doların üstünde olduğu için "$5.00" oluyordu ve "$0.000164 of $5 ·
+  // $5.00 left" satırı hiç harcama yapılmamış gibi okunuyordu. Harcama varsa
+  // kalan sınıra eşit görünmemeli.
+  const paraKalan = (kalan, sinir) => {
+    const k = Number(kalan), s = Number(sinir);
+    for (const basamak of [2, 4, 6]) {
+      const y = k.toFixed(basamak);
+      if (k >= s || Number(y) < s) return '$' + y;
+    }
+    return '$' + k.toFixed(6);
+  };
+
   function butceOzet(b) {
     if (!b) return '';
     const parca = [];
     if (b.gunlukSinir !== null) {
       const kalan = Math.max(0, b.gunlukSinir - b.gunlukHarcama);
       parca.push('today ' + para(b.gunlukHarcama) + ' of $' + b.gunlukSinir +
-        ' · ' + para(kalan) + ' left');
+        ' · ' + paraKalan(kalan, b.gunlukSinir) + ' left');
     }
     if (b.aylikSinir !== null) {
       const kalan = Math.max(0, b.aylikSinir - b.aylikHarcama);
       parca.push('this month ' + para(b.aylikHarcama) + ' of $' + b.aylikSinir +
-        ' · ' + para(kalan) + ' left');
+        ' · ' + paraKalan(kalan, b.aylikSinir) + ' left');
     }
     return parca.join(' — ') || 'no limit set';
   }

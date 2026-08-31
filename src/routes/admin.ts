@@ -861,7 +861,10 @@ ${YAZI_TIPI}
     $('mEkleAc').classList.toggle('gizli', yeni !== 'kisiler');
     $('disaAktar').classList.toggle('gizli', yeni !== 'istekler');
     $('filtre').classList.toggle('gizli', yeni !== 'istekler' && yeni !== 'ozet');
-    if (yeni === 'istekler') istekYukle(false);
+    // Sekmeye her girişte baştan yükleniyor. Önce yalnızca istekYukle
+    // çağrılıyordu ama offset korunuyordu: "Load more" bastıysan sonraki
+    // sayfayı çekiyor, yeni gelen istekler görünmüyordu.
+    if (yeni === 'istekler') { offset = 0; iSatirlar = []; istekYukle(false); }
     if (yeni === 'kisiler') kisilerYukle();
     if (yeni === 'ozet') ozetYukle();
     if (yeni === 'fiyatlar') fiyatYukle();

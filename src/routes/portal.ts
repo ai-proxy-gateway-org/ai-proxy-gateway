@@ -471,6 +471,15 @@ ${YAZI_TIPI}
     $('filtre').classList.toggle('gizli',
       yeni === 'anahtar' || yeni === 'ayarlar' || yeni === 'fiyat');
     if (yeni === 'ayarlar') ayarlarTazele();
+
+    // Kullanım ve istek sekmelerine her girişte veri tazeleniyor. Önce
+    // yalnızca girişte bir kez çekiliyordu: yeni bir istek attıktan sonra
+    // sekmeye dönünce eski liste duruyordu ve sayfayı elle yenilemek
+    // gerekiyordu.
+    if (yeni === 'istekler' || yeni === 'kullanim' || yeni === 'genel') {
+      offset = 0;
+      kullanimGetir(false);
+    }
   }
 
   let cizimVeri = [];

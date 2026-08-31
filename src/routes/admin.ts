@@ -150,6 +150,11 @@ ${YAZI_TIPI}
   .secimListe .secim:last-child { margin-bottom:0; }
   /* Fiyat kuralıyla zaten açık olanlar: kutu boş olsa da çalışıyorlar. */
   .secimListe .secim.acik { background:var(--sunk); }
+  /* İzin kutusundaki arama alanı. */
+  .secimArama { flex:1; font:inherit; font-size:.85rem; padding:.4rem .6rem;
+    border:1px solid var(--line-2); border-radius:8px;
+    background:var(--surface); color:var(--ink); }
+  .secimKutu > .secimListe { max-height:16rem; overflow-y:auto; }
   .secimListe .secim .hap { margin-left:.4rem; }
   /* Fiyat kuralıyla açılan modeller: karar değil, sonuç. */
   .rozet.fiyattan { opacity:.72; border-style:dashed; }
@@ -423,6 +428,41 @@ ${YAZI_TIPI}
           Everywhere else the nightly check owns the number.
         </div>
       </div>
+      <div class="kart" style="margin-bottom:1.25rem">
+        <div class="baslikkucuk" style="margin:0">How a model becomes usable</div>
+        <div class="yardim" style="margin-top:.4rem;line-height:1.6">
+          The nightly check adds every model it finds at the sources, with its
+          price, and leaves it <b>in service</b>. Being in the catalog does not
+          hand it to anyone &mdash; the <b>price limit</b> is what decides:
+          under the limit it opens to whoever asks for it, above the limit the
+          request is refused and lands on the Dashboard for your approval.<br>
+          <b>Taking a model out of service</b> is the one manual override:
+          nobody can call it, cheap or not, and the price limit never comes
+          into it. Use it for a model you have decided against.
+        </div>
+      </div>
+      <div class="satirbasi" style="margin-top:0;gap:.7rem;flex-wrap:wrap">
+        <input id="modelArama" placeholder="Search all models by name"
+          style="flex:1;min-width:12rem;max-width:18rem;padding:.5rem .75rem;font:inherit;
+                 font-size:.88rem;border:1px solid var(--line-2);border-radius:8px;
+                 background:var(--surface);color:var(--ink)">
+        <select id="mSaglayici" style="padding:.5rem .7rem;font:inherit;font-size:.88rem;
+                 border:1px solid var(--line-2);border-radius:8px;
+                 background:var(--surface);color:var(--ink)">
+          <option value="">All providers</option>
+          <option value="openai">OpenAI</option>
+          <option value="anthropic">Anthropic</option>
+          <option value="gemini">Google</option>
+        </select>
+        <select id="mFiyat" style="padding:.5rem .7rem;font:inherit;font-size:.88rem;
+                 border:1px solid var(--line-2);border-radius:8px;
+                 background:var(--surface);color:var(--ink)">
+          <option value="">Any price</option>
+          <option value="alt">Under the price limit — open to everyone</option>
+          <option value="ust">Above the price limit — needs approval</option>
+        </select>
+        <button class="dugme cerceveli gizli" id="pasifDugme"></button>
+      </div>
       <div class="kart gizli" id="ekleKart" style="max-width:52rem;margin-bottom:1.25rem">
         <div class="baslikkucuk">Add a new model</div>
         <div class="yardim" style="margin:.35rem 0 1.2rem">
@@ -597,21 +637,6 @@ ${YAZI_TIPI}
       </section>
 
       <section data-bolum="istekler" class="gizli">
-        <div class="satirbasi" style="margin-top:0">
-          <div class="formSatir" style="flex:1 1 30rem;grid-template-columns:repeat(auto-fit,minmax(10rem,1fr))">
-            <label>Customer<select id="fMusteri"><option value="">All customers</option></select></label>
-            <label>Provider<select id="fSaglayici">
-              <option value="">All providers</option>
-              <option value="openai">OpenAI</option>
-              <option value="anthropic">Anthropic</option>
-              <option value="gemini">Google</option></select></label>
-            <label>Status<select id="fDurum">
-              <option value="">All</option>
-              <option value="success">Success</option>
-              <option value="error">Error</option>
-              <option value="pending">Pending</option></select></label>
-          </div>
-        </div>
 
         <div class="metrikkart" id="iOzet" style="margin-bottom:1rem"></div>
 
@@ -639,7 +664,7 @@ ${YAZI_TIPI}
 </aside>
 
 <script>
-  let jeton = null, modeller = [];
+  let jeton = null, modeller = [], pasifGoster = false;
   const $ = (id) => document.getElementById(id);
   const DEPO = 'proxy-admin';
 
@@ -718,10 +743,38 @@ ${YAZI_TIPI}
       return;
     }
     $('bos').classList.add('gizli');
+
+    // Aktifler üstte ve her zaman görünür; pasifler katlanmış duruyor.
+    //
+    // Gece işi kaynaklarda gördüğü her yeni modeli pasif olarak ekliyor, yani
+    // burası yüz satıra çıkabiliyor. Kullandığımız beş model o yığının içinde
+    // kaybolmamalı: pasifler ancak açıkça istenince ve arayarak görünüyor.
+    const aramaMetni = ($('modelArama') ? $('modelArama').value : '').trim().toLowerCase();
+    const sagSecim = ($('mSaglayici') ? $('mSaglayici').value : '');
+    const fiyatSecim = ($('mFiyat') ? $('mFiyat').value : '');
+    // Fiyat süzgeci şirket tavanına göre: "bu modeli kim sorusuz kullanabilir"
+    // sorusunun cevabı katalogda 100 satır varken gözle bulunamıyor.
+    const sirketTavan = sirket && sirket.max_output_price != null
+      ? sirket.max_output_price : null;
+
+    const suz = (l) => l.filter(m => {
+      if (aramaMetni && !(m.provider + '/' + m.model).toLowerCase().includes(aramaMetni)) return false;
+      if (sagSecim && m.provider !== sagSecim) return false;
+      if (fiyatSecim && sirketTavan != null) {
+        const ucuz = (m.output_price || 0) <= sirketTavan;
+        if (fiyatSecim === 'alt' && !ucuz) return false;
+        if (fiyatSecim === 'ust' && ucuz) return false;
+      }
+      return true;
+    });
+    const aktifler = suz(modeller.filter(m => m.is_active));
+    const pasifler = suz(modeller.filter(m => !m.is_active));
+    const gosterilen = pasifGoster ? [...aktifler, ...pasifler] : aktifler;
+
     $('tablo').innerHTML =
       '<thead><tr><th>Model</th><th>Provider</th><th>Input</th><th>Output</th>' +
       '<th>Price from</th><th>Last checked</th><th>Status</th><th></th></tr></thead><tbody>' +
-      modeller.map(m =>
+      gosterilen.map(m =>
         '<tr data-id="' + m.id + '">' +
         '<td>' + nokta(m.provider) + m.model + '</td>' +
         '<td>' + (SAGLAYICI[m.provider] || m.provider) + '</td>' +
@@ -730,8 +783,9 @@ ${YAZI_TIPI}
         '<td>' + fiyatKaynagiHap(m.fiyatKaynagi, m.price_checked_at) + '</td>' +
         '<td class="sayi">' + gunTarih(m.price_checked_at) + '</td>' +
         '<td>' + (m.is_active
-          ? '<span class="hap ok">active</span>'
-          : '<span class="hap">inactive</span>') + '</td>' +
+          ? '<span class="hap ok">in service</span>'
+          : '<span class="hap" title="Nobody can call this model until you ' +
+            'switch it on">off</span>') + '</td>' +
         '<td class="islem">' +
           // Kaynaklar modeli tanıyorsa fiyatı gece işi yönetiyor; elle
           // düzenleme düğmesi orada yalnızca yanlış rakam girme fırsatı
@@ -740,13 +794,23 @@ ${YAZI_TIPI}
           (m.fiyatKaynagi === 'manual'
             ? '<button class="satirDugme" data-eylem="fiyat">Set price</button>'
             : '') +
-          '<button class="satirDugme' + (m.is_active ? ' tehlike' : '') + '" data-eylem="durum">' +
-            (m.is_active ? 'Deactivate' : 'Activate') + '</button>' +
+          '<button class="satirDugme' + (m.is_active ? ' tehlike' : '') + '" data-eylem="durum"' +
+            ' title="' + (m.is_active
+              ? 'Take it out of service — nobody will be able to call it'
+              : 'Put it into service — the price limit then decides who may call it') + '">' +
+            (m.is_active ? 'Take out of service' : 'Put into service') + '</button>' +
         '</td></tr>'
       ).join('') + '</tbody>';
 
+    const pasifSayi = modeller.filter(m => !m.is_active).length;
+    $('pasifDugme').classList.toggle('gizli', !pasifSayi);
+    $('pasifDugme').textContent = pasifGoster
+      ? 'Hide the ' + pasifSayi + ' taken out of service'
+      : 'Also show ' + pasifSayi + ' taken out of service';
+
     const fiyatsiz = modeller.filter(m => m.input_price === null || m.output_price === null).length;
-    $('altNot').textContent = modeller.length + ' model' +
+    $('altNot').textContent =
+      aktifler.length + ' in service · ' + pasifSayi + ' taken out of service' +
       (fiyatsiz ? ' · ' + fiyatsiz + ' without a price — these cannot be activated' : '');
   }
 
@@ -831,33 +895,80 @@ ${YAZI_TIPI}
         : 'error — reason was not recorded') + '</span>';
   }
 
+  // Başlık ve süzgeç satırı yalnızca bir kez kuruluyor.
+  //
+  // Süzgeçler tablonun içine taşındı: sütun adının altında duran kutu,
+  // sayfanın tepesindeki ayrı çubuktan daha okunur — hangi sütunu süzdüğün
+  // bakınca belli oluyor. Bunun için başlık ile gövdeyi ayrı yönetmek
+  // gerekiyor, yoksa her yüklemede kutular sıfırlanırdı.
+  function iBaslikKur() {
+    if ($('iTablo').querySelector('thead')) return;
+    const kutuStil = 'width:100%;font:inherit;font-size:.8rem;padding:.3rem .45rem;' +
+      'border:1px solid var(--line-2);border-radius:6px;' +
+      'background:var(--surface);color:var(--ink)';
+    $('iTablo').innerHTML =
+      '<thead>' +
+      '<tr><th>Time</th><th>Person</th><th>Model</th><th>Input</th>' +
+      '<th>Output</th><th>Latency</th><th>Cost</th><th>Status</th></tr>' +
+      '<tr class="suzgecSatiri">' +
+      '<th></th>' +
+      '<th><select id="fKisi" style="' + kutuStil + '">' +
+        '<option value="">Everyone</option></select></th>' +
+      '<th><div style="display:flex;gap:.3rem">' +
+        '<select id="fSaglayici" style="' + kutuStil + '">' +
+          '<option value="">All providers</option>' +
+          '<option value="openai">OpenAI</option>' +
+          '<option value="anthropic">Anthropic</option>' +
+          '<option value="gemini">Google</option></select>' +
+        '<select id="fModel" style="' + kutuStil + '">' +
+          '<option value="">All models</option></select>' +
+      '</div></th>' +
+      '<th></th><th></th><th></th><th></th>' +
+      '<th><select id="fDurum" style="' + kutuStil + '">' +
+        '<option value="">All</option>' +
+        '<option value="success">Success</option>' +
+        '<option value="error">Error</option>' +
+        '<option value="pending">Pending</option></select></th>' +
+      '</tr></thead><tbody></tbody>';
+
+    ['fKisi', 'fSaglayici', 'fDurum', 'fModel'].forEach(id =>
+      $(id).addEventListener('change', () => {
+        offset = 0; iSatirlar = []; istekYukle(false);
+      }));
+  }
+
   function iSatirCiz(kayitlar, ekle) {
     if (ekle) iSatirlar = iSatirlar.concat(kayitlar); else iSatirlar = kayitlar.slice();
     const bas = ekle ? iSatirlar.length - kayitlar.length : 0;
     const g = kayitlar.map((k, i) =>
       '<tr class="tiklanir" data-i="' + (bas + i) + '">' +
       '<td class="sayi">' + tarih(k.created_at) + '</td>' +
-      '<td>' + (k.musteri || '—') + '</td>' +
+      '<td>' + (k.kisi
+        ? kacir(k.kisi)
+        : '<span class="yardim" title="Sent with a key that belongs to no one">' +
+          (k.anahtarAdi ? kacir(k.anahtarAdi) : 'shared key') + '</span>') + '</td>' +
       '<td>' + nokta(k.provider) + k.provider + '/' + k.model + '</td>' +
       '<td class="sayi">' + (k.input_tokens ?? 0) + '</td>' +
       '<td class="sayi">' + (k.output_tokens ?? 0) + '</td>' +
       '<td class="sayi">' + (k.latency_ms ?? 0) + ' ms</td>' +
       '<td class="sayi">' + para(k.cost ?? 0) + '</td>' +
       '<td>' + durumHapi(k) + '</td></tr>').join('');
-    if (ekle) $('iTablo').querySelector('tbody').insertAdjacentHTML('beforeend', g);
-    else $('iTablo').innerHTML =
-      '<thead><tr><th>Time</th><th>Customer</th><th>Model</th><th>Input</th>' +
-      '<th>Output</th><th>Latency</th><th>Cost</th><th>Status</th></tr></thead><tbody>' + g + '</tbody>';
+    iBaslikKur();
+    const govde = $('iTablo').querySelector('tbody');
+    if (ekle) govde.insertAdjacentHTML('beforeend', g);
+    else govde.innerHTML = g;
   }
 
   async function istekYukle(ekle) {
     $('uyari').classList.add('gizli');
     if (!ekle && !iSatirlar.length) $('yukleniyor').classList.remove('gizli');
     try {
+      iBaslikKur();
       const s = new URLSearchParams({ gun: String(gun), offset: String(offset) });
-      if ($('fMusteri').value)   s.set('client',   $('fMusteri').value);
+      if ($('fKisi').value)      s.set('kisi',     $('fKisi').value);
       if ($('fSaglayici').value) s.set('provider', $('fSaglayici').value);
       if ($('fDurum').value)     s.set('durum',    $('fDurum').value);
+      if ($('fModel').value)     s.set('model',    $('fModel').value);
 
       const v = await api('/requests?' + s.toString());
       fiyatlar = v.fiyatlar || fiyatlar;
@@ -866,17 +977,17 @@ ${YAZI_TIPI}
       if (!ekle) {
         // Liste döneme göre değişiyor (yalnızca isteği olan müşteriler), o yüzden
         // her yüklemede yeniden kuruluyor. Seçim korunuyor.
-        if (v.musteriler) {
-          musteriler = v.musteriler;
-          const secili = $('fMusteri').value;
-          let secim = musteriler.slice();
-          // Seçili müşteri yeni listede yoksa seçim düşmesin diye ekliyoruz.
-          if (secili && !secim.some(m => m.id === secili)) {
-            secim = secim.concat([{ id: secili, label: 'Selected customer (0)' }]);
+        if (v.kisiler) {
+          const secili = $('fKisi').value;
+          let secim = v.kisiler.slice();
+          // Seçili kişi yeni listede yoksa seçim düşmesin diye ekliyoruz.
+          if (secili && !secim.some(m => m.deger === secili)) {
+            secim = secim.concat([{ deger: secili, label: secili + ' (0)' }]);
           }
-          $('fMusteri').innerHTML = '<option value="">All customers</option>' +
-            secim.map(m => '<option value="' + m.id + '">' + kacir(m.label) + '</option>').join('');
-          $('fMusteri').value = secili;
+          $('fKisi').innerHTML = '<option value="">Everyone</option>' +
+            secim.map(m => '<option value="' + kacir(m.deger) + '">' +
+              kacir(m.label) + '</option>').join('');
+          $('fKisi').value = secili;
         }
         const o = v.ozet;
         const kart = (ad, deger, aciklama) => '<div class="metrik"><div class="ad">' + ad +
@@ -907,8 +1018,6 @@ ${YAZI_TIPI}
     } finally { $('yukleniyor').classList.add('gizli'); }
   }
 
-  ['fMusteri','fSaglayici','fDurum'].forEach(id =>
-    $(id).addEventListener('change', () => { offset = 0; iSatirlar = []; istekYukle(false); }));
   $('filtre').addEventListener('click', e => {
     const d = e.target.closest('button'); if (!d) return;
     [...$('filtre').children].forEach(b => b.classList.remove('secili'));
@@ -1023,31 +1132,46 @@ ${YAZI_TIPI}
 
   // Model kutucukları. Katalogdaki aktif modellerden kuruluyor; fiyatı da
   // yazıyor ki "hangisi pahalı" görünsün.
+  // Model izin kutusu.
+  //
+  // Katalog 100'ü aştıktan sonra düz liste kullanılamaz hale geldi: aradığın
+  // modeli bulmak için kaydırmak gerekiyordu. Üç şey değişti — arama kutusu,
+  // işaretlilerin üste alınması ve seçimin BELLEKTE tutulması.
+  //
+  // Seçimin bellekte tutulması şart: liste süzülünce görünmeyen satırların
+  // kutuları DOM'dan siliniyor. Seçimi DOM'dan okusaydık, arama yapıp
+  // kaydeden biri görünmeyen bütün izinleri sessizce silerdi.
+  const secimDurumu = new Map();
+
   function modelSecimKutusu(kapsayici, secili, tavan) {
     const aktif = modeller.filter(m => m.is_active);
     if (!aktif.length) {
       kapsayici.innerHTML = '<div class="yardim">No active models in the catalog yet.</div>';
       return;
     }
-    // Fiyat yanında duruyor çünkü asıl karar bu: pahalı bir modeli
-    // işaretlemek onu tavanın üstünde de olsa açmak demek.
-    // Ucuz modeller kutu işaretsiz olsa da çalışıyor: fiyat tavanı ayrı bir
-    // izin yolu. Kutuya bakıp "kapalı" sanmamak için bu satırlar açıkça
-    // "open" rozetiyle işaretleniyor.
-    kapsayici.classList.add('secimListe');
-    kapsayici.innerHTML =
-      '<div class="yardim" style="margin:0 0 .5rem">' +
-      'Prices are dollars per million output tokens. A model under the price ' +
-      'limit opens on its own the first time this person asks for it; anything ' +
-      'above the limit needs a tick here.</div>' +
-      aktif.map(m => {
+
+    const secim = new Set(secili);
+    secimDurumu.set(kapsayici.id, secim);
+    let arama = '';
+
+    const ciz = () => {
+      const tavanVar = tavan !== null && tavan !== undefined;
+      const eslesen = aktif.filter(m =>
+        !arama || (m.provider + '/' + m.model).toLowerCase().includes(arama));
+
+      // İşaretliler üstte: kişiye verilmiş izinler asıl bakılan şey, aramanın
+      // altında kaybolmamalı. Sonra fiyata göre ucuzdan pahalıya.
+      const sirali = eslesen.slice().sort((a, b) => {
+        const sa = secim.has(a.provider + '/' + a.model) ? 0 : 1;
+        const sb = secim.has(b.provider + '/' + b.model) ? 0 : 1;
+        return sa - sb || (a.output_price || 0) - (b.output_price || 0);
+      });
+
+      const satirlar = sirali.map(m => {
         const anahtar = m.provider + '/' + m.model;
         const fiyat = (m.output_price || 0) * 1000;
-        const isaretli = secili.includes(anahtar);
-        const tavanVar = tavan !== null && tavan !== undefined;
+        const isaretli = secim.has(anahtar);
         const ucuz = tavanVar && fiyat <= tavan;
-        // Her kutu gerçek: işaretliyse o kişide açık, değilse kapalı.
-        // Tavanın altındakiler için not, kendiliğinden açılacaklarını söylüyor.
         return '<label class="secim">' +
           '<input type="checkbox" value="' + kacir(anahtar) + '"' +
           (isaretli ? ' checked' : '') + '>' +
@@ -1062,12 +1186,50 @@ ${YAZI_TIPI}
                 : ' &middot; no price limit set, so only a tick opens it') +
           '</span></label>';
       }).join('');
+
+      kapsayici.innerHTML =
+        '<div class="yardim" style="margin:0 0 .5rem">' +
+        'Prices are dollars per million output tokens. A model under the price ' +
+        'limit opens on its own the first time this person asks for it; anything ' +
+        'above the limit needs a tick here.</div>' +
+        '<div style="display:flex;gap:.5rem;align-items:center;margin-bottom:.6rem">' +
+        '<input class="secimArama" placeholder="Search models" value="' + kacir(arama) + '">' +
+        '<span class="yardim secimSayac" style="white-space:nowrap">' +
+        secim.size + ' ticked · ' + eslesen.length +
+        (arama ? ' of ' + aktif.length : '') + ' shown</span></div>' +
+        '<div class="secimListe">' +
+        (sirali.length ? satirlar : '<div class="yardim">No model matches that.</div>') +
+        '</div>';
+
+      const kutu = kapsayici.querySelector('.secimArama');
+      kutu.addEventListener('input', () => {
+        arama = kutu.value.trim().toLowerCase();
+        const konum = kutu.selectionStart;
+        ciz();
+        const yeni = kapsayici.querySelector('.secimArama');
+        yeni.focus(); yeni.setSelectionRange(konum, konum);
+      });
+
+      // Tik değiştiğinde belleğe yazıyoruz ama yeniden çizmiyoruz: sıralama
+      // işaretlileri üste aldığı için satır parmağın altından kayardı.
+      const sayacKutusu = kapsayici.querySelector('.secimSayac');
+      kapsayici.querySelectorAll('input[type=checkbox]').forEach(i => {
+        i.addEventListener('change', () => {
+          if (i.checked) secim.add(i.value); else secim.delete(i.value);
+          sayacKutusu.textContent = secim.size + ' ticked · ' + eslesen.length +
+            (arama ? ' of ' + aktif.length : '') + ' shown';
+        });
+      });
+    };
+
+    kapsayici.classList.remove('secimListe');
+    ciz();
   }
 
-  // Kilitli kutular fiyat kuralıyla açık olanlar; onları listeye yazmak
-  // gereksiz istisna üretirdi ve tavan düşürüldüğünde açık kalırlardı.
-  const secilenModeller = (kapsayici) =>
-    [...kapsayici.querySelectorAll('input:checked')].map(i => i.value);
+  const secilenModeller = (kapsayici) => {
+    const secim = secimDurumu.get(kapsayici.id);
+    return secim ? [...secim] : [];
+  };
 
   // ---------------- kişiler ----------------
   //
@@ -1827,22 +1989,65 @@ ${YAZI_TIPI}
     $('fRematch').addEventListener('click', fYenidenEslestir);
   }
 
+  // Fiyat denetimi süzgeçleri. Katalog 100'ü aştıktan sonra "hangi modelde
+  // sorun var" sorusu gözle taranamıyor.
+  let fDurumSuz = '', fAramaSuz = '', fOlaySuz = '', fSagSuz = '';
+
   function fTabloCiz(v) {
     const m1000 = (x) => x === null || x === undefined ? '—' : '$' + (Number(x) * 1000).toFixed(2);
-    const k = v.karsilastirma;
-    const sorunlu = k.filter(x => x.durum === 'ucuzlamis' || x.durum === 'zamlanmis').length;
-    const eslesmemis = k.filter(x => x.durum === 'eslesmemis' || x.durum === 'kaynakta-yok').length;
+    const tumu = v.karsilastirma;
+    const k = tumu.filter(x => {
+      if (fSagSuz && x.provider !== fSagSuz) return false;
+      if (fDurumSuz === 'uyuyor' && x.durum !== 'uyuyor') return false;
+      if (fDurumSuz === 'fark' && !['ucuzlamis', 'zamlanmis', 'ayrisiyor'].includes(x.durum)) return false;
+      if (fDurumSuz === 'eslesmemis' &&
+          !['eslesmemis', 'kaynakta-yok', 'kaynak-yok'].includes(x.durum)) return false;
+      if (fDurumSuz === 'tekkaynak' && x.dogrulandi) return false;
+      if (fAramaSuz && !(x.provider + '/' + x.model).toLowerCase().includes(fAramaSuz)) return false;
+      return true;
+    });
+    const sorunlu = tumu.filter(x =>
+      ['ucuzlamis', 'zamlanmis', 'ayrisiyor'].includes(x.durum)).length;
+    const eslesmemis = tumu.filter(x =>
+      ['eslesmemis', 'kaynakta-yok', 'kaynak-yok'].includes(x.durum)).length;
 
-    $('fSayac').textContent = k.length + ' model';
+    $('fSayac').textContent = k.length === tumu.length
+      ? tumu.length + ' models'
+      : k.length + ' of ' + tumu.length + ' models';
+
+    const kutuStil = 'width:100%;font:inherit;font-size:.8rem;padding:.3rem .45rem;' +
+      'border:1px solid var(--line-2);border-radius:6px;' +
+      'background:var(--surface);color:var(--ink)';
+
     $('fTablo').innerHTML =
-      '<thead><tr><th>Model</th><th>Mapped to</th><th class="sayi">Ours</th>' +
-      '<th class="sayi">Source</th><th>Status</th><th>Checked</th><th></th></tr></thead><tbody>' +
+      '<thead>' +
+      '<tr><th>Model</th><th>Provider</th><th>Mapped to</th><th class="sayi">Ours</th>' +
+      '<th class="sayi">Source</th><th>Status</th><th>Checked</th><th></th></tr>' +
+      '<tr class="suzgecSatiri">' +
+      '<th><input id="fAra" placeholder="Search" style="' + kutuStil + '" value="' +
+        kacir(fAramaSuz) + '"></th>' +
+      '<th><select id="fSagSuz" style="' + kutuStil + '">' +
+        '<option value="">All providers</option>' +
+        '<option value="openai">OpenAI</option>' +
+        '<option value="anthropic">Anthropic</option>' +
+        '<option value="gemini">Google</option>' +
+      '</select></th>' +
+      '<th></th><th></th><th></th>' +
+      '<th><select id="fDurumSuz" style="' + kutuStil + '">' +
+        '<option value="">All statuses</option>' +
+        '<option value="uyuyor">Matches the source</option>' +
+        '<option value="fark">Price differs</option>' +
+        '<option value="eslesmemis">Not mapped</option>' +
+        '<option value="tekkaynak">Only one source</option>' +
+      '</select></th>' +
+      '<th></th><th></th></tr></thead><tbody>' +
       k.map((x, i) => {
         const [renk, yazi] = DURUM_YAZI[x.durum] || ['', x.durum];
         const kimlikler = (x.orIds || []).concat(x.liteIds || []);
         return '<tr data-i="' + i + '">' +
           '<td>' + nokta(x.provider) + kacir(x.model) +
             (x.dogrulandi ? ' <span class="hap ok">2 sources</span>' : '') + '</td>' +
+          '<td>' + (SAGLAYICI[x.provider] || x.provider) + '</td>' +
           '<td>' + (kimlikler.length
             ? '<code class="onek">' + kacir(kimlikler[0]) + '</code>' +
               (kimlikler.length > 1 ? ' <span class="yardim">+' + (kimlikler.length - 1) + '</span>' : '')
@@ -1859,6 +2064,8 @@ ${YAZI_TIPI}
               : '') +
           '</td></tr>';
       }).join('') + '</tbody>';
+
+    fSuzgecBagla(v);
 
     $('fAltNot').textContent =
       (sorunlu ? sorunlu + ' price' + (sorunlu === 1 ? '' : 's') + ' differ from the source'
@@ -2165,6 +2372,27 @@ ${YAZI_TIPI}
     else fUygula({ id: x.id });
   });
 
+  // Kutular tablo ile birlikte yeniden çiziliyor; dinleyicileri her seferinde
+  // bağlıyoruz. Arama kutusunda imleç kaybolmasın diye odak geri veriliyor.
+  function fSuzgecBagla(v) {
+    const ara = $('fAra'), durum = $('fDurumSuz'), sag = $('fSagSuz');
+    if (!ara || !durum || !sag) return;
+    durum.value = fDurumSuz;
+    sag.value = fSagSuz;
+    sag.addEventListener('change', () => { fSagSuz = sag.value; fTabloCiz(v); });
+    ara.addEventListener('input', () => {
+      fAramaSuz = ara.value.trim().toLowerCase();
+      const konum = ara.selectionStart;
+      fTabloCiz(v);
+      const yeni = $('fAra');
+      if (yeni) { yeni.focus(); yeni.setSelectionRange(konum, konum); }
+    });
+    durum.addEventListener('change', () => {
+      fDurumSuz = durum.value;
+      fTabloCiz(v);
+    });
+  }
+
   async function fiyatYukle() {
     $('uyari').classList.add('gizli');
     $('yukleniyor').classList.remove('gizli');
@@ -2348,6 +2576,16 @@ ${YAZI_TIPI}
     }
   });
 
+  $('pasifDugme').addEventListener('click', () => { pasifGoster = !pasifGoster; tabloCiz(); });
+  $('mSaglayici').addEventListener('change', tabloCiz);
+  $('mFiyat').addEventListener('change', tabloCiz);
+  $('modelArama').addEventListener('input', () => {
+    // Arama yapılırken pasifler de kapsama giriyor: "bu model bizde var mı"
+    // sorusunun cevabı aktiflerle sınırlı olmamalı.
+    if ($('modelArama').value.trim()) pasifGoster = true;
+    tabloCiz();
+  });
+
   $('ekleAc').addEventListener('click', () => {
     $('ekleKart').classList.toggle('gizli');
     $('ekleHata').classList.add('gizli');
@@ -2454,7 +2692,7 @@ ${YAZI_TIPI}
     d.disabled = true; d.textContent = 'Preparing...';
     try {
       const s = new URLSearchParams({ gun: String(gun) });
-      if ($('fMusteri').value)   s.set('client',   $('fMusteri').value);
+      if ($('fKisi').value)      s.set('kisi',     $('fKisi').value);
       if ($('fSaglayici').value) s.set('provider', $('fSaglayici').value);
       if ($('fDurum').value)     s.set('durum',    $('fDurum').value);
 
@@ -2651,7 +2889,8 @@ export async function adminRoutes(server: FastifyInstance) {
     }
 
     const s = request.query as {
-      gun?: string; offset?: string; client?: string; provider?: string; durum?: string;
+      gun?: string; offset?: string; client?: string; provider?: string;
+      durum?: string; model?: string; kisi?: string;
     };
     const gun = Number(s.gun ?? 30);
     const offset = Math.max(0, Number(s.offset ?? 0));
@@ -2666,8 +2905,35 @@ export async function adminRoutes(server: FastifyInstance) {
       if (s.client) x = x.eq('client_id', s.client);
       if (s.provider) x = x.eq('provider', s.provider);
       if (s.durum) x = x.eq('status', s.durum);
+      // Model süzgeci "sağlayıcı/model" biçiminde geliyor: aynı ad iki
+      // sağlayıcıda bulunabildiği için yalnız model adı belirsiz kalırdı.
+      if (s.model) {
+        const [sag, ...kalan] = s.model.split('/');
+        x = x.eq('provider', sag).eq('model', kalan.join('/'));
+      }
       return x;
     };
+
+    // İsteği kim attı? Ağ geçidi kişiyi görmüyor, anahtarı görüyor; anahtarın
+    // sahibi isteği atan kişi. Tek şirketli kurulumda "Customer" sütunu hep
+    // aynı adı yazıyordu, asıl sorulan "bunu kim yaptı" idi.
+    const { data: anahtarSahipleri } = await supabase
+      .from('client_keys').select('id, user_id, label');
+    const { data: kisiSatirlari } = await supabase.from('users').select('id, email');
+    const kisiAdi = new Map(
+      ((kisiSatirlari ?? []) as Array<{ id: string; email: string }>)
+        .map((k) => [k.id, k.email])
+    );
+    const anahtarKisisi = new Map<string, { id: string; email: string } | null>();
+    const anahtarEtiketi = new Map<string, string | null>();
+    for (const a of (anahtarSahipleri ?? []) as Array<{
+      id: string; user_id: string | null; label: string | null;
+    }>) {
+      anahtarEtiketi.set(a.id, a.label);
+      anahtarKisisi.set(a.id, a.user_id && kisiAdi.has(a.user_id)
+        ? { id: a.user_id, email: String(kisiAdi.get(a.user_id)) }
+        : null);
+    }
 
     // 1) Dönemin tamamı — özet için
     const { data: tumu, error: h1 } = await filtrele(
@@ -2694,7 +2960,7 @@ export async function adminRoutes(server: FastifyInstance) {
     // 2) Görüntülenecek sayfa
     const { data: sayfa, error: h2 } = await filtrele(
       supabase.from('logs')
-        .select('client_id, provider, model, status, input_tokens, output_tokens, cost, latency_ms, created_at, error_message, input_price_used, output_price_used')
+        .select('client_id, key_id, provider, model, status, input_tokens, output_tokens, cost, latency_ms, created_at, error_message, input_price_used, output_price_used')
         .order('created_at', { ascending: false })
         .range(offset, offset + SAYFA - 1) as any
     );
@@ -2743,10 +3009,61 @@ export async function adminRoutes(server: FastifyInstance) {
         return { id, name: ad, label: `${etiket} (${adet})`, adet };
       });
 
-    const kayitlar = ((sayfa ?? []) as Array<Record<string, unknown>>).map((k) => ({
-      ...k,
-      musteri: adlar.get(String(k.client_id)) ?? null
-    }));
+    const kayitlar = ((sayfa ?? []) as Array<Record<string, unknown>>).map((k) => {
+      const anahtar = k.key_id ? String(k.key_id) : null;
+      const sahip = anahtar ? anahtarKisisi.get(anahtar) ?? null : null;
+      return {
+        ...k,
+        musteri: adlar.get(String(k.client_id)) ?? null,
+        kisi: sahip ? sahip.email : null,
+        anahtarAdi: anahtar ? anahtarEtiketi.get(anahtar) ?? null : null
+      };
+    }).filter((k) => {
+      // Kişi süzgeci kayıtlar hazırlandıktan sonra uygulanıyor: kişi ile
+      // kayıt arasındaki bağ anahtar üzerinden kuruluyor, tek bir SQL
+      // koşuluyla ifade edilemiyor.
+      if (!s.kisi) return true;
+      if (s.kisi === 'yok') return k.kisi === null;
+      return k.kisi === s.kisi;
+    });
+
+    // Model süzgecinin seçenekleri. Müşteri sayımıyla aynı gerekçe: seçim
+    // yapılınca liste tek satıra düşmesin diye model filtresi bu sayıma
+    // uygulanmıyor.
+    let modelSayimSorgu: any = supabase.from('logs').select('provider, model').limit(10000);
+    if (baslangic) modelSayimSorgu = modelSayimSorgu.gte('created_at', baslangic);
+    if (s.client) modelSayimSorgu = modelSayimSorgu.eq('client_id', s.client);
+    if (s.durum) modelSayimSorgu = modelSayimSorgu.eq('status', s.durum);
+    const { data: modelSayimlari } = await modelSayimSorgu;
+
+    const modelSayac = new Map<string, number>();
+    for (const k of (modelSayimlari ?? []) as Array<{ provider: string; model: string }>) {
+      const ad = `${k.provider}/${k.model}`;
+      modelSayac.set(ad, (modelSayac.get(ad) ?? 0) + 1);
+    }
+    const filtreModelleri = [...modelSayac.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([ad, adet]) => ({ ad, label: `${ad.split('/')[1]} (${adet})` }));
+
+    // Kişi süzgecinin seçenekleri, dönemdeki istek sayılarıyla.
+    let kisiSayimSorgu: any = supabase.from('logs').select('key_id').limit(10000);
+    if (baslangic) kisiSayimSorgu = kisiSayimSorgu.gte('created_at', baslangic);
+    if (s.durum) kisiSayimSorgu = kisiSayimSorgu.eq('status', s.durum);
+    const { data: kisiSayimlari } = await kisiSayimSorgu;
+
+    const kisiSayac = new Map<string, number>();
+    let sahipsiz = 0;
+    for (const k of (kisiSayimlari ?? []) as Array<{ key_id: string | null }>) {
+      const sahip = k.key_id ? anahtarKisisi.get(String(k.key_id)) ?? null : null;
+      if (!sahip) { sahipsiz += 1; continue; }
+      kisiSayac.set(sahip.email, (kisiSayac.get(sahip.email) ?? 0) + 1);
+    }
+    const filtreKisileri = [...kisiSayac.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([eposta, adet]) => ({ deger: eposta, label: `${eposta} (${adet})` }));
+    if (sahipsiz) {
+      filtreKisileri.push({ deger: 'yok', label: `Shared or unattributed (${sahipsiz})` });
+    }
 
     return {
       ozet,
@@ -2754,6 +3071,8 @@ export async function adminRoutes(server: FastifyInstance) {
       toplam: ozet.istek,
       offset,
       musteriler: filtreMusterileri,
+      modeller: filtreModelleri,
+      kisiler: filtreKisileri,
       fiyatlar: await priceList()
     };
   });
@@ -3161,7 +3480,7 @@ export async function adminRoutes(server: FastifyInstance) {
     }
 
     const s = request.query as {
-      gun?: string; client?: string; provider?: string; durum?: string;
+      gun?: string; client?: string; provider?: string; durum?: string; model?: string;
     };
     const gun = Number(s.gun ?? 30);
     const baslangic = gun > 0
@@ -3177,6 +3496,10 @@ export async function adminRoutes(server: FastifyInstance) {
     if (s.client) sorgu = sorgu.eq('client_id', s.client);
     if (s.provider) sorgu = sorgu.eq('provider', s.provider);
     if (s.durum) sorgu = sorgu.eq('status', s.durum);
+    if (s.model) {
+      const [sag, ...kalan] = s.model.split('/');
+      sorgu = sorgu.eq('provider', sag).eq('model', kalan.join('/'));
+    }
 
     const { data, error } = await sorgu;
     if (error) return reply.status(500).send({ error: 'Could not read records.' });
@@ -4001,9 +4324,10 @@ export async function adminRoutes(server: FastifyInstance) {
     // fiyatı elle yazmak demekti — hem yorucu hem hataya açık (bin kat şişik
     // fiyat girme hatasını bu yüzden yaşadık).
     //
-    // Modeli PASİF ekliyoruz. Aktif eklemek, kimse karar vermeden yeni ve
-    // pahalı bir modeli kullanıma açmak olurdu. Pasif model kimseye görünmez,
-    // yalnızca Models ekranında "buna bakılması lazım" olarak durur.
+    // Model kullanıma açık ekleniyor. Pahalı bir modelin kontrolsüz açılması
+    // endişesini fiyat tavanı karşılıyor: tavanın üstündeki model eklenmiş
+    // olsa da reddediliyor ve panele talep olarak düşüyor. Kapıyı iki yere
+    // birden koymak, ucuz bir modelin sebepsiz beklemesine yol açıyordu.
     //
     // Kaynakta fiyatı bulunamayan modeli hiç eklemiyoruz: fiyatsız model zaten
     // aktif edilemiyor, listede gürültüden başka bir şey olmaz.
@@ -4060,19 +4384,44 @@ export async function adminRoutes(server: FastifyInstance) {
 
         if (girdi === null || cikti === null) continue;
 
+        // Sağlayıcı doğrulaması.
+        //
+        // Ret kaydındaki sağlayıcı, isteğin gönderildiği uçtan geliyor —
+        // istemci yanlış uca gönderirse yanlış çift kaydediliyor. Nitekim
+        // "openai/claude-4-opus" böyle oluştu: Anthropic modeli OpenAI ucundan
+        // çağrılmış, ad eşleşmesi fiyatı bulmuş ve olmayan bir model kataloğa
+        // girmişti. Kaynak kimliği hangi sağlayıcıyı gösteriyorsa onunla
+        // uyuşmayan çifti eklemiyoruz.
+        const kaynakSaglayicisi = (kimlik: string | null): string | null => {
+          if (!kimlik) return null;
+          const bas = kimlik.split('/')[0];
+          if (!bas || bas === kimlik) return null; // önek yoksa hüküm veremiyoruz
+          return ({ openai: 'openai', anthropic: 'anthropic',
+                    google: 'gemini', gemini: 'gemini' } as Record<string, string>)[bas] ?? null;
+        };
+        const kanit = kaynakSaglayicisi(orId) ?? kaynakSaglayicisi(liteId);
+        if (kanit && kanit !== m.provider) {
+          olaylar.push({
+            tur: 'warning', tetikleyen, model: ad,
+            aciklama: `Not added: the sources list this model under ${kanit}, ` +
+              `but it was called on the ${m.provider} endpoint.`
+          });
+          continue;
+        }
+
         const { error: h } = await supabase.from('model_catalog').insert([{
           provider: m.provider,
           model: m.model,
           input_price: girdi,
           output_price: cikti,
-          is_active: false,
+          is_active: true,
           price_checked_at: simdi,
           price_source: orId && liteId ? 'verified' : (orId ? 'openrouter' : 'litellm'),
           source_ids: orId ? [orId] : [],
           litellm_ids: liteId ? [liteId] : [],
           son_fiyat_notu:
-            `Added automatically on ${simdi.slice(0, 10)}: customers requested it and ` +
-            `a price was found at the source. Inactive until reviewed.`
+            `Added automatically on ${simdi.slice(0, 10)}: someone asked for it and ` +
+            `a price was found at the source. The price limit decides who may use it.`
         }]);
         if (h) continue;
 
@@ -4084,7 +4433,88 @@ export async function adminRoutes(server: FastifyInstance) {
           tur: 'model', tetikleyen, model: ad,
           yeni_girdi: girdi, yeni_cikti: cikti,
           kaynak: [orId ? 'openrouter' : null, liteId ? 'litellm' : null].filter(Boolean).join(' + '),
-          aciklama: 'Customers requested this model; added to the catalog as inactive.'
+          aciklama: 'Someone asked for this model; added with its price. ' +
+            'The price limit decides who may use it.'
+        });
+      }
+    }
+
+    // --- 4) kaynaklarda çıkan yeni modelleri ekle ---
+    //
+    // 3. adım yalnızca birinin isteyip reddedildiği modelleri ekliyordu. Yani
+    // yeni bir model çıktığında kimse denemeden haberimiz olmuyordu: modeli
+    // elle eklemek gerekiyordu, adını ve iki fiyatı elle yazarak.
+    //
+    // Burada kaynaklarda görünen ama katalogda olmayan modeller de ekleniyor,
+    // fiyatlarıyla ve KULLANIMA AÇIK olarak.
+    //
+    // Önce pasif ekleniyordu ve bu kapıyı yanlış yere koyuyordu: pasif model
+    // hiç çağrılamıyor, fiyat tavanı devreye bile girmiyordu. Oysa kararı
+    // veren şey tavan olmalı — ucuzsa isteyene açılsın, pahalıysa reddedilip
+    // panele talep olarak düşsün. Aktiflik bayrağı artık "bilerek kapattım"
+    // anlamına geliyor, "henüz bakmadım" anlamına değil.
+    //
+    // Kapsam dar tutuluyor. Kaynakta 370 model var; hepsini almak Models
+    // ekranını kullanmadığımız satırlarla doldururdu. Yalnızca proxy'lediğimiz
+    // sağlayıcılar ve ana model kimlikleri alınıyor — ":batch" gibi varyantlar,
+    // "~" ile başlayan takma adlar ve satıcı yolları dışarıda.
+    const SAGLAYICI_ESLEME: Record<string, string> = {
+      openai: 'openai', anthropic: 'anthropic', google: 'gemini', gemini: 'gemini'
+    };
+
+    if (or) {
+      const mevcutTum = new Set(
+        ((satirlar ?? []) as Array<{ provider: string; model: string }>)
+          .map((m) => `${m.provider}/${m.model}`)
+      );
+      for (const e of eklenenModeller) mevcutTum.add(e.model);
+
+      for (const [kaynakId, f] of or.fiyatlar) {
+        const parca = kaynakId.split('/');
+        if (parca.length !== 2) continue;
+        if (kaynakId.includes(':') || kaynakId.startsWith('~')) continue;
+
+        const kaynakSaglayici = parca[0] ?? '';
+        const modelAdi = parca[1] ?? '';
+        if (!kaynakSaglayici || !modelAdi) continue;
+
+        const saglayici = SAGLAYICI_ESLEME[kaynakSaglayici];
+        if (!saglayici) continue;
+
+        const ad = `${saglayici}/${modelAdi}`;
+        if (mevcutTum.has(ad)) continue;
+        if (!(f.girdi > 0 && f.cikti > 0)) continue;
+
+        // İkinci kaynakta da varsa doğrulanmış sayılıyor.
+        const liteAday = lite ? liteAdaylari(modelAdi, lite.fiyatlar)[0] ?? null : null;
+
+        const { error: h } = await supabase.from('model_catalog').insert([{
+          provider: saglayici,
+          model: modelAdi,
+          input_price: f.girdi,
+          output_price: f.cikti,
+          is_active: true,
+          price_checked_at: simdi,
+          price_source: liteAday ? 'verified' : 'openrouter',
+          source_ids: [kaynakId],
+          litellm_ids: liteAday ? [liteAday] : [],
+          son_fiyat_notu:
+            `Seen at the source on ${simdi.slice(0, 10)} and added with its price. ` +
+            `The price limit decides who may use it.`
+        }]);
+        if (h) continue;
+
+        mevcutTum.add(ad);
+        eklenenModeller.push({
+          model: ad,
+          fiyat: `$${(f.girdi * 1000).toFixed(2)} / $${(f.cikti * 1000).toFixed(2)}`
+        });
+        olaylar.push({
+          tur: 'model', tetikleyen, model: ad,
+          yeni_girdi: f.girdi, yeni_cikti: f.cikti,
+          kaynak: liteAday ? 'openrouter + litellm' : 'openrouter',
+          aciklama: 'New at the source; added with its price. ' +
+            'The price limit decides who may use it.'
         });
       }
     }

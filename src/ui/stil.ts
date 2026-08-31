@@ -259,6 +259,31 @@ export const STIL = `
   .hesap .sat span:first-child { color:var(--ink-3); }
   .hesap .cizgi { border-top:1px solid var(--line-2); margin:.6rem 0; }
   .hesap .toplam { font-weight:500; }
+  /* Kişinin kendi model dağılımı için ara başlık. */
+  /* Tablo başlığındaki süzgeç satırı — Excel'deki gibi sütunun altında. */
+  thead tr.suzgecSatiri th { padding-top:0; padding-bottom:.55rem;
+    background:var(--sunk); border-bottom:1px solid var(--line-2); }
+  thead tr.suzgecSatiri select { cursor:pointer; }
+
+  /* İstek listesinin süzgeç çubuğu. */
+  .suzgecCubugu { display:flex; align-items:flex-end; gap:.9rem; flex-wrap:wrap;
+    margin:0 0 .9rem; }
+  .suzgecAlan { display:flex; flex-direction:column; gap:.25rem;
+    font-size:.75rem; text-transform:uppercase; letter-spacing:.04em; color:var(--ink-3); }
+  .suzgecAlan select { font:inherit; font-size:.85rem; text-transform:none;
+    letter-spacing:0; padding:.35rem .6rem; border:1px solid var(--line-2);
+    border-radius:8px; background:var(--surface); color:var(--ink); }
+
+  /* Liste üstündeki isteğe bağlı süzgeç düğmesi. */
+  .suzgecDugme { font:inherit; font-size:.82rem; padding:.35rem .8rem; cursor:pointer;
+    border:1px solid var(--line-2); border-radius:999px; background:transparent;
+    color:var(--ink-3); }
+  .suzgecDugme:hover { border-color:var(--mavi); color:var(--ink); }
+  .suzgecDugme.secili { border-color:var(--mavi); color:var(--mavi);
+    background:color-mix(in srgb, var(--mavi) 12%, transparent); }
+
+  .hesap .altBaslik { font-size:.72rem; text-transform:uppercase; letter-spacing:.05em;
+    color:var(--ink-3); margin:.9rem 0 .4rem; }
   .dogrula { display:flex; align-items:center; gap:.55rem; margin-top:1rem;
              font-size:.87rem; padding:.7rem .9rem; border-radius:9px; }
   .dogrula.ok  { background:var(--yesil-soft); color:var(--yesil); }

@@ -182,6 +182,7 @@ ${YAZI_TIPI}
               Requests sent with the keys you own, within the selected period.
             </div>
             <div class="hesap" id="benimSatir"></div>
+            <div class="hesap" id="benimModelSatir"></div>
           </div>
           <div class="ikincil-olculer" id="ekstra"></div>
           <div class="kart" style="margin-top:.85rem">
@@ -211,12 +212,21 @@ ${YAZI_TIPI}
 
         <!-- İSTEKLER -->
         <section data-bolum="istekler" class="gizli">
-          <div class="satirbasi">
-            <div class="sekmeler" id="sekmeler">
-              <button data-durum="tum" class="secili">All requests<span class="adet" id="adetTum"></span></button>
-              <button data-durum="hata">Failed only<span class="adet" id="adetHata"></span></button>
-            </div>
-            <div class="sayac" id="sayac"></div>
+          <div class="suzgecCubugu">
+            <label class="suzgecAlan">Status
+              <select id="durumSuzgec">
+                <option value="">All</option>
+                <option value="basarili">Successful</option>
+                <option value="hata">Failed</option>
+                <option value="bekleyen">Pending</option>
+              </select>
+            </label>
+            <label class="suzgecAlan">Model
+              <select id="modelSuzgec"><option value="">All models</option></select>
+            </label>
+            <button class="suzgecDugme" id="benimSuzgec">Only mine</button>
+            <button class="suzgecDugme gizli" id="suzgecSifirla">Clear</button>
+            <div class="sayac" id="sayac" style="margin-left:auto"></div>
           </div>
           <div class="tablokart">
             <div class="kaydir"><table id="tablo"></table></div>
@@ -229,6 +239,24 @@ ${YAZI_TIPI}
         <section data-bolum="fiyat" class="gizli">
           <div class="satirbasi" style="margin-top:0">
             <div class="baslikkucuk">Model pricing</div>
+            <div class="sayac" id="fiyatSayac"></div>
+          </div>
+          <div class="suzgecCubugu">
+            <label class="suzgecAlan">Provider
+              <select id="fSaglayici">
+                <option value="">All providers</option>
+                <option value="openai">OpenAI</option>
+                <option value="anthropic">Anthropic</option>
+                <option value="gemini">Google</option>
+              </select>
+            </label>
+            <label class="suzgecAlan">Search
+              <input id="fArama" placeholder="Model name"
+                style="font:inherit;font-size:.85rem;text-transform:none;letter-spacing:0;
+                       padding:.35rem .6rem;border:1px solid var(--line-2);border-radius:8px;
+                       background:var(--surface);color:var(--ink);min-width:12rem">
+            </label>
+            <button class="suzgecDugme" id="fSadeceAcik">Only what I can use</button>
           </div>
           <div class="tablokart"><div class="kaydir"><table id="fiyatTablo"></table></div></div>
           <div class="yardim" style="margin-top:.7rem">
@@ -336,7 +364,8 @@ ${YAZI_TIPI}
 
 <script>
   let anahtar = null, hesap = null, gun = 30, offset = 0, toplam = 0,
-      sadeceHata = false, bolum = 'genel';
+      bolum = 'genel', sadeceBenim = false,
+      durumSuzgec = '', modelSuzgec = '', fSadeceAcik = false;
   let fiyatlar = {};        // model → { input, output }, 1000 token başına
   let satirlar = [];        // ekranda duran istek kayıtları
 
@@ -762,20 +791,48 @@ ${YAZI_TIPI}
     const SAGLAYICI_ADI = { openai:'OpenAI', anthropic:'Anthropic', gemini:'Google' };
 
     const izinli = new Set((hesap && hesap.allowedModels) || []);
+    const tavan = hesap ? hesap.maxOutputPrice : null;
 
-    $('fiyatTablo').innerHTML =
-      '<thead><tr><th>Model</th><th>Provider</th><th>Input</th><th>Output</th><th>Access</th></tr></thead><tbody>' +
-      anahtarlar.map(a => {
-        const f = fiyatlar[a];
-        const sg = saglayiciAdi(a);
-        return '<tr><td>' + nokta(a) + a.split('/')[1] + '</td>' +
-          '<td>' + (SAGLAYICI_ADI[sg] || sg) + '</td>' +
-          '<td class="sayi">$' + milyonBasi(f.input).toFixed(2) + ' / 1M</td>' +
-          '<td class="sayi">$' + milyonBasi(f.output).toFixed(2) + ' / 1M</td>' +
-          '<td>' + (izinli.has(a)
-            ? '<span class="hap ok">enabled</span>'
-            : '<span class="hap">not enabled</span>') + '</td></tr>';
-      }).join('') + '</tbody>';
+    // Erişim üç durumlu.
+    //
+    // Önce yalnızca "enabled / not enabled" vardı ve yanlıştı: fiyat tavanının
+    // altındaki bir model izin listesinde olmasa da çağrılabiliyor. "not
+    // enabled" yazmak kullanıcıya kapalı olduğunu söylüyordu.
+    const erisim = (a) => {
+      if (izinli.has(a)) return { hap: 'ok', yazi: 'yours' };
+      const f = fiyatlar[a];
+      if (tavan != null && f && f.output <= tavan)
+        return { hap: 'ok', yazi: 'open — just use it' };
+      return { hap: 'bek', yazi: 'needs approval' };
+    };
+
+    const sg = ($('fSaglayici') || {}).value || '';
+    const ara = (($('fArama') || {}).value || '').trim().toLowerCase();
+    const gorunen = anahtarlar.filter(a => {
+      if (sg && saglayiciAdi(a) !== sg) return false;
+      if (ara && !a.toLowerCase().includes(ara)) return false;
+      if (fSadeceAcik && erisim(a).hap !== 'ok') return false;
+      return true;
+    });
+
+    $('fiyatSayac').textContent = gorunen.length === anahtarlar.length
+      ? anahtarlar.length + ' models'
+      : gorunen.length + ' of ' + anahtarlar.length + ' models';
+
+    $('fiyatTablo').innerHTML = gorunen.length
+      ? '<thead><tr><th>Model</th><th>Provider</th><th>Input</th><th>Output</th><th>Access</th></tr></thead><tbody>' +
+        gorunen.map(a => {
+          const f = fiyatlar[a];
+          const s2 = saglayiciAdi(a);
+          const e = erisim(a);
+          return '<tr><td>' + nokta(a) + a.split('/')[1] + '</td>' +
+            '<td>' + (SAGLAYICI_ADI[s2] || s2) + '</td>' +
+            '<td class="sayi">$' + milyonBasi(f.input).toFixed(2) + ' / 1M</td>' +
+            '<td class="sayi">$' + milyonBasi(f.output).toFixed(2) + ' / 1M</td>' +
+            '<td><span class="hap ' + e.hap + '">' + e.yazi + '</span></td></tr>';
+        }).join('') + '</tbody>'
+      : '<tbody><tr><td style="padding:1.2rem" class="yardim">' +
+        'No models match these filters.</td></tr></tbody>';
 
     // Hesaplayıcıda yalnızca kullanabildiği modeller — kullanamayacağı bir
     // modelin maliyetini hesaplamak yanıltıcı olur.
@@ -843,7 +900,9 @@ ${YAZI_TIPI}
     }
     try {
       const c = await fetch('/portal/api/usage?gun='+gun+'&offset='+offset+
-        (sadeceHata ? '&durum=hata' : ''), { headers: basliklar() });
+        (durumSuzgec ? '&durum='+durumSuzgec : '')+
+        (modelSuzgec ? '&model='+encodeURIComponent(modelSuzgec) : '')+
+        (sadeceBenim ? '&kapsam=benim' : ''), { headers: basliklar() });
       if (!c.ok) throw new Error('sunucu');
       const v = await c.json();
       toplam = v.toplam;
@@ -853,8 +912,10 @@ ${YAZI_TIPI}
         ekstraCiz(v.ekstra);
         $('grafikbaslik').textContent = (gun === 0 ? 'Last 30 days' : 'Last '+gun+' days') + ' — daily spend';
         cizimYap(v.gunluk);
-        $('adetTum').textContent = ' ' + v.ozet.istek;
-        $('adetHata').textContent = ' ' + v.ozet.basarisiz;
+        modelSuzgecDoldur(v.donemModelleri);
+        // Süzgeç açıksa temizleme düğmesi görünsün.
+        $('suzgecSifirla').classList.toggle('gizli',
+          !durumSuzgec && !modelSuzgec && !sadeceBenim);
         const enB = Math.max(...v.modeller.map(m => m.maliyet), 0) || 1;
         $('kirilim').innerHTML = v.modeller.length
           ? '<thead><tr><th>Model</th><th>Share</th><th>Requests</th><th>Input</th><th>Output</th><th>Cost</th></tr></thead><tbody>'+
@@ -877,8 +938,11 @@ ${YAZI_TIPI}
       if (!v.kayitlar.length && !ekle) {
         $('tablo').innerHTML = '';
         $('bos').innerHTML = '<div class="simge">◷</div><h3>'+
-          (sadeceHata ? 'No failed requests' : 'No records in this period')+'</h3><p>'+
-          (sadeceHata ? 'All requests succeeded in this period.' : 'Try selecting a different period.')+'</p>';
+          (durumSuzgec || modelSuzgec || sadeceBenim
+            ? 'Nothing matches these filters' : 'No records in this period')+'</h3><p>'+
+          (durumSuzgec || modelSuzgec || sadeceBenim
+            ? 'Clear a filter or widen the period.'
+            : 'Try selecting a different period.')+'</p>';
         $('bos').classList.remove('gizli');
         $('sayac').textContent = ''; $('dahafazla').classList.add('gizli');
       } else {
@@ -987,6 +1051,18 @@ ${YAZI_TIPI}
         '<div class="sat"><span>Tokens</span><span>' + b.token + '</span></div>' +
         '<div class="sat toplam"><span>Your cost</span><span>' + para(b.maliyet) + '</span></div>' +
         '<div class="sat"><span>Share of company spend</span><span>%' + pay.toFixed(0) + '</span></div>';
+
+      // Kişinin kendi model dağılımı. Şirket toplamı zaten aşağıda; burada
+      // "ben hangi modeli ne kadar kullandım" cevabı veriliyor.
+      const bm = v.benimModeller || [];
+      $('benimModelSatir').innerHTML = bm.length
+        ? '<div class="altBaslik">Your models</div>' +
+          bm.map(m =>
+            '<div class="sat"><span>' + kacir(m.model.split('/')[1]) + '</span><span>' +
+            m.istek + (m.istek === 1 ? ' request · ' : ' requests · ') +
+            para(m.maliyet) + '</span></div>').join('')
+        : '<div class="yardim" style="margin-top:.6rem">' +
+          'No requests yet in this period.</div>';
     }
 
     const liste = v.anahtarKirilimi || [];
@@ -1149,16 +1225,54 @@ ${YAZI_TIPI}
   $('filtre').addEventListener('click', e => {
     const d = e.target.closest('button'); if (!d) return;
     [...$('filtre').children].forEach(b => b.classList.remove('secili'));
-    d.classList.add('secili'); gun = Number(d.dataset.gun); sadeceHata = false; offset = 0;
-    [...$('sekmeler').children].forEach((b,i) => b.classList.toggle('secili', i === 0));
+    d.classList.add('secili'); gun = Number(d.dataset.gun); offset = 0;
     kullanimGetir(false);
   });
-  $('sekmeler').addEventListener('click', e => {
-    const d = e.target.closest('button'); if (!d) return;
-    [...$('sekmeler').children].forEach(b => b.classList.remove('secili'));
-    d.classList.add('secili'); sadeceHata = d.dataset.durum === 'hata'; offset = 0;
-    kullanimGetir(false);
+  // Kapsam süzgeci. Varsayılan şirketin tamamı; tek düğmeyle kendi
+  // isteklerine iniyorsun. İki sekme olarak durduğunda liste ikiye
+  // bölünmüş gibi okunuyordu — burada asıl görünüm bir tane, süzgeç isteğe
+  // bağlı.
+  $('benimSuzgec').addEventListener('click', () => {
+    sadeceBenim = !sadeceBenim;
+    $('benimSuzgec').classList.toggle('secili', sadeceBenim);
+    offset = 0; kullanimGetir(false);
   });
+  // Fiyat listesi süzgeçleri. Katalog 100'ü aştığı için liste tek başına
+  // okunmuyor; sağlayıcı ve ad araması en çok işe yarayan ikisi.
+  $('fSaglayici').addEventListener('change', fiyatCiz);
+  $('fArama').addEventListener('input', fiyatCiz);
+  $('fSadeceAcik').addEventListener('click', () => {
+    fSadeceAcik = !fSadeceAcik;
+    $('fSadeceAcik').classList.toggle('secili', fSadeceAcik);
+    fiyatCiz();
+  });
+
+  $('durumSuzgec').addEventListener('change', () => {
+    durumSuzgec = $('durumSuzgec').value; offset = 0; kullanimGetir(false);
+  });
+  $('modelSuzgec').addEventListener('change', () => {
+    modelSuzgec = $('modelSuzgec').value; offset = 0; kullanimGetir(false);
+  });
+  $('suzgecSifirla').addEventListener('click', () => {
+    durumSuzgec = ''; modelSuzgec = ''; sadeceBenim = false;
+    $('durumSuzgec').value = ''; $('modelSuzgec').value = '';
+    $('benimSuzgec').classList.remove('secili');
+    offset = 0; kullanimGetir(false);
+  });
+
+  // Model kutusu dönemde geçen modellerle doluyor: listede olmayan bir modeli
+  // seçtirmek boş sonuç vermekten başka işe yaramıyor.
+  function modelSuzgecDoldur(liste) {
+    const kutu = $('modelSuzgec');
+    if (!liste) return;
+    const secili = kutu.value;
+    kutu.innerHTML = '<option value="">All models</option>' +
+      liste.map(m => '<option value="' + kacir(m.model) + '">' +
+        kacir(m.model.split('/')[1]) + ' (' + m.istek + ')</option>').join('');
+    if ([...kutu.options].some(o => o.value === secili)) kutu.value = secili;
+  }
+
+
   $('dahafazla').addEventListener('click', async () => {
     $('dahafazla').disabled = true; $('dahafazla').textContent = 'Loading...';
     offset += 50; await kullanimGetir(true);
@@ -1315,10 +1429,38 @@ export async function portalRoutes(server: FastifyInstance) {
       return a.buOturum || a.ortak;
     });
 
+    // Kişinin kendi izin listesi ve etkin fiyat tavanı.
+    //
+    // Fiyat sayfasındaki "Access" sütunu bunları kullanıyor: tavanın
+    // altındaki model listede olmasa da çağrılabiliyor, "not enabled"
+    // yazmak yanlış olurdu.
+    let kisiIzin: string[] | null = null;
+    let kisiTavan: number | null = null;
+    if (kullaniciId) {
+      const { data: k } = await supabase
+        .from('users').select('allowed_models, max_output_price')
+        .eq('id', kullaniciId).limit(1);
+      const satir = (k ?? [])[0] as
+        { allowed_models: string[] | null; max_output_price: number | null } | undefined;
+      kisiIzin = satir?.allowed_models ?? [];
+      kisiTavan = satir?.max_output_price ?? null;
+    }
+
+    const { data: sirketTavanSatir } = await supabase
+      .from('clients').select('max_output_price').eq('id', clientId).limit(1);
+    const sirketTavan =
+      ((sirketTavanSatir ?? [])[0] as { max_output_price: number | null } | undefined)
+        ?.max_output_price ?? null;
+
+    const etkinTavan = kisiTavan !== null && sirketTavan !== null
+      ? Math.min(kisiTavan, sirketTavan)
+      : (kisiTavan ?? sirketTavan);
+
     return {
       clientId: m.id,
       name: m.name,
-      allowedModels: m.allowed_models ?? [],
+      allowedModels: kisiIzin ?? m.allowed_models ?? [],
+      maxOutputPrice: etkinTavan,
       allowedDomains: m.allowed_domains ?? [],
       clientType: m.client_type ?? 'server-based',
       anahtarlar
@@ -1402,8 +1544,22 @@ export async function portalRoutes(server: FastifyInstance) {
     if (!kimlik) return reply.status(401).send({ error: 'Sign in to continue.' });
     const clientId = kimlik.clientId;
 
-    const sorgu = request.query as { gun?: string; offset?: string; durum?: string };
-    const sadeceHata = sorgu.durum === 'hata';
+    const sorgu = request.query as {
+      gun?: string; offset?: string; durum?: string; kapsam?: string; model?: string;
+    };
+    // Durum süzgeci artık üç değer alıyor. Eskiden yalnızca "hata" vardı;
+    // başarılı ya da bekleyen istekleri ayıklamak mümkün değildi.
+    const durumSuzgec = ['hata', 'basarili', 'bekleyen'].includes(String(sorgu.durum ?? ''))
+      ? String(sorgu.durum) : null;
+    const durumKarsiligi: Record<string, string> = {
+      hata: 'error', basarili: 'success', bekleyen: 'pending'
+    };
+    const modelSuzgec = String(sorgu.model ?? '').trim() || null;
+    const sadeceHata = durumSuzgec === 'hata';
+    // İstek listesi ya kişinin kendi anahtarlarıyla süzülüyor ya da şirketin
+    // tamamını gösteriyor. Özet, grafik ve bütçe her iki durumda da şirket
+    // ölçeğinde kalıyor — orada kıyas için şirket toplamı gerekiyor.
+    const sadeceBenim = sorgu.kapsam === 'benim';
     const gun = Number(sorgu.gun ?? 30);
     const offset = Math.max(0, Number(sorgu.offset ?? 0));
     const SAYFA = 50;
@@ -1478,17 +1634,28 @@ export async function portalRoutes(server: FastifyInstance) {
       gunluk.push({ gun: g, ...(gunSayaci.get(g) ?? bosGun()) });
     }
 
-    const grup = new Map<string, { model: string; istek: number; girdiToken: number; ciktiToken: number; maliyet: number }>();
-    for (const k of donem) {
-      const ad = `${k.provider}/${k.model}`;
-      const mevcut = grup.get(ad) ?? { model: ad, istek: 0, girdiToken: 0, ciktiToken: 0, maliyet: 0 };
-      mevcut.istek += 1;
-      mevcut.girdiToken += k.input_tokens ?? 0;
-      mevcut.ciktiToken += k.output_tokens ?? 0;
-      mevcut.maliyet += Number(k.cost ?? 0);
-      grup.set(ad, mevcut);
+    // Model kırılımı iki kez: şirketin tamamı ve giren kişinin kendisi.
+    //
+    // Önce yalnızca şirket geneli vardı. Kişi kendi kullanımını sadece toplam
+    // olarak görüyordu — "yeni açılan modeli ben ne kadar kullandım"
+    // sorusunun cevabı yoktu, tablodaki rakam herkesin toplamıydı.
+    function modelKirilimi(kayitlar: typeof donem) {
+      const grup = new Map<string, {
+        model: string; istek: number; girdiToken: number; ciktiToken: number; maliyet: number;
+      }>();
+      for (const k of kayitlar) {
+        const ad = `${k.provider}/${k.model}`;
+        const mevcut = grup.get(ad) ?? { model: ad, istek: 0, girdiToken: 0, ciktiToken: 0, maliyet: 0 };
+        mevcut.istek += 1;
+        mevcut.girdiToken += k.input_tokens ?? 0;
+        mevcut.ciktiToken += k.output_tokens ?? 0;
+        mevcut.maliyet += Number(k.cost ?? 0);
+        grup.set(ad, mevcut);
+      }
+      return [...grup.values()].sort((a, b) => b.maliyet - a.maliyet);
     }
-    const modeller = [...grup.values()].sort((a, b) => b.maliyet - a.maliyet);
+
+    const modeller = modelKirilimi(donem);
 
     // Önceki dönem — aynı uzunlukta, hemen öncesi. Kıyas için.
     // OpenRouter'ın etkinlik panosunda da her metriğin yanında bu var:
@@ -1522,7 +1689,23 @@ export async function portalRoutes(server: FastifyInstance) {
       .from('logs')
       .select('provider, model, status, input_tokens, output_tokens, cost, latency_ms, created_at, error_message')
       .eq('client_id', clientId) as any;
-    if (sadeceHata) sayfaSorgu = sayfaSorgu.eq('status', 'error');
+    if (durumSuzgec) sayfaSorgu = sayfaSorgu.eq('status', durumKarsiligi[durumSuzgec]);
+    if (modelSuzgec) {
+      const [sag, ...kalan] = modelSuzgec.split('/');
+      sayfaSorgu = sayfaSorgu.eq('provider', sag).eq('model', kalan.join('/'));
+    }
+
+    // "Sadece benim" seçiliyse kişinin sahip olduğu anahtarların kayıtları.
+    // Anahtarı olmayan biri için boş liste doğru sonuç.
+    let benimAnahtarKimlikleri: string[] = [];
+    if (sadeceBenim && kimlik.kullaniciId) {
+      const { data: ka } = await supabase
+        .from('client_keys').select('id').eq('user_id', kimlik.kullaniciId);
+      benimAnahtarKimlikleri = ((ka ?? []) as Array<{ id: string }>).map((x) => x.id);
+      sayfaSorgu = benimAnahtarKimlikleri.length
+        ? sayfaSorgu.in('key_id', benimAnahtarKimlikleri)
+        : sayfaSorgu.eq('key_id', '00000000-0000-0000-0000-000000000000');
+    }
 
     const { data: sayfa, error: hata2 } = await donemFiltresi(
       sayfaSorgu.order('created_at', { ascending: false }).range(offset, offset + SAYFA - 1)
@@ -1533,7 +1716,7 @@ export async function portalRoutes(server: FastifyInstance) {
     // ek sorgu yok.
     const basarili = donem.filter(k => k.status === 'success');
     const sureler = basarili.map(k => k.latency_ms ?? 0).filter(v => v > 0);
-    const enCok = [...grup.values()].sort((a, b) => b.istek - a.istek)[0] ?? null;
+    const enCok = [...modeller].sort((a, b) => b.istek - a.istek)[0] ?? null;
     const sonKayit = donem.reduce<string | null>(
       (a, k) => (!a || String(k.created_at) > a ? String(k.created_at) : a), null);
 
@@ -1600,6 +1783,15 @@ export async function portalRoutes(server: FastifyInstance) {
         )
       : null;
 
+    // Kişinin kendi model kırılımı. Hangi anahtarların ona ait olduğunu
+    // anahtar kırılımından biliyoruz; kayıtları o anahtarlara göre süzüyoruz.
+    const benimAnahtarlar = new Set(
+      anahtarKirilimi.filter((a) => a.benim).map((a) => a.keyId)
+    );
+    const benimModeller = kimlik.kullaniciId
+      ? modelKirilimi(donem.filter((k) => k.key_id && benimAnahtarlar.has(k.key_id)))
+      : null;
+
     // Kalan bütçe. Kişi kendi limitini görmeli — sürpriz "istekleriniz
     // durdu" mesajı almasın, dolmadan önce fark etsin.
     const { data: kisiSatir } = kimlik.kullaniciId
@@ -1632,6 +1824,7 @@ export async function portalRoutes(server: FastifyInstance) {
       oncekiOzet,
       ekstra,
       benimOzet,
+      benimModeller,
       benimButce,
       sirketButce,
       anahtarKirilimi,
@@ -1641,7 +1834,16 @@ export async function portalRoutes(server: FastifyInstance) {
       gunluk,
       modeller,
       kayitlar: sayfa ?? [],
-      toplam: sadeceHata ? ozet.basarisiz : ozet.istek,
+      // Sayaç uygulanan süzgeçlerin hepsini yansıtıyor; dönem verisi zaten
+      // elimizde, ek sorgu gerekmiyor.
+      toplam: donem.filter((k) => {
+        if (durumSuzgec && k.status !== durumKarsiligi[durumSuzgec]) return false;
+        if (modelSuzgec && `${k.provider}/${k.model}` !== modelSuzgec) return false;
+        if (sadeceBenim && !(k.key_id && benimAnahtarKimlikleri.includes(k.key_id))) return false;
+        return true;
+      }).length,
+      // Süzgeç kutusunu doldurmak için dönemde geçen modeller.
+      donemModelleri: modeller.map((m) => ({ model: m.model, istek: m.istek })),
       offset
     };
   });

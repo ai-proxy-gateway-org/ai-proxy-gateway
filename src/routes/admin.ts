@@ -9,6 +9,7 @@
 import type { FastifyInstance } from 'fastify';
 import { STIL, YAZI_TIPI } from '../ui/stil.js';
 import { supabase, createNewClient } from '../services/db.js';
+import { teslimOlustur } from '../core/anahtarTeslim.js';
 import { generateProxyKey, hashApiKey } from '../utils/auth.js';
 import {
   hesapOlustur, sifreDegistir, sifreKusuru,
@@ -173,6 +174,14 @@ ${YAZI_TIPI}
     .secimListe .secim .yardim { margin-left:1.6rem; padding-left:0; text-align:left;
       flex-basis:100%; }
   }
+
+  /* Teslim bağlantısı kutusu. */
+  .ortuKatman { position:fixed; inset:0; z-index:80; display:flex;
+    align-items:center; justify-content:center; padding:1.5rem;
+    background:rgba(0,0,0,.55); }
+  .ortuKart { width:100%; max-width:34rem; padding:1.5rem; border-radius:14px;
+    background:var(--surface); border:1px solid var(--line-2);
+    box-shadow:0 18px 48px rgba(0,0,0,.35); }
 
   /* Anahtar bir kez gösteriliyor; kırılmadan tamamı okunabilmeli. */
   .anahtarKutu { margin-top:.8rem; padding:.85rem 1rem; border-radius:10px;
@@ -1031,6 +1040,49 @@ ${YAZI_TIPI}
   });
 
   // ---------------- istek detayı: hesap doğrulama ----------------
+  // Teslim bağlantısını gösteren kutu.
+  //
+  // alert() yerine gerçek bir kart: bağlantı uzun, seçilebilir olmalı ve
+  // kopyalama düğmesi lazım. Ayrıca bunun bir ANAHTAR olmadığını yazmak
+  // gerekiyor — yanlışlıkla "anahtar bu" diye saklanmasın.
+  function teslimBagiGoster(eposta, bag, sonKullanma) {
+    const kutu = document.createElement('div');
+    kutu.className = 'ortuKatman';
+    kutu.innerHTML =
+      '<div class="ortuKart">' +
+      '<div class="baslikkucuk">Key created for ' + kacir(eposta) + '</div>' +
+      '<div class="yardim" style="margin:.4rem 0 1rem;line-height:1.6">' +
+      'The key itself was not shown to you and cannot be recovered from here. ' +
+      'Send the link below to ' + kacir(eposta) + '. They open it while signed ' +
+      'in to the portal and the key appears once.<br>' +
+      'The link opens a single time' +
+      (sonKullanma ? ' and expires on ' +
+        new Date(sonKullanma).toLocaleString('en-GB',
+          { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '') +
+      '.</div>' +
+      '<div class="anahtarKutu"><code id="teslimBag">' + kacir(bag) + '</code></div>' +
+      '<div style="display:flex;gap:.6rem;margin-top:1rem;align-items:center">' +
+      '<button class="dugme koyu" id="teslimKopyala">Copy link</button>' +
+      '<button class="dugme cerceveli" id="teslimKapat">Done</button>' +
+      '<span class="yardim" id="teslimNot"></span></div></div>';
+    document.body.appendChild(kutu);
+
+    kutu.querySelector('#teslimKopyala').onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(bag);
+        kutu.querySelector('#teslimNot').textContent = 'Copied';
+      } catch {
+        // Panoya erişim engelliyse seçmek de bir yol.
+        const r = document.createRange();
+        r.selectNodeContents(kutu.querySelector('#teslimBag'));
+        const sec = window.getSelection();
+        sec.removeAllRanges(); sec.addRange(r);
+        kutu.querySelector('#teslimNot').textContent = 'Selected — copy it';
+      }
+    };
+    kutu.querySelector('#teslimKapat').onclick = () => kutu.remove();
+  }
+
   function detayAc(k) {
     const ad = k.provider + '/' + k.model;
     const f = fiyatlar[ad];
@@ -1568,6 +1620,17 @@ ${YAZI_TIPI}
               ? '<button class="satirDugme tehlike" data-anahtar="' + a.id + '">Revoke</button>'
               : '<span class="hap">revoked</span>') + '</span></div>').join('')
         : '<div class="sat"><span>No key yet</span><span></span></div>') + '</div>' +
+      // Ad ve ortam burada seçiliyor. Önce ikisi de sabitti: her anahtar
+      // adsız ve "production" olarak çıkıyordu. Adsız anahtarlar listede
+      // "unnamed" diye birikiyor, hangisinin ne olduğu anlaşılmıyordu.
+      '<div class="formSatir" style="grid-template-columns:2fr 1fr;margin-top:.7rem">' +
+      '<label>Name<input id="ypAnahtarAd" placeholder="e.g. ' +
+        kacir((k.email || '').split('@')[0]) + '-prod"></label>' +
+      '<label>Environment<select id="ypAnahtarOrtam">' +
+        '<option value="production">production</option>' +
+        '<option value="development">development</option>' +
+        '<option value="local">local</option>' +
+      '</select></label></div>' +
       '<label class="secim" style="margin-top:.7rem"><input type="checkbox" id="ypEskiKapat">Revoke existing keys</label>' +
       '<button class="dugme cerceveli" id="ypYeniAnahtar" style="margin-top:.7rem">Issue key</button>' +
 
@@ -1645,10 +1708,25 @@ ${YAZI_TIPI}
       if (kapat && !confirm('Existing keys stop working immediately. Continue?')) return;
       try {
         const v = await api('/customers/' + k.client_id + '/keys', {
-          method: 'POST', body: JSON.stringify({ eskileriKapat: kapat, user_id: k.id })
+          method: 'POST', body: JSON.stringify({
+            eskileriKapat: kapat,
+            user_id: k.id,
+            environment: $('ypAnahtarOrtam').value,
+            label: $('ypAnahtarAd').value.trim() || undefined
+          })
         });
         await kisilerYukle();
-        alert('New key:\\n\\n' + v.anahtar + '\\n\\nShown once — copy it now.');
+        // Sahibi olan anahtarlarda açık değer bize hiç gelmiyor; teslim
+        // bağlantısı geliyor. Bağlantıyı iletiyoruz, anahtarı yalnızca sahibi
+        // görüyor. Sahipsiz anahtarlarda teslim edilecek kişi olmadığı için
+        // eski davranış sürüyor.
+        if (v.teslimJetonu) {
+          teslimBagiGoster(k.email,
+            location.origin + '/portal/reveal/' + v.teslimJetonu, v.sonKullanma);
+        } else {
+          alert('New key:\\n\\n' + v.anahtar + '\\n\\nShown once — copy it now.' +
+            (v.teslimHatasi ? '\\n\\n' + v.teslimHatasi : ''));
+        }
         detayKapat();
       } catch (e) { $('ypHata').textContent = e.message; $('ypHata').classList.remove('gizli'); }
     };
@@ -3275,6 +3353,28 @@ export async function adminRoutes(server: FastifyInstance) {
     const { data, error } = ekleme;
 
     if (error) return reply.status(500).send({ error: 'Could not issue a key.' });
+
+    // Anahtarın sahibi varsa açık değeri yöneticiye DÖNMÜYORUZ; şifrelenip
+    // tek kullanımlık bir bağlantıya konuyor. Yönetici bağlantıyı iletiyor,
+    // anahtarı yalnızca sahibi görüyor.
+    //
+    // Sahipsiz (ortak servis) anahtarlarında teslim edilecek bir kişi yok;
+    // orada açık değer yöneticide kalıyor, başka yolu yok.
+    const kayit = data as { id: string } | null;
+    if (g.user_id && kayit) {
+      const teslim = await teslimOlustur(kayit.id, String(g.user_id), acik);
+      if (teslim.ok) {
+        return {
+          anahtarKaydi: data,
+          teslimJetonu: teslim.jeton,
+          sonKullanma: teslim.sonKullanma
+        };
+      }
+      // Teslim kaydı açılamadıysa anahtarı kaybetmemek için açık dönüyoruz;
+      // aksi halde üretilmiş ama kimsenin ulaşamayacağı bir anahtar kalırdı.
+      return { anahtarKaydi: data, anahtar: acik, teslimHatasi: teslim.hata };
+    }
+
     return { anahtarKaydi: data, anahtar: acik };
   });
 

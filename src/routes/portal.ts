@@ -19,6 +19,7 @@ import {
 import { cerezYaz, cerezSil } from '../utils/hesap.js';
 import { supabase } from '../services/db.js';
 import { hashApiKey } from '../utils/auth.js';
+import { teslimAc } from '../core/anahtarTeslim.js';
 import { checkRateLimit } from '../middleware/rateLimiter.js';
 import { priceList } from '../core/modelCatalog.js';
 
@@ -340,6 +341,11 @@ ${YAZI_TIPI}
             <div class="baslikkucuk">Key details</div>
             <dl class="ozellik" id="anahtarBilgi" style="margin-top:1rem"></dl>
           </div>
+          <div class="kart gizli" id="teslimKart" style="max-width:44rem;margin-bottom:.85rem">
+            <div class="baslikkucuk">Your new key</div>
+            <div class="anahtarKutu" id="teslimSonuc" style="margin-top:.8rem"></div>
+          </div>
+
           <div class="kart" style="max-width:44rem;margin-top:.85rem">
             <div class="baslikkucuk">Access permissions</div>
             <div class="yardim" style="margin-top:.3rem">
@@ -1087,6 +1093,38 @@ ${YAZI_TIPI}
       : '';
   }
 
+  // Teslim bağlantısı. Adres /portal/reveal/<jeton> ise anahtar bir kez
+  // gösteriliyor. Giriş yapılmadan açılamıyor; giriş sonrası kaldığı yerden
+  // devam etsin diye uygulamaya girer girmez çalışıyor.
+  async function teslimAcmayiDene() {
+    // Düzenli ifade yerine parçalama: şablon dizesi içindeki ters bölü
+    // kaçışları çıktıda eriyor ve ifadeyi bozuyor.
+    const parcalar = location.pathname.split('/');
+    if (parcalar[1] !== 'portal' || parcalar[2] !== 'reveal' || !parcalar[3]) return;
+    const jeton = parcalar[3];
+    try {
+      const c = await fetch('/portal/api/reveal/' + encodeURIComponent(jeton),
+        { headers: basliklar() });
+      const v = await c.json();
+      if (!c.ok) throw new Error(v.error || 'This link is no longer valid.');
+
+      bolumGoster('anahtar');
+      $('teslimKart').classList.remove('gizli');
+      $('teslimSonuc').innerHTML =
+        '<div class="yardim" style="margin-bottom:.5rem">' +
+        'Copy it now &mdash; this link has just been used up and the key ' +
+        'cannot be shown again.</div><code>' + kacir(v.anahtar) + '</code>';
+    } catch (e) {
+      bolumGoster('anahtar');
+      $('teslimKart').classList.remove('gizli');
+      $('teslimSonuc').innerHTML =
+        '<div class="uyari">' + kacir(e.message) + '</div>';
+    } finally {
+      // Adresi temizliyoruz: yenilemede tekrar denenmesin, geçmişte kalmasın.
+      history.replaceState(null, '', '/portal');
+    }
+  }
+
   // Giriş yolu ne olursa olsun uygulamaya aynı şekilde giriliyor.
   function uygulamayaGir(v) {
     hesap = v;
@@ -1097,6 +1135,7 @@ ${YAZI_TIPI}
     $('uygulama').classList.remove('gizli');
     bolumGoster('genel');
     offset = 0; kullanimGetir(false);
+    teslimAcmayiDene();
   }
 
   // E-posta ve şifreyle giriş. Oturum çerezle taşınıyor, anahtar saklanmıyor.
@@ -1306,6 +1345,14 @@ ${YAZI_TIPI}
 
 export async function portalRoutes(server: FastifyInstance) {
   server.get('/portal', async (request, reply) => {
+    reply.type('text/html; charset=utf-8');
+    return SAYFA;
+  });
+
+  // Teslim bağlantısı aynı sayfayı sunuyor; jetonu istemci taraf adresten
+  // okuyup açıyor. Ayrı bir sayfa yazmak yerine böyle: kişi giriş yapmamışsa
+  // zaten giriş ekranını görüyor, girince bağlantı kaldığı yerden işliyor.
+  server.get('/portal/reveal/:jeton', async (request, reply) => {
     reply.type('text/html; charset=utf-8');
     return SAYFA;
   });
@@ -1528,6 +1575,34 @@ export async function portalRoutes(server: FastifyInstance) {
     reply.header('set-cookie', cerezSil(CEREZ_ADI.musteri, URETIM));
     return { degisti: true };
   });
+
+  // Anahtar teslim bağlantısını açar.
+  //
+  // Yönetici anahtarı üretiyor ama açık değeri görmüyor; bu uç, anahtarı
+  // sahibine bir kez gösteriyor. Oturum şart — bağlantı sızsa bile başkası
+  // açamıyor.
+  server.get('/portal/api/reveal/:jeton', async (request, reply) => {
+    const hesap = await oturumdakiHesap('musteri', request.headers.cookie);
+    if (!hesap) {
+      return reply.status(401).send({ error: 'Sign in to open this link.' });
+    }
+    const { jeton } = request.params as { jeton: string };
+    const sonuc = await teslimAc(String(jeton ?? ''), hesap.id);
+    if (!sonuc.ok) return reply.status(sonuc.durum).send({ error: sonuc.hata });
+    return { anahtar: sonuc.anahtar };
+  });
+
+  // Anahtar üretimi bilerek YALNIZCA yönetici panelinde.
+  //
+  // Portala "kendi anahtarını üret" düğmesi eklenmişti ve geri alındı. Gerekçe:
+  // şu an bir portal hesabı ele geçirilse saldırgan anahtarı göremiyor, yalnızca
+  // önekini görüyor — istek atamıyor. Üretim düğmesi olsaydı çalınan bir şifre
+  // doğrudan çalışan bir anahtara dönüşürdü. Şifrenin yeniden sorulması bunu
+  // zorlaştırır ama şifre zaten çalınmışsa engellemez.
+  //
+  // Anahtarı kaybeden kişi yöneticiden yenisini istiyor. Küçük bir ekipte bu
+  // maliyet, hesap ele geçirmesinin doğrudan API erişimine dönüşmesi riskinden
+  // ucuz.
 
   // Müşterinin kendi kullanım kayıtları.
   //

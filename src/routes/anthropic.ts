@@ -19,17 +19,19 @@ export async function anthropicRoutes(server: FastifyInstance) {
       return reply.status(security.status).send({ error: security.error });
     }
     const clientId = security.clientId;
+    const keyId = security.keyId;
+    const maxOutputPrice = security.maxOutputPrice;
     const allowedModels = security.allowedModels;
 
     const body = request.body as { model?: string } | undefined;
     const requestedModel = body?.model;
     if (!requestedModel) {
-      return reply.status(400).send({ error: "İstek gövdesinde 'model' alanı zorunludur." });
+      return reply.status(400).send({ error: "The 'model' field is required in the request body." });
     }
 
-    const authorization = authorizeModel('anthropic', requestedModel, allowedModels);
+    const authorization = await authorizeModel('anthropic', requestedModel, allowedModels, maxOutputPrice);
     if (!authorization.ok) {
-      void logDeniedRequest(clientId, 'anthropic', requestedModel, authorization.error);
+      void logDeniedRequest(clientId, 'anthropic', requestedModel, authorization.error, keyId);
       return reply.status(authorization.status).send({ error: authorization.error });
     }
 
@@ -37,6 +39,7 @@ export async function anthropicRoutes(server: FastifyInstance) {
       body: request.body,
       reply,
       clientId,
+      keyId,
       provider: 'anthropic',
       model: requestedModel
     });

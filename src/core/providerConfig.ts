@@ -2,12 +2,21 @@
 // wf-ortak §3: "Kontrolden geçen istekler, Provider Adapter katmanlarında ilgili
 // sağlayıcının gerçek API anahtarı eklenerek hedefe iletilir."
 //
-// Anahtar tanımlı değilse istek mock sunucuya gider; böylece gerçek anahtar olmadan
-// geliştirme ve test akışı bozulmaz.
+// Hedef adres varsayılan olarak sağlayıcının gerçek adresidir. Geliştirmede mock
+// sunucuya yönlendirmek için ilgili BASE_URL değişkeni açıkça verilir.
+//
+// Önceden tersi geçerliydi: değişken boşsa mock'a düşülüyordu. Yerelde kolaylık
+// sağlıyordu ama üretimde sessiz bir tuzak: Vercel'de localhost:4000 diye bir
+// sunucu yok, bütün istekler bağlantı hatasıyla düşerdi. Varsayılanın güvenli
+// tarafı, unutulduğunda çalışan taraf olmalı.
 
 export type ProviderName = 'openai' | 'gemini' | 'anthropic';
 
-const MOCK_BASE_URL = 'http://localhost:4000';
+const GERCEK_ADRESLER: Record<ProviderName, string> = {
+  openai: 'https://api.openai.com',
+  anthropic: 'https://api.anthropic.com',
+  gemini: 'https://generativelanguage.googleapis.com'
+};
 
 // Anthropic'in zorunlu tuttuğu API sürümü başlığı.
 const ANTHROPIC_VERSION = '2023-06-01';
@@ -19,10 +28,23 @@ function envOrUndefined(name: string): string | undefined {
   return value && value.trim() !== '' ? value.trim() : undefined;
 }
 
+// Sahte sağlayıcı açıkken ve adres verilmemişken yerel mock'a düşülüyor.
+//
+// Node'un --env-file'ı ortamda ZATEN var olan bir değişkenin üzerine yazmıyor.
+// Kabuğunda eskiden boş bir OPENAI_BASE_URL kalmışsa dosyadaki değer
+// yok sayılıyor ve istekler sessizce gerçek sağlayıcıya gidip 401 alıyordu.
+// Bayrak açıkken niyet zaten mock; boş adresi gerçek sağlayıcı saymak
+// tekrar eden bir tuzaktı.
+const YEREL_MOCK = 'http://localhost:4000';
+
 function baseUrlFor(provider: ProviderName): string {
-  if (provider === 'openai') return envOrUndefined('OPENAI_BASE_URL') ?? MOCK_BASE_URL;
-  if (provider === 'gemini') return envOrUndefined('GEMINI_BASE_URL') ?? MOCK_BASE_URL;
-  return envOrUndefined('ANTHROPIC_BASE_URL') ?? MOCK_BASE_URL;
+  const degisken = provider === 'openai' ? 'OPENAI_BASE_URL'
+    : provider === 'gemini' ? 'GEMINI_BASE_URL'
+    : 'ANTHROPIC_BASE_URL';
+  const verilen = envOrUndefined(degisken);
+  if (verilen) return verilen;
+  if (process.env.ENABLE_MOCK_PROVIDERS === 'true') return YEREL_MOCK;
+  return GERCEK_ADRESLER[provider];
 }
 
 export interface ProviderTarget {

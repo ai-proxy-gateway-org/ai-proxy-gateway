@@ -15,19 +15,24 @@ interface ClientPolicy {
   clientType: 'browser-based' | 'server-based';
   allowedDomains: string[];
   allowedModels: string[];
+  // Birim fiyat tavanı (1000 token başına çıktı fiyatı). null ise sınır yok
+  // ve yalnızca allowedModels geçerli — mevcut müşterilerin davranışı böyle
+  // değişmeden kalıyor.
+  maxOutputPrice: number | null;
 }
 
 async function fetchClientPolicy(clientId: string): Promise<ClientPolicy> {
   const { data } = await supabase
     .from('clients')
-    .select('client_type, allowed_domains, allowed_models')
+    .select('client_type, allowed_domains, allowed_models, max_output_price')
     .eq('id', clientId)
     .single();
 
   return {
     clientType: (data?.client_type as ClientPolicy['clientType']) ?? 'server-based',
     allowedDomains: (data?.allowed_domains as string[] | null) ?? [],
-    allowedModels: (data?.allowed_models as string[] | null) ?? []
+    allowedModels: (data?.allowed_models as string[] | null) ?? [],
+    maxOutputPrice: (data?.max_output_price as number | null) ?? null
   };
 }
 
@@ -37,7 +42,10 @@ async function fetchClientPolicy(clientId: string): Promise<ClientPolicy> {
 const DEFAULT_REQUESTS_PER_MINUTE = 60;
 
 export type SecurityOutcome =
-  | { ok: true; clientId: string; allowedModels: string[] }
+  | {
+      ok: true; clientId: string; keyId: string | null;
+      allowedModels: string[]; maxOutputPrice: number | null;
+    }
   | { ok: false; status: number; error: string };
 
 export async function runSecurityChain(options: {
@@ -65,5 +73,12 @@ export async function runSecurityChain(options: {
     return { ok: false, status: Number(rate.status), error: String(rate.error) };
   }
 
-  return { ok: true, clientId, allowedModels: policy.allowedModels };
+  // keyId kayda geçiyor: harcamayı anahtar bazında kırabilmek için.
+  return {
+    ok: true,
+    clientId,
+    keyId: (auth as { keyId?: string }).keyId ?? null,
+    allowedModels: policy.allowedModels,
+    maxOutputPrice: policy.maxOutputPrice
+  };
 }

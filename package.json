@@ -5,8 +5,8 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
-    "mock": "tsx watch mock-server/index.ts",
+    "dev": "tsx watch --env-file=.env src/server.ts",
+    "mock": "tsx watch --env-file=.env mock-server/index.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
@@ -31,6 +31,7 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.112.3",
     "@upstash/redis": "^1.38.2",
+    "@vercel/functions": "^3.9.5",
     "@vercel/node": "^5.10.1",
     "drizzle-orm": "^0.45.2",
     "express": "^5.2.1",

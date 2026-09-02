@@ -1,39 +1,81 @@
-import Fastify from 'fastify';
-import { openaiRoutes } from './routes/openai.js';
-import { geminiRoutes } from './routes/gemini.js';
-import { anthropicRoutes } from './routes/anthropic.js';
-import { portalRoutes } from './routes/portal.js';
-import { adminRoutes } from './routes/admin.js';
-import { mockProviderRoutes } from './routes/mockProvider.js';
-import { isLocalOrigin } from './core/localOrigins.js';
-import { catalogInfo } from './core/modelCatalog.js';
+import { serve } from '@hono/node-server';
+import { Hono } from 'hono';
+import { authMiddleware } from './middleware/authMiddleware.js';
+import { rateLimitMiddleware } from './middleware/rateLimitMiddleware.js';
+import { dbService } from './services/databaseService.js';
 
-export function buildApp() {
-  const server = Fastify({ logger: true });
+// Hono uygulamasını başlatıyoruz
+const app = new Hono();
 
-  server.get('/health', async (request) => {
-    const origin = request.headers.origin;
-    return { status: 'ok', isLocalOrigin: isLocalOrigin(origin), modelCatalog: await catalogInfo() };
-  });
+// Sağlık kontrolü rotası
+app.get('/', (c) => {
+  return c.json({ message: 'Hono Edge Proxy hazır ve şimşek gibi!' });
+});
 
-  server.register(openaiRoutes);
-  server.register(geminiRoutes);
-  server.register(anthropicRoutes);
-  server.register(portalRoutes);
-  server.register(adminRoutes);
+// Yapay zeka isteklerini karşılayacak TEK VE ANA Proxy Endpoint'i
+// Sırasıyla Auth ve Rate Limit middleware'leri çalışacak
+app.post('/v1/chat/completions', authMiddleware, rateLimitMiddleware, async (c) => {
+  const client = c.get('client');
+  const startTime = Date.now();
 
-  // Sahte sağlayıcı yalnızca açıkça istendiğinde takılıyor.
-  //
-  // Gerçek sağlayıcı anahtarlarımız olmadığı için canlıda da bir hedefe
-  // ihtiyacımız var; mock ayrı bir süreç olarak çalıştığında Vercel oraya
-  // erişemiyordu. Aynı uygulamanın içinde /mock altında durunca dağıtılmış
-  // ortamda da uçtan uca akış gösterilebiliyor.
-  //
-  // Gerçek anahtarlar geldiğinde bayrak kaldırılır, BASE_URL değişkenleri
-  // silinir; kod değişmeden gerçek sağlayıcılara çıkılır.
-  if (process.env.ENABLE_MOCK_PROVIDERS === 'true') {
-    server.register(mockProviderRoutes, { prefix: '/mock' });
+  try {
+    // 1. Müşteriden gelen isteği oku
+    const body = await c.req.json();
+    const model = body.model || 'gpt-4o'; 
+    const provider = 'openai'; 
+
+    // 2. Asenkron Log Başlat (Pending)
+    const logId = await dbService.logRequestStart(client.id, provider, model);
+
+    // 3. Edge Uyumlu Native Fetch ile AI API'sine İstek At
+    const aiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
+      },
+      body: JSON.stringify(body)
+    });
+
+    const data = await aiResponse.json();
+    const latencyMs = Date.now() - startTime;
+
+    // 4. Token ve Cost verilerini topla
+    const inputTokens = data.usage?.prompt_tokens || 0;
+    const outputTokens = data.usage?.completion_tokens || 0;
+    const isSuccess = aiResponse.ok;
+    const errorMessage = isSuccess ? undefined : data.error?.message;
+
+    // 5. EDGE BÜYÜSÜ: Log işlemini arka planda tamamla (Kullanıcıyı bekletmez)
+    if (logId) {
+      const logPromise = dbService.logRequestComplete(
+        logId, provider, model, inputTokens, outputTokens, latencyMs, isSuccess, errorMessage
+      );
+      
+      if (c.executionCtx && c.executionCtx.waitUntil) {
+        c.executionCtx.waitUntil(logPromise);
+      } else {
+        logPromise.catch(console.error); // Lokal test için
+      }
+    }
+
+    // 6. Sonucu döndür
+    return c.json(data, aiResponse.status as any);
+
+  } catch (error: any) {
+    console.error("Proxy Error:", error);
+    return c.json({ success: false, error: 'Internal Edge Proxy Error' }, 500);
   }
+});
 
-  return server;
-}
+// Lokal test için Node.js sunucusunu ayağa kaldırma
+const port = process.env.PORT ? parseInt(process.env.PORT) : 3000;
+console.log(`Hono Sunucusu http://localhost:${port} adresinde başlatıldı`);
+
+serve({
+  fetch: app.fetch,
+  port
+});
+
+// Vercel Edge'de çalışması için default export şarttır
+export default app;

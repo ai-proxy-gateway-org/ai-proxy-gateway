@@ -1,19 +1,20 @@
-import { supabase } from '../services/db.js';
-import { hashApiKey } from '../utils/auth.js';
+import type { Request, Response, NextFunction } from 'express';
+import { dbService } from '../services/databaseService.js'; // Ana şalterimizi (Adaptörü) çağırıyoruz
 
-/**
- * Verifies the provided Proxy API key.
- * Returns client details if successful, otherwise throws an error.
- * @param providedApiKey The "sk-proxy-..." key provided by the client
- */
-export async function verifyClient(providedApiKey: string) {
-  try {
-    if (!providedApiKey || !providedApiKey.startsWith('sk-proxy-')) {
-      return { success: false, error: 'Invalid API Key format', status: 401 };
-    }
+// 1. test.ts dosyasının ve middleware'in ortak kullandığı Doğrulama Fonksiyonu
+export async function verifyClient(token: string) {
+  // Drizzle sorgularını sildik, bütün işi Adaptöre paslıyoruz!
+  return await dbService.verifyClient(token);
+}
 
-    const hashedKey = hashApiKey(providedApiKey);
+// 2. Express Sunucusunun Kullandığı Middleware
+export async function authMiddleware(req: Request, res: Response, next: NextFunction) {
+  const authHeader = req.headers.authorization;
 
+<<<<<<< HEAD
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Unauthorized: Missing or invalid token' });
+=======
     const { data: keyData, error: keyError } = await supabase
       .from('client_keys')
       .select(`
@@ -61,5 +62,19 @@ export async function verifyClient(providedApiKey: string) {
   } catch (error) {
     console.error('Unexpected error during authentication:', error);
     return { success: false, error: 'Internal server error', status: 500 };
+>>>>>>> main
   }
+
+  const token = authHeader.split(' ')[1];
+  
+  // Üstteki verifyClient fonksiyonunu çağırıyoruz (O da adaptörü çağırıyor)
+  const result = await verifyClient(token);
+
+  if (!result.success) {
+    return res.status(result.status || 401).json({ error: result.error });
+  }
+
+  // Müşteri bilgilerini request objesine ekleyip akışa devam et
+  req.client = result.client;
+  next();
 }

@@ -1,3 +1,10 @@
+<<<<<<< HEAD
+// src/services/logger.ts
+import { dbService } from './databaseService.js'; // Sadece ana şalteri çağırıyoruz
+
+export async function logRequestStart(clientId: string, provider: string, model: string) {
+  return await dbService.logRequestStart(clientId, provider, model);
+=======
 import { supabase } from './db.js';
 // Fiyatlar artık model_catalog tablosundan geliyor (A tarafı, modelCatalog.ts).
 // Önceden model_pricing.json doğrudan import ediliyordu; dosya dağıtım paketine
@@ -42,21 +49,19 @@ export async function logRequestStart(
     console.error('Error starting log:', error);
     return null;
   }
+>>>>>>> main
 }
 
-/**
- * Asynchronously updates the log with token usage and cost when the AI responds.
- */
 export async function logRequestComplete(
-  logId: string, 
-  provider: string, 
-  model: string, 
-  inputTokens: number | null, 
-  outputTokens: number | null, 
-  latencyMs: number,
-  isSuccess: boolean = true,
-  error_message?: string
+  logId: string, provider: string, model: string, 
+  inputTokens: number | null, outputTokens: number | null, 
+  latencyMs: number, isSuccess: boolean = true, error_message?: string
 ) {
+<<<<<<< HEAD
+  return await dbService.logRequestComplete(
+    logId, provider, model, inputTokens, outputTokens, latencyMs, isSuccess, error_message
+  );
+=======
   try {
     const modelPricing = await priceFor(provider, model);
     let totalCost = 0;
@@ -102,4 +107,5 @@ export async function logRequestComplete(
   } catch (error) {
     console.error('Error updating log:', error);
   }
+>>>>>>> main
 }

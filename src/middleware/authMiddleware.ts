@@ -1,20 +1,10 @@
-import type { Request, Response, NextFunction } from 'express';
-import { dbService } from '../services/databaseService.js'; // Ana şalterimizi (Adaptörü) çağırıyoruz
+import { supabase } from '../services/db.js';
+import { hashApiKey } from '../utils/auth.js';
 
-// 1. test.ts dosyasının ve middleware'in ortak kullandığı Doğrulama Fonksiyonu
 export async function verifyClient(token: string) {
-  // Drizzle sorgularını sildik, bütün işi Adaptöre paslıyoruz!
-  return await dbService.verifyClient(token);
-}
-
-// 2. Express Sunucusunun Kullandığı Middleware
-export async function authMiddleware(req: Request, res: Response, next: NextFunction) {
-  const authHeader = req.headers.authorization;
-
-<<<<<<< HEAD
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Unauthorized: Missing or invalid token' });
-=======
+  try {
+    const hashedKey = hashApiKey(token);
+    
     const { data: keyData, error: keyError } = await supabase
       .from('client_keys')
       .select(`
@@ -46,8 +36,6 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
 
     return {
       success: true,
-      // Anahtarın kimliği: isteğin hangi anahtarla geldiği kayda yazılıyor,
-      // böylece bir şirketin harcaması anahtar bazında kırılabiliyor.
       keyId: keyData.id,
       client: {
         id: clientDetails.id,
@@ -62,19 +50,5 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
   } catch (error) {
     console.error('Unexpected error during authentication:', error);
     return { success: false, error: 'Internal server error', status: 500 };
->>>>>>> main
   }
-
-  const token = authHeader.split(' ')[1];
-  
-  // Üstteki verifyClient fonksiyonunu çağırıyoruz (O da adaptörü çağırıyor)
-  const result = await verifyClient(token);
-
-  if (!result.success) {
-    return res.status(result.status || 401).json({ error: result.error });
-  }
-
-  // Müşteri bilgilerini request objesine ekleyip akışa devam et
-  req.client = result.client;
-  next();
 }

@@ -52,10 +52,14 @@ app.post('/v1/chat/completions', authMiddleware, rateLimitMiddleware, async (c) 
         logId, provider, model, inputTokens, outputTokens, latencyMs, isSuccess, errorMessage
       );
       
-      if (c.executionCtx && c.executionCtx.waitUntil) {
-        c.executionCtx.waitUntil(logPromise);
-      } else {
-        logPromise.catch(console.error); // Lokal test için
+      try {
+        if (c.executionCtx && c.executionCtx.waitUntil) {
+          c.executionCtx.waitUntil(logPromise);
+        } else {
+          logPromise.catch(console.error);
+        }
+      } catch (e) {
+        logPromise.catch(console.error); // Fallback for Node.js
       }
     }
 

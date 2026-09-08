@@ -1,9 +1,7 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { buildApp } from '../src/app.js';
+// app.ts artık Hono uygulaması dışa veriyor (Fastify değil). Bu dosya önceden
+// Fastify'a özel app.ready()/app.server.emit() çağırıyordu — Hono'da ikisi de
+// yok, her istekte çöküyordu. Hono'nun kendi Vercel adaptörü bunu çözüyor.
+import { handle } from 'hono/vercel';
+import app from '../src/app.js';
 
-const app = buildApp();
-
-export default async function handler(req: VercelRequest, res: VercelResponse) {
-  await app.ready();
-  app.server.emit('request', req, res);
-}
+export default handle(app);

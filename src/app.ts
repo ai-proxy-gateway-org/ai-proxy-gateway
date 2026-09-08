@@ -23,21 +23,45 @@ app.post('/v1/chat/completions', authMiddleware, rateLimitMiddleware, async (c) 
     // 1. Müşteriden gelen isteği oku
     const body = await c.req.json();
     const model = body.model || 'gpt-4o'; 
-    const provider = 'openai'; 
+    
+    // Sağlayıcı Tespiti (Basit Routing)
+    let provider = 'openai';
+    if (model.includes('claude')) provider = 'anthropic';
+    if (model.includes('gemini')) provider = 'gemini';
 
     // 2. Asenkron Log Başlat (Pending)
     const logId = await dbService.logRequestStart(client.id, provider, model);
 
-    // 3. Vault (Kasa) üzerinden sağlayıcının (OpenAI) gerçek API anahtarını al (Önbellekli / SWR)
+    // 3. Vault (Kasa) üzerinden gerçek API anahtarını al (Önbellekli / SWR)
     const realApiKey = await getProviderKey(provider, c);
 
-    // 4. Edge Uyumlu Native Fetch ile AI API'sine İstek At
-    const aiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
+    // 4. Sağlayıcıya Göre URL ve Header Ayarı
+    let fetchUrl = 'https://api.openai.com/v1/chat/completions';
+    let headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${realApiKey}`
+    };
+
+    if (provider === 'anthropic') {
+      fetchUrl = 'https://api.anthropic.com/v1/messages';
+      headers = {
+        'Content-Type': 'application/json',
+        'x-api-key': realApiKey,
+        'anthropic-version': '2023-06-01'
+      };
+    } else if (provider === 'gemini') {
+      // Gemini'nin OpenAI uyumluluk katmanını kullanıyoruz (OpenAI formatıyla çalışır)
+      fetchUrl = `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions`;
+      headers = {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${realApiKey}`
-      },
+      };
+    }
+
+    // 5. Edge Uyumlu Native Fetch ile AI API'sine İstek At
+    const aiResponse = await fetch(fetchUrl, {
+      method: 'POST',
+      headers,
       body: JSON.stringify(body)
     });
 

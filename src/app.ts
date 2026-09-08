@@ -28,8 +28,8 @@ app.post('/v1/chat/completions', authMiddleware, rateLimitMiddleware, async (c) 
     // 2. Asenkron Log Başlat (Pending)
     const logId = await dbService.logRequestStart(client.id, provider, model);
 
-    // 3. Vault (Kasa) üzerinden sağlayıcının (OpenAI) gerçek API anahtarını al (Önbellekli)
-    const realApiKey = await getProviderKey(provider);
+    // 3. Vault (Kasa) üzerinden sağlayıcının (OpenAI) gerçek API anahtarını al (Önbellekli / SWR)
+    const realApiKey = await getProviderKey(provider, c);
 
     // 4. Edge Uyumlu Native Fetch ile AI API'sine İstek At
     const aiResponse = await fetch('https://api.openai.com/v1/chat/completions', {

@@ -9,8 +9,16 @@ import { getProviderKey } from './utils/vault.js';
 const app = new Hono();
 
 // Sağlık kontrolü rotası
+//
+// charset açıkça belirtiliyor: onsuz bazı tarayıcılar (ör. Safari, adres
+// çubuğuna doğrudan yazınca) UTF-8 dışı bir kodlamayla göstermeye çalışıyor
+// ve Türkçe karakterler bozuk çıkıyordu.
 app.get('/', (c) => {
-  return c.json({ message: 'Hono Edge Proxy hazır ve şimşek gibi!' });
+  return c.json(
+    { message: 'Hono Edge Proxy hazır ve şimşek gibi!' },
+    200,
+    { 'content-type': 'application/json; charset=UTF-8' }
+  );
 });
 
 // Yapay zeka isteklerini karşılayacak TEK VE ANA Proxy Endpoint'i
@@ -75,6 +83,21 @@ app.post('/v1/chat/completions', authMiddleware, rateLimitMiddleware, async (c) 
     return c.json({ success: false, error: 'Internal Edge Proxy Error' }, 500);
   }
 });
+
+// Admin (yönetim paneli) her kurulumda gerekli — müşteri/fiyat/model
+// yönetimi başka yoldan yapılamıyor. Bu yüzden koşulsuz yükleniyor.
+const { adminRoutes } = await import('./routes/admin.js');
+adminRoutes(app);
+
+// Portal (müşteri paneli) her şirket için gerekli değil — bazı kurulumlarda
+// maliyet merkezi olarak takip ediliyor, kullanıcı kendi harcamasını
+// görmüyor. ENABLE_PORTAL kapalıyken dynamic import() kullanılıyor: statik
+// import olsaydı kod her zaman pakete girerdi, bayrak yalnızca route
+// kaydını atlardı. Böyle, kapalıyken o kod hiç çalışmıyor.
+if (process.env.ENABLE_PORTAL === 'true') {
+  const { portalRoutes } = await import('./routes/portal.js');
+  portalRoutes(app);
+}
 
 // Lokal test için Node.js sunucusunu ayağa kaldırma.
 //

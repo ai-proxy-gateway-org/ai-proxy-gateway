@@ -15,7 +15,7 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { supabase } from '../services/db.js';
+import { supabase } from '../utils/supabaseClient.js';
 
 export interface PricingEntry {
   input: number;

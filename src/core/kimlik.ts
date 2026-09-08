@@ -11,7 +11,7 @@
 // her yerde client_id ile süzülüyor; o alan boş kaldığında süzgeç düşüyor.
 // Ayrı tabloda sınır şemada çizili, bir kontrolün unutulması yetki vermiyor.
 
-import { supabase } from '../services/db.js';
+import { supabase } from '../utils/supabaseClient.js';
 import {
   sifreKarmasi, sifreDogru, oturumUret, oturumCoz, parolaIzi, cerezOku
 } from '../utils/hesap.js';

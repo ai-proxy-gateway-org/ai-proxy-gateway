@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { authMiddleware } from './middleware/authMiddleware.js';
 import { rateLimitMiddleware } from './middleware/rateLimitMiddleware.js';
 import { dbService } from './services/databaseService.js';
+import { getProviderKey } from './utils/vault.js';
 
 // Hono uygulamasını başlatıyoruz
 const app = new Hono();
@@ -27,12 +28,15 @@ app.post('/v1/chat/completions', authMiddleware, rateLimitMiddleware, async (c) 
     // 2. Asenkron Log Başlat (Pending)
     const logId = await dbService.logRequestStart(client.id, provider, model);
 
-    // 3. Edge Uyumlu Native Fetch ile AI API'sine İstek At
+    // 3. Vault (Kasa) üzerinden sağlayıcının (OpenAI) gerçek API anahtarını al (Önbellekli)
+    const realApiKey = await getProviderKey(provider);
+
+    // 4. Edge Uyumlu Native Fetch ile AI API'sine İstek At
     const aiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`
+        'Authorization': `Bearer ${realApiKey}`
       },
       body: JSON.stringify(body)
     });
@@ -40,13 +44,13 @@ app.post('/v1/chat/completions', authMiddleware, rateLimitMiddleware, async (c) 
     const data = await aiResponse.json();
     const latencyMs = Date.now() - startTime;
 
-    // 4. Token ve Cost verilerini topla
+    // 5. Token ve Cost verilerini topla
     const inputTokens = data.usage?.prompt_tokens || 0;
     const outputTokens = data.usage?.completion_tokens || 0;
     const isSuccess = aiResponse.ok;
     const errorMessage = isSuccess ? undefined : data.error?.message;
 
-    // 5. EDGE BÜYÜSÜ: Log işlemini arka planda tamamla (Kullanıcıyı bekletmez)
+    // 6. EDGE Büyüsü: Log işlemini arka planda tamamla (Kullanıcıyı bekletmez)
     if (logId) {
       const logPromise = dbService.logRequestComplete(
         logId, provider, model, inputTokens, outputTokens, latencyMs, isSuccess, errorMessage
@@ -63,7 +67,7 @@ app.post('/v1/chat/completions', authMiddleware, rateLimitMiddleware, async (c) 
       }
     }
 
-    // 6. Sonucu döndür
+    // 7. Sonucu döndür
     return c.json(data, aiResponse.status as any);
 
   } catch (error: any) {
@@ -74,11 +78,12 @@ app.post('/v1/chat/completions', authMiddleware, rateLimitMiddleware, async (c) 
 
 // Lokal test için Node.js sunucusunu ayağa kaldırma
 const port = process.env.PORT ? parseInt(process.env.PORT) : 3000;
-console.log(`Hono Sunucusu http://localhost:${port} adresinde başlatıldı`);
+console.log(`Hono Sunucusu http://127.0.0.1:${port} adresinde başlatıldı`);
 
 serve({
   fetch: app.fetch,
-  port
+  port,
+  hostname: '127.0.0.1' // Node.js v17+ IPv6 localhost çakışmasını önler
 });
 
 // Vercel Edge'de çalışması için default export şarttır

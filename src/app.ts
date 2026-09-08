@@ -76,15 +76,21 @@ app.post('/v1/chat/completions', authMiddleware, rateLimitMiddleware, async (c) 
   }
 });
 
-// Lokal test için Node.js sunucusunu ayağa kaldırma
-const port = process.env.PORT ? parseInt(process.env.PORT) : 3000;
-console.log(`Hono Sunucusu http://127.0.0.1:${port} adresinde başlatıldı`);
+// Lokal test için Node.js sunucusunu ayağa kaldırma.
+//
+// Bu koşula bağlı değildi — Vercel'de (sunucusuz ortamda) her fonksiyon
+// çağrısında da çalışmaya çalışıyordu, orada anlamsız/hatalı bir yan etki.
+// Yalnızca yerelde, Vercel dışında çalışırken başlasın.
+if (process.env.VERCEL !== '1') {
+  const port = process.env.PORT ? parseInt(process.env.PORT) : 3000;
+  console.log(`Hono Sunucusu http://127.0.0.1:${port} adresinde başlatıldı`);
 
-serve({
-  fetch: app.fetch,
-  port,
-  hostname: '127.0.0.1' // Node.js v17+ IPv6 localhost çakışmasını önler
-});
+  serve({
+    fetch: app.fetch,
+    port,
+    hostname: '127.0.0.1' // Node.js v17+ IPv6 localhost çakışmasını önler
+  });
+}
 
 // Vercel Edge'de çalışması için default export şarttır
 export default app;

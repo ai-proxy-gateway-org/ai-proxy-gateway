@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "tsx watch --env-file=.env src/server.ts",
     "mock": "tsx watch --env-file=.env mock-server/index.ts",
+    "mock-vault": "tsx watch --env-file=.env mock-vault/index.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {

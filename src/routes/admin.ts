@@ -392,13 +392,24 @@ ${YAZI_TIPI}
       <div class="yukleniyor gizli" id="yukleniyor">Loading...</div>
 
       <section data-bolum="ozet">
-        <div class="kart gizli" id="oTalep" style="margin-bottom:1.25rem"></div>
+        <div class="kart kartUyari gizli" id="oTalep" style="margin-bottom:1.25rem"></div>
+
+        <div style="display:flex;justify-content:flex-end;margin-bottom:.6rem">
+          <button class="dugme cerceveli" id="oYenile">Refresh</button>
+        </div>
         <div class="metrikkart" id="oOzet" style="margin-bottom:1.25rem"></div>
 
         <div class="kart" style="margin-bottom:1.25rem">
           <div class="grafikUst">
             <div class="grafikbaslik" id="oGrafikBaslik">Daily spend</div>
-            <div class="grafikOkuma" id="oGrafikOkuma"></div>
+            <div style="display:flex;align-items:center;gap:.85rem;flex-wrap:wrap">
+              <div class="grafikOkuma" id="oGrafikOkuma"></div>
+              <div class="segment" id="oFiltre">
+                <button data-gun="7">7 days</button>
+                <button data-gun="30" class="secili">30 days</button>
+                <button data-gun="0">All time</button>
+              </div>
+            </div>
           </div>
           <div id="oGrafik"></div>
         </div>
@@ -460,27 +471,8 @@ ${YAZI_TIPI}
           into it. Use it for a model you have decided against.
         </div>
       </div>
-      <div class="satirbasi" style="margin-top:0;gap:.7rem;flex-wrap:wrap">
-        <input id="modelArama" placeholder="Search all models by name"
-          style="flex:1;min-width:12rem;max-width:18rem;padding:.5rem .75rem;font:inherit;
-                 font-size:.88rem;border:1px solid var(--line-2);border-radius:8px;
-                 background:var(--surface);color:var(--ink)">
-        <select id="mSaglayici" style="padding:.5rem .7rem;font:inherit;font-size:.88rem;
-                 border:1px solid var(--line-2);border-radius:8px;
-                 background:var(--surface);color:var(--ink)">
-          <option value="">All providers</option>
-          <option value="openai">OpenAI</option>
-          <option value="anthropic">Anthropic</option>
-          <option value="gemini">Google</option>
-        </select>
-        <select id="mFiyat" style="padding:.5rem .7rem;font:inherit;font-size:.88rem;
-                 border:1px solid var(--line-2);border-radius:8px;
-                 background:var(--surface);color:var(--ink)">
-          <option value="">Any price</option>
-          <option value="alt">Under the price limit — open to everyone</option>
-          <option value="ust">Above the price limit — needs approval</option>
-        </select>
-        <button class="dugme cerceveli gizli" id="pasifDugme"></button>
+      <div class="satirbasi" style="margin-top:0">
+        <div class="baslikkucuk">Models</div>
       </div>
       <div class="kart gizli" id="ekleKart" style="max-width:52rem;margin-bottom:1.25rem">
         <div class="baslikkucuk">Add a new model</div>
@@ -683,7 +675,7 @@ ${YAZI_TIPI}
 </aside>
 
 <script>
-  let jeton = null, modeller = [], pasifGoster = false;
+  let jeton = null, modeller = [];
   const $ = (id) => document.getElementById(id);
   const DEPO = 'proxy-admin';
 
@@ -752,6 +744,94 @@ ${YAZI_TIPI}
       'sources.">entered by hand</span>';
   }
 
+  // Başlık yalnızca bir kez kuruluyor — her tabloCiz() çağrısında yeniden
+  // kurulsaydı arama kutusuna yazarken her tuş vuruşunda kutu sıfırlanır,
+  // imleç/odak kaybolurdu.
+  //
+  // Süzgeçler Excel'deki gibi: ayrı bir çubuk ya da satır değil, sütun
+  // başlığının kendi içinde küçük bir ok. Ok'a tıklayınca o sütunun altına
+  // bir panel açılıyor — panel <th>'nin kendi içinde durduğu için
+  // (position:relative) ayrıca konumlandırma hesabı gerekmiyor.
+  function mBaslikKur() {
+    if ($('tablo').querySelector('thead')) return;
+
+    const th = (etiket, sutun, panelIcerik) =>
+      '<th class="sutunBaslik">' + etiket +
+      (panelIcerik
+        ? ' <button class="sutunOk" type="button" data-sutun="' + sutun + '">▾</button>' +
+          '<div class="sutunFiltrePopup gizli" data-panel="' + sutun + '">' + panelIcerik +
+          '<button class="temizle" type="button" data-temizle="' + sutun + '">Clear filter</button></div>'
+        : '') +
+      '</th>';
+
+    $('tablo').innerHTML =
+      '<thead><tr>' +
+      th('Model', 'arama', '<input type="text" id="fArama" placeholder="Search models">') +
+      th('Provider', 'saglayici',
+        '<label><input type="checkbox" value="openai" checked> OpenAI</label>' +
+        '<label><input type="checkbox" value="anthropic" checked> Anthropic</label>' +
+        '<label><input type="checkbox" value="gemini" checked> Google</label>') +
+      th('Input', 'girdi',
+        '<div class="araGrubu"><input type="number" id="fGirdiMin" placeholder="Min" step="0.01" min="0">' +
+        '<span>–</span><input type="number" id="fGirdiMax" placeholder="Max" step="0.01" min="0"></div>') +
+      th('Output', 'cikti',
+        '<div class="araGrubu"><input type="number" id="fCiktiMin" placeholder="Min" step="0.01" min="0">' +
+        '<span>–</span><input type="number" id="fCiktiMax" placeholder="Max" step="0.01" min="0"></div>') +
+      th('Price from', 'kaynak',
+        '<label><input type="checkbox" value="verified" checked> Both sources</label>' +
+        '<label><input type="checkbox" value="tek" checked> One source</label>' +
+        '<label><input type="checkbox" value="elle" checked> Entered by hand</label>') +
+      th('Last checked', 'kontrol',
+        '<label><input type="radio" name="fKontrol" value="" checked> Any time</label>' +
+        '<label><input type="radio" name="fKontrol" value="30"> Checked in last 30 days</label>' +
+        '<label><input type="radio" name="fKontrol" value="90"> Stale (90+ days)</label>') +
+      th('Status', 'durum',
+        '<label><input type="checkbox" value="aktif" checked> In service</label>' +
+        '<label><input type="checkbox" value="pasif" checked> Off</label>') +
+      '<th></th>' +
+      '</tr></thead><tbody></tbody>';
+
+    // Ok'a tıklayınca ilgili panel açılır; açıkken tıklanırsa kapanır.
+    // Başka bir yere tıklamak (ya da başka bir ok'a basmak) her zaman
+    // açık olanı kapatıyor — aynı anda birden fazla panel açık durmuyor.
+    $('tablo').querySelectorAll('.sutunOk').forEach(ok => {
+      ok.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const panel = $('tablo').querySelector('[data-panel="' + ok.dataset.sutun + '"]');
+        const kapaliydi = panel.classList.contains('gizli');
+        $('tablo').querySelectorAll('.sutunFiltrePopup').forEach(p => p.classList.add('gizli'));
+        panel.classList.toggle('gizli', !kapaliydi);
+      });
+      ok.parentElement.querySelector('.sutunFiltrePopup')
+        .addEventListener('click', (e) => e.stopPropagation());
+    });
+    document.addEventListener('click', () => {
+      $('tablo').querySelectorAll('.sutunFiltrePopup').forEach(p => p.classList.add('gizli'));
+    });
+
+    $('tablo').querySelectorAll('.sutunFiltrePopup input').forEach(inp =>
+      inp.addEventListener('input', tabloCiz));
+
+    $('tablo').querySelectorAll('.temizle').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const panel = $('tablo').querySelector('[data-panel="' + btn.dataset.temizle + '"]');
+        panel.querySelectorAll('input[type="checkbox"]').forEach(c => c.checked = true);
+        panel.querySelectorAll('input[type="text"], input[type="number"]').forEach(i => i.value = '');
+        panel.querySelectorAll('input[type="radio"]').forEach(r => r.checked = (r.value === ''));
+        tabloCiz();
+      });
+    });
+  }
+
+  // fiyatKaynagiHap ile aynı üç kategori — "Price from" sütununun filtresi
+  // ekranda görünenle birebir eşleşsin diye aynı ayrımı kullanıyor.
+  function kaynakKategori(m) {
+    if (m.fiyatKaynagi === 'verified') return 'verified';
+    if (['openrouter', 'litellm', 'source'].includes(m.fiyatKaynagi)) return 'tek';
+    return 'elle';
+  }
+
   function tabloCiz() {
     if (!modeller.length) {
       $('tablo').innerHTML = '';
@@ -762,37 +842,48 @@ ${YAZI_TIPI}
       return;
     }
     $('bos').classList.add('gizli');
+    mBaslikKur();
 
-    // Aktifler üstte ve her zaman görünür; pasifler katlanmış duruyor.
-    //
-    // Gece işi kaynaklarda gördüğü her yeni modeli pasif olarak ekliyor, yani
-    // burası yüz satıra çıkabiliyor. Kullandığımız beş model o yığının içinde
-    // kaybolmamalı: pasifler ancak açıkça istenince ve arayarak görünüyor.
-    const aramaMetni = ($('modelArama') ? $('modelArama').value : '').trim().toLowerCase();
-    const sagSecim = ($('mSaglayici') ? $('mSaglayici').value : '');
-    const fiyatSecim = ($('mFiyat') ? $('mFiyat').value : '');
-    // Fiyat süzgeci şirket tavanına göre: "bu modeli kim sorusuz kullanabilir"
-    // sorusunun cevabı katalogda 100 satır varken gözle bulunamıyor.
-    const sirketTavan = sirket && sirket.max_output_price != null
-      ? sirket.max_output_price : null;
+    // Her sütunun kendi paneli kendi süzgecini taşıyor. Bir onay kutusu
+    // grubunda hepsi işaretliyse (varsayılan durum) o sütun hiç süzmüyor
+    // demektir — kullanıcı en az birini kaldırınca gerçek süzgeç başlıyor.
+    const arama = ($('fArama') ? $('fArama').value : '').trim().toLowerCase();
+    const isaretli = (panel) => new Set(
+      [...$('tablo').querySelectorAll('[data-panel="' + panel + '"] input:checked')]
+        .map(c => c.value));
+    const saglayiciSecili = isaretli('saglayici');
+    const kaynakSecili = isaretli('kaynak');
+    const durumSecili = isaretli('durum');
+    const sayiDegeri = (id) => {
+      const el = $(id);
+      return el && el.value !== '' ? Number(el.value) : null;
+    };
+    const girdiMin = sayiDegeri('fGirdiMin'), girdiMax = sayiDegeri('fGirdiMax');
+    const ciktiMin = sayiDegeri('fCiktiMin'), ciktiMax = sayiDegeri('fCiktiMax');
+    const kontrolRadyo = $('tablo').querySelector('[data-panel="kontrol"] input:checked');
+    const kontrolSecim = kontrolRadyo ? kontrolRadyo.value : '';
+    const simdi = Date.now();
 
     const suz = (l) => l.filter(m => {
-      if (aramaMetni && !(m.provider + '/' + m.model).toLowerCase().includes(aramaMetni)) return false;
-      if (sagSecim && m.provider !== sagSecim) return false;
-      if (fiyatSecim && sirketTavan != null) {
-        const ucuz = (m.output_price || 0) <= sirketTavan;
-        if (fiyatSecim === 'alt' && !ucuz) return false;
-        if (fiyatSecim === 'ust' && ucuz) return false;
+      if (arama && !(m.provider + '/' + m.model).toLowerCase().includes(arama)) return false;
+      if (saglayiciSecili.size < 3 && !saglayiciSecili.has(m.provider)) return false;
+      if (girdiMin !== null && (m.input_price ?? -1) < girdiMin) return false;
+      if (girdiMax !== null && (m.input_price ?? Infinity) > girdiMax) return false;
+      if (ciktiMin !== null && (m.output_price ?? -1) < ciktiMin) return false;
+      if (ciktiMax !== null && (m.output_price ?? Infinity) > ciktiMax) return false;
+      if (kaynakSecili.size < 3 && !kaynakSecili.has(kaynakKategori(m))) return false;
+      if (kontrolSecim) {
+        const gunSayisi = m.price_checked_at
+          ? (simdi - new Date(m.price_checked_at).getTime()) / 86400000 : Infinity;
+        if (kontrolSecim === '30' && gunSayisi > 30) return false;
+        if (kontrolSecim === '90' && gunSayisi < 90) return false;
       }
+      if (durumSecili.size < 2 && !durumSecili.has(m.is_active ? 'aktif' : 'pasif')) return false;
       return true;
     });
-    const aktifler = suz(modeller.filter(m => m.is_active));
-    const pasifler = suz(modeller.filter(m => !m.is_active));
-    const gosterilen = pasifGoster ? [...aktifler, ...pasifler] : aktifler;
+    const gosterilen = suz(modeller);
 
-    $('tablo').innerHTML =
-      '<thead><tr><th>Model</th><th>Provider</th><th>Input</th><th>Output</th>' +
-      '<th>Price from</th><th>Last checked</th><th>Status</th><th></th></tr></thead><tbody>' +
+    $('tablo').querySelector('tbody').innerHTML =
       gosterilen.map(m =>
         '<tr data-id="' + m.id + '">' +
         '<td>' + nokta(m.provider) + m.model + '</td>' +
@@ -819,17 +910,14 @@ ${YAZI_TIPI}
               : 'Put it into service — the price limit then decides who may call it') + '">' +
             (m.is_active ? 'Take out of service' : 'Put into service') + '</button>' +
         '</td></tr>'
-      ).join('') + '</tbody>';
+      ).join('');
 
+    const aktifSayisi = modeller.filter(m => m.is_active).length;
     const pasifSayi = modeller.filter(m => !m.is_active).length;
-    $('pasifDugme').classList.toggle('gizli', !pasifSayi);
-    $('pasifDugme').textContent = pasifGoster
-      ? 'Hide the ' + pasifSayi + ' taken out of service'
-      : 'Also show ' + pasifSayi + ' taken out of service';
-
     const fiyatsiz = modeller.filter(m => m.input_price === null || m.output_price === null).length;
     $('altNot').textContent =
-      aktifler.length + ' in service · ' + pasifSayi + ' taken out of service' +
+      gosterilen.length + ' of ' + modeller.length + ' shown · ' +
+      aktifSayisi + ' in service · ' + pasifSayi + ' taken out of service' +
       (fiyatsiz ? ' · ' + fiyatsiz + ' without a price — these cannot be activated' : '');
   }
 
@@ -870,7 +958,12 @@ ${YAZI_TIPI}
     $('mEkleAc').classList.toggle('gizli', false);
     $('mEkleAc').classList.toggle('gizli', yeni !== 'kisiler');
     $('disaAktar').classList.toggle('gizli', yeni !== 'istekler');
-    $('filtre').classList.toggle('gizli', yeni !== 'istekler' && yeni !== 'ozet');
+    // Dashboard artık kendi dönem seçicisini (grafiğin yanında) ve kendi
+    // Refresh düğmesini (kartların üstünde) kullanıyor — üst çubuktaki
+    // ortak olanlar yalnızca Requests sayfasında kalıyor.
+    $('filtre').classList.toggle('gizli', yeni !== 'istekler');
+    $('yenile').classList.toggle('gizli', yeni === 'ozet');
+    if (yeni === 'ozet') { gunSekmeSenkron(); }
     // Sekmeye her girişte baştan yükleniyor. Önce yalnızca istekYukle
     // çağrılıyordu ama offset korunuyordu: "Load more" bastıysan sonraki
     // sayfayı çekiyor, yeni gelen istekler görünmüyordu.
@@ -923,40 +1016,68 @@ ${YAZI_TIPI}
   // sayfanın tepesindeki ayrı çubuktan daha okunur — hangi sütunu süzdüğün
   // bakınca belli oluyor. Bunun için başlık ile gövdeyi ayrı yönetmek
   // gerekiyor, yoksa her yüklemede kutular sıfırlanırdı.
+  // Süzgeçler Models tablosundakiyle aynı desen: sütun başlığının içinde
+  // küçük bir ok, tıklayınca altına açılan bir panel — ayrı bir satır ya da
+  // sayfanın tepesinde ayrı bir çubuk değil. Time/Input/Output/Latency/Cost
+  // sütunlarında ok yok: Time zaten sayfanın üstündeki dönem seçiciyle
+  // (7/30/All time) kapsanıyor, diğer dördü için sunucu tarafında henüz
+  // aralık süzgeci desteği yok — eklemek ayrı bir iş.
   function iBaslikKur() {
     if ($('iTablo').querySelector('thead')) return;
-    const kutuStil = 'width:100%;font:inherit;font-size:.8rem;padding:.3rem .45rem;' +
+    const kutuStil = 'width:100%;font:inherit;font-size:.8rem;padding:.35rem .5rem;' +
       'border:1px solid var(--line-2);border-radius:6px;' +
-      'background:var(--surface);color:var(--ink)';
+      'background:var(--sunk);color:var(--ink)';
+    const ok = (sutun, panelIcerik) =>
+      ' <button class="sutunOk" type="button" data-sutun="' + sutun + '">▾</button>' +
+      '<div class="sutunFiltrePopup gizli" data-panel="' + sutun + '" style="min-width:14rem">' +
+      panelIcerik + '</div>';
+
     $('iTablo').innerHTML =
-      '<thead>' +
-      '<tr><th>Time</th><th>Person</th><th>Model</th><th>Input</th>' +
-      '<th>Output</th><th>Latency</th><th>Cost</th><th>Status</th></tr>' +
-      '<tr class="suzgecSatiri">' +
-      '<th></th>' +
-      '<th><select id="fKisi" style="' + kutuStil + '">' +
-        '<option value="">Everyone</option></select></th>' +
-      '<th><div style="display:flex;gap:.3rem">' +
+      '<thead><tr>' +
+      '<th>Time</th>' +
+      '<th class="sutunBaslik">Person' + ok('kisi',
+        '<select id="fKisi" style="' + kutuStil + '"><option value="">Everyone</option></select>') +
+      '</th>' +
+      '<th class="sutunBaslik">Provider' + ok('saglayici',
         '<select id="fSaglayici" style="' + kutuStil + '">' +
           '<option value="">All providers</option>' +
           '<option value="openai">OpenAI</option>' +
           '<option value="anthropic">Anthropic</option>' +
-          '<option value="gemini">Google</option></select>' +
+          '<option value="gemini">Google</option></select>') +
+      '</th>' +
+      '<th class="sutunBaslik">Model' + ok('model',
         '<select id="fModel" style="' + kutuStil + '">' +
-          '<option value="">All models</option></select>' +
-      '</div></th>' +
-      '<th></th><th></th><th></th><th></th>' +
-      '<th><select id="fDurum" style="' + kutuStil + '">' +
-        '<option value="">All</option>' +
-        '<option value="success">Success</option>' +
-        '<option value="error">Error</option>' +
-        '<option value="pending">Pending</option></select></th>' +
+          '<option value="">All models</option></select>') +
+      '</th>' +
+      '<th>Input</th><th>Output</th><th>Latency</th><th>Cost</th>' +
+      '<th class="sutunBaslik">Status' + ok('durum',
+        '<select id="fDurum" style="' + kutuStil + '">' +
+          '<option value="">All</option>' +
+          '<option value="success">Success</option>' +
+          '<option value="error">Error</option>' +
+          '<option value="pending">Pending</option></select>') +
+      '</th>' +
       '</tr></thead><tbody></tbody>';
 
     ['fKisi', 'fSaglayici', 'fDurum', 'fModel'].forEach(id =>
       $(id).addEventListener('change', () => {
         offset = 0; iSatirlar = []; istekYukle(false);
       }));
+
+    $('iTablo').querySelectorAll('.sutunOk').forEach(dugme => {
+      dugme.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const panel = $('iTablo').querySelector('[data-panel="' + dugme.dataset.sutun + '"]');
+        const kapaliydi = panel.classList.contains('gizli');
+        $('iTablo').querySelectorAll('.sutunFiltrePopup').forEach(p => p.classList.add('gizli'));
+        panel.classList.toggle('gizli', !kapaliydi);
+      });
+      dugme.parentElement.querySelector('.sutunFiltrePopup')
+        .addEventListener('click', (e) => e.stopPropagation());
+    });
+    document.addEventListener('click', () => {
+      $('iTablo').querySelectorAll('.sutunFiltrePopup').forEach(p => p.classList.add('gizli'));
+    });
   }
 
   function iSatirCiz(kayitlar, ekle) {
@@ -969,7 +1090,8 @@ ${YAZI_TIPI}
         ? kacir(k.kisi)
         : '<span class="yardim" title="Sent with a key that belongs to no one">' +
           (k.anahtarAdi ? kacir(k.anahtarAdi) : 'shared key') + '</span>') + '</td>' +
-      '<td>' + nokta(k.provider) + k.provider + '/' + k.model + '</td>' +
+      '<td>' + nokta(k.provider) + (SAGLAYICI[k.provider] || k.provider) + '</td>' +
+      '<td>' + k.model + '</td>' +
       '<td class="sayi">' + (k.input_tokens ?? 0) + '</td>' +
       '<td class="sayi">' + (k.output_tokens ?? 0) + '</td>' +
       '<td class="sayi">' + (k.latency_ms ?? 0) + ' ms</td>' +
@@ -1040,12 +1162,31 @@ ${YAZI_TIPI}
     } finally { $('yukleniyor').classList.add('gizli'); }
   }
 
+  // Dönem seçici artık iki yerde var: #filtre (Requests, üst çubukta) ve
+  // #oFiltre (Dashboard, grafiğin yanında). İkisi de aynı paylaşılan gun
+  // değişkenini kullanıyor — biri değişince öbürü de görsel olarak
+  // senkron kalsın diye tek yerden güncelleniyor.
+  function gunSekmeSenkron() {
+    [$('filtre'), $('oFiltre')].forEach(el => {
+      if (!el) return;
+      [...el.children].forEach(b =>
+        b.classList.toggle('secili', Number(b.dataset.gun) === gun));
+    });
+  }
+  function gunSec(yeniGun) {
+    gun = yeniGun; offset = 0; iSatirlar = [];
+    gunSekmeSenkron();
+    if (bolum === 'ozet') ozetYukle(); else istekYukle(false);
+  }
   $('filtre').addEventListener('click', e => {
     const d = e.target.closest('button'); if (!d) return;
-    [...$('filtre').children].forEach(b => b.classList.remove('secili'));
-    d.classList.add('secili'); gun = Number(d.dataset.gun); offset = 0; iSatirlar = [];
-    if (bolum === 'ozet') ozetYukle(); else istekYukle(false);
+    gunSec(Number(d.dataset.gun));
   });
+  $('oFiltre').addEventListener('click', e => {
+    const d = e.target.closest('button'); if (!d) return;
+    gunSec(Number(d.dataset.gun));
+  });
+  $('oYenile').addEventListener('click', ozetYukle);
   $('iDaha').addEventListener('click', async () => {
     $('iDaha').disabled = true; $('iDaha').textContent = 'Loading...';
     offset += 50; await istekYukle(true);
@@ -1995,7 +2136,7 @@ ${YAZI_TIPI}
       ' who called a model they cannot use yet.</div>' + ilk +
       (liste.length > 3 ? '<div class="yardim" style="margin-top:.3rem">and ' +
         (liste.length - 3) + ' more</div>' : '') +
-      '</div><button class="ikincil" id="oTalepGit">Review in People</button></div>';
+      '</div><button class="dugme koyu" id="oTalepGit" style="flex:0 0 auto">Review in People</button></div>';
 
     $('oTalepGit').onclick = () => bolumGoster('kisiler');
   }
@@ -2012,12 +2153,18 @@ ${YAZI_TIPI}
       ]);
       const o = v.ozet;
       talepSeridiCiz(t.talepler || []);
-      const kart = (ad, deger, aciklama) => '<div class="metrik"><div class="ad">' + ad +
-        '</div><div class="aciklama">' + aciklama + '</div><div class="sayi">' + deger + '</div></div>';
+      // ton: bir metriğin "kötü" olduğunu sayıya renk vererek belli eder —
+      // aynı beyaz ağırlıkta durunca göz taraması yapan biri fark etmiyordu.
+      const kart = (ad, deger, aciklama, ton) => '<div class="metrik"><div class="ad">' + ad +
+        '</div><div class="aciklama">' + aciklama + '</div><div class="sayi' +
+        (ton ? ' ' + ton : '') + '">' + deger + '</div></div>';
       const oran = o.istek ? (o.hata / o.istek * 100) : 0;
+      // Eşikler bütçe çubuklarındaki (%80 uyarı, %100 kritik) mantıkla aynı
+      // aile — panelde zaten yerleşik bir dil, burada da tutarlı olsun diye.
+      const oranTonu = oran >= 15 ? 'tehlike' : oran >= 5 ? 'uyari' : '';
       $('oOzet').innerHTML =
         kart('Requests', bin(o.istek), 'in selected range') +
-        kart('Error rate', oran.toFixed(1) + '%', bin(o.hata) + ' rejected or failed') +
+        kart('Error rate', oran.toFixed(1) + '%', bin(o.hata) + ' rejected or failed', oranTonu) +
         kart('Tokens', bin(o.token), 'input + output') +
         kart('Cost', para(o.maliyet), 'total amount') +
         kart('Avg latency', bin(o.ortSure) + ' ms', 'across completed requests') +
@@ -2084,6 +2231,74 @@ ${YAZI_TIPI}
   // sorun var" sorusu gözle taranamıyor.
   let fDurumSuz = '', fAramaSuz = '', fOlaySuz = '', fSagSuz = '';
 
+  // Başlık yalnızca bir kez kuruluyor — Models/Requests tablolarındaki aynı
+  // desen: sütun başlığının içinde ok, tıklayınca altına panel açılıyor.
+  // Eskiden arama kutusuna her tuş vuruşunda tüm tablo (başlık dahil) yeniden
+  // kuruluyor, sonra elle odak/imleç geri veriliyordu — artık gerek yok,
+  // başlık sabit kaldığı için input hiç yeniden yaratılmıyor.
+  function fBaslikKur() {
+    if ($('fTablo').querySelector('thead')) return;
+    const kutuStil = 'width:100%;font:inherit;font-size:.8rem;padding:.35rem .5rem;' +
+      'border:1px solid var(--line-2);border-radius:6px;' +
+      'background:var(--sunk);color:var(--ink)';
+    const ok = (sutun, panelIcerik) =>
+      ' <button class="sutunOk" type="button" data-sutun="' + sutun + '">▾</button>' +
+      '<div class="sutunFiltrePopup gizli" data-panel="' + sutun + '" style="min-width:14rem">' +
+      panelIcerik + '</div>';
+
+    $('fTablo').innerHTML =
+      '<thead><tr>' +
+      '<th class="sutunBaslik">Model' + ok('arama',
+        '<input type="text" id="fAra" placeholder="Search models" style="' + kutuStil + '">') +
+      '</th>' +
+      '<th class="sutunBaslik">Provider' + ok('saglayici',
+        '<select id="fSagSuz" style="' + kutuStil + '">' +
+          '<option value="">All providers</option>' +
+          '<option value="openai">OpenAI</option>' +
+          '<option value="anthropic">Anthropic</option>' +
+          '<option value="gemini">Google</option></select>') +
+      '</th>' +
+      '<th>Mapped to</th><th class="sayi">Ours</th><th class="sayi">Source</th>' +
+      '<th class="sutunBaslik">Status' + ok('durum',
+        '<select id="fDurumSuz" style="' + kutuStil + '">' +
+          '<option value="">All statuses</option>' +
+          '<option value="uyuyor">Matches the source</option>' +
+          '<option value="fark">Price differs</option>' +
+          '<option value="eslesmemis">Not mapped</option>' +
+          '<option value="tekkaynak">Only one source</option></select>') +
+      '</th>' +
+      '<th>Checked</th><th></th>' +
+      '</tr></thead><tbody></tbody>';
+
+    $('fAra').addEventListener('input', () => {
+      fAramaSuz = $('fAra').value.trim().toLowerCase();
+      fTabloCiz(fiyatVeri);
+    });
+    $('fSagSuz').addEventListener('change', () => {
+      fSagSuz = $('fSagSuz').value;
+      fTabloCiz(fiyatVeri);
+    });
+    $('fDurumSuz').addEventListener('change', () => {
+      fDurumSuz = $('fDurumSuz').value;
+      fTabloCiz(fiyatVeri);
+    });
+
+    $('fTablo').querySelectorAll('.sutunOk').forEach(dugme => {
+      dugme.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const panel = $('fTablo').querySelector('[data-panel="' + dugme.dataset.sutun + '"]');
+        const kapaliydi = panel.classList.contains('gizli');
+        $('fTablo').querySelectorAll('.sutunFiltrePopup').forEach(p => p.classList.add('gizli'));
+        panel.classList.toggle('gizli', !kapaliydi);
+      });
+      dugme.parentElement.querySelector('.sutunFiltrePopup')
+        .addEventListener('click', (e) => e.stopPropagation());
+    });
+    document.addEventListener('click', () => {
+      $('fTablo').querySelectorAll('.sutunFiltrePopup').forEach(p => p.classList.add('gizli'));
+    });
+  }
+
   function fTabloCiz(v) {
     const m1000 = (x) => x === null || x === undefined ? '—' : '$' + (Number(x) * 1000).toFixed(2);
     const tumu = v.karsilastirma;
@@ -2106,32 +2321,9 @@ ${YAZI_TIPI}
       ? tumu.length + ' models'
       : k.length + ' of ' + tumu.length + ' models';
 
-    const kutuStil = 'width:100%;font:inherit;font-size:.8rem;padding:.3rem .45rem;' +
-      'border:1px solid var(--line-2);border-radius:6px;' +
-      'background:var(--surface);color:var(--ink)';
+    fBaslikKur();
 
-    $('fTablo').innerHTML =
-      '<thead>' +
-      '<tr><th>Model</th><th>Provider</th><th>Mapped to</th><th class="sayi">Ours</th>' +
-      '<th class="sayi">Source</th><th>Status</th><th>Checked</th><th></th></tr>' +
-      '<tr class="suzgecSatiri">' +
-      '<th><input id="fAra" placeholder="Search" style="' + kutuStil + '" value="' +
-        kacir(fAramaSuz) + '"></th>' +
-      '<th><select id="fSagSuz" style="' + kutuStil + '">' +
-        '<option value="">All providers</option>' +
-        '<option value="openai">OpenAI</option>' +
-        '<option value="anthropic">Anthropic</option>' +
-        '<option value="gemini">Google</option>' +
-      '</select></th>' +
-      '<th></th><th></th><th></th>' +
-      '<th><select id="fDurumSuz" style="' + kutuStil + '">' +
-        '<option value="">All statuses</option>' +
-        '<option value="uyuyor">Matches the source</option>' +
-        '<option value="fark">Price differs</option>' +
-        '<option value="eslesmemis">Not mapped</option>' +
-        '<option value="tekkaynak">Only one source</option>' +
-      '</select></th>' +
-      '<th></th><th></th></tr></thead><tbody>' +
+    $('fTablo').querySelector('tbody').innerHTML =
       k.map((x, i) => {
         const [renk, yazi] = DURUM_YAZI[x.durum] || ['', x.durum];
         const kimlikler = (x.orIds || []).concat(x.liteIds || []);
@@ -2154,9 +2346,7 @@ ${YAZI_TIPI}
               ? '<button class="satirDugme" data-eylem="uygula">Apply source price</button>'
               : '') +
           '</td></tr>';
-      }).join('') + '</tbody>';
-
-    fSuzgecBagla(v);
+      }).join('');
 
     $('fAltNot').textContent =
       (sorunlu ? sorunlu + ' price' + (sorunlu === 1 ? '' : 's') + ' differ from the source'
@@ -2463,27 +2653,6 @@ ${YAZI_TIPI}
     else fUygula({ id: x.id });
   });
 
-  // Kutular tablo ile birlikte yeniden çiziliyor; dinleyicileri her seferinde
-  // bağlıyoruz. Arama kutusunda imleç kaybolmasın diye odak geri veriliyor.
-  function fSuzgecBagla(v) {
-    const ara = $('fAra'), durum = $('fDurumSuz'), sag = $('fSagSuz');
-    if (!ara || !durum || !sag) return;
-    durum.value = fDurumSuz;
-    sag.value = fSagSuz;
-    sag.addEventListener('change', () => { fSagSuz = sag.value; fTabloCiz(v); });
-    ara.addEventListener('input', () => {
-      fAramaSuz = ara.value.trim().toLowerCase();
-      const konum = ara.selectionStart;
-      fTabloCiz(v);
-      const yeni = $('fAra');
-      if (yeni) { yeni.focus(); yeni.setSelectionRange(konum, konum); }
-    });
-    durum.addEventListener('change', () => {
-      fDurumSuz = durum.value;
-      fTabloCiz(v);
-    });
-  }
-
   async function fiyatYukle() {
     $('uyari').classList.add('gizli');
     $('yukleniyor').classList.remove('gizli');
@@ -2667,15 +2836,9 @@ ${YAZI_TIPI}
     }
   });
 
-  $('pasifDugme').addEventListener('click', () => { pasifGoster = !pasifGoster; tabloCiz(); });
-  $('mSaglayici').addEventListener('change', tabloCiz);
-  $('mFiyat').addEventListener('change', tabloCiz);
-  $('modelArama').addEventListener('input', () => {
-    // Arama yapılırken pasifler de kapsama giriyor: "bu model bizde var mı"
-    // sorusunun cevabı aktiflerle sınırlı olmamalı.
-    if ($('modelArama').value.trim()) pasifGoster = true;
-    tabloCiz();
-  });
+  // Süzgeç kontrolleri (arama, sağlayıcı, fiyat, kaynak, durum) artık
+  // tabloyla birlikte dinamik kuruluyor (mBaslikKur) — sayfa yüklenirken
+  // DOM'da henüz yoklar, burada bağlamak hataya yol açardı.
 
   $('ekleAc').addEventListener('click', () => {
     $('ekleKart').classList.toggle('gizli');

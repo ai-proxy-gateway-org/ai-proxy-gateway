@@ -270,6 +270,12 @@ export const STIL = `
   .hesap .sat span:first-child { color:var(--ink-3); }
   .hesap .cizgi { border-top:1px solid var(--line-2); margin:.6rem 0; }
   .hesap .toplam { font-weight:500; }
+
+  /* İstek detayında prompt/cevap metni — uzun olabiliyor, kaydırılabilir
+     ve satır kırma açık, aksi halde panelin dışına taşıyor. */
+  .kodKutu { font-family:"JetBrains Mono", ui-monospace, monospace; font-size:.78rem;
+    background:var(--sunk); border-radius:10px; padding:.85rem 1rem; margin:.4rem 0 0;
+    white-space:pre-wrap; word-break:break-word; max-height:16rem; overflow-y:auto; }
   /* Kişinin kendi model dağılımı için ara başlık. */
   /* Tablo başlığındaki süzgeç satırı — Excel'deki gibi sütunun altında. */
   thead tr.suzgecSatiri th { padding-top:0; padding-bottom:.55rem;

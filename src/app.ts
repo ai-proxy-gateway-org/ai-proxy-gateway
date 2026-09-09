@@ -27,18 +27,32 @@ app.post('/v1/chat/completions', authMiddleware, rateLimitMiddleware, async (c) 
   const client = c.get('client');
   const startTime = Date.now();
 
+  // try bloğunun dışında tanımlı: sağlayıcıya ulaşmadan önce bir şey
+  // patlarsa (ör. kasa/vault erişilemezse) alttaki catch bloğu da bu
+  // kayda erişip "başarısız" diye kapatabilsin diye. Önceden bu durumda
+  // kayıt sonsuza kadar "pending" kalıyordu — prompt kaydedilmiş oluyordu
+  // ama hiçbir zaman başarısız olarak işaretlenmiyordu, hata sebebi de
+  // hiç yazılmıyordu.
+  let logId: string | null = null;
+  let provider = 'openai';
+  let model = 'gpt-4o';
+
   try {
     // 1. Müşteriden gelen isteği oku
     const body = await c.req.json();
-    const model = body.model || 'gpt-4o'; 
-    
+    model = body.model || 'gpt-4o';
+
     // Sağlayıcı Tespiti (Basit Routing)
-    let provider = 'openai';
     if (model.includes('claude')) provider = 'anthropic';
     if (model.includes('gemini')) provider = 'gemini';
 
     // 2. Asenkron Log Başlat (Pending)
-    const logId = await dbService.logRequestStart(client.id, provider, model);
+    //
+    // İsteğin tam metni burada kaydediliyor — cevaptan önce elimizdeki tek
+    // şey bu. messages yoksa (beklenmedik bir gövde gelirse) gövdenin
+    // tamamı saklanıyor, hiç kayıt kaybetmemek için.
+    const promptText = JSON.stringify(body.messages ?? body);
+    logId = await dbService.logRequestStart(client.id, provider, model, promptText);
 
     // 3. Vault (Kasa) üzerinden gerçek API anahtarını al (Önbellekli / SWR)
     const realApiKey = await getProviderKey(provider, c);
@@ -76,16 +90,24 @@ app.post('/v1/chat/completions', authMiddleware, rateLimitMiddleware, async (c) 
     const data = await aiResponse.json();
     const latencyMs = Date.now() - startTime;
 
-    // 5. Token ve Cost verilerini topla
+    // 6. Token ve Cost verilerini topla
     const inputTokens = data.usage?.prompt_tokens || 0;
     const outputTokens = data.usage?.completion_tokens || 0;
     const isSuccess = aiResponse.ok;
     const errorMessage = isSuccess ? undefined : data.error?.message;
 
-    // 6. EDGE Büyüsü: Log işlemini arka planda tamamla (Kullanıcıyı bekletmez)
+    // Cevabın okunabilir metnini sağlayıcıya göre çıkar; hangi şekle
+    // denk geldiğini bilemiyorsak (ya da hata gövdesiyse) ham JSON'u
+    // saklıyoruz — hiçbir zaman boş kalmasın diye.
+    const responseText =
+      data.content?.[0]?.text ??      // anthropic
+      data.choices?.[0]?.message?.content ?? // openai / gemini (uyumluluk katmanı)
+      JSON.stringify(data);
+
+    // 7. EDGE Büyüsü: Log işlemini arka planda tamamla (Kullanıcıyı bekletmez)
     if (logId) {
       const logPromise = dbService.logRequestComplete(
-        logId, provider, model, inputTokens, outputTokens, latencyMs, isSuccess, errorMessage
+        logId, provider, model, inputTokens, outputTokens, latencyMs, isSuccess, errorMessage, responseText
       );
       
       try {
@@ -99,11 +121,33 @@ app.post('/v1/chat/completions', authMiddleware, rateLimitMiddleware, async (c) 
       }
     }
 
-    // 7. Sonucu döndür
+    // 8. Sonucu döndür
     return c.json(data, aiResponse.status as any);
 
   } catch (error: any) {
     console.error("Proxy Error:", error);
+
+    // Kayıt "pending" olarak asılı kalmasın diye burada da kapatılıyor.
+    // Sağlayıcıya hiç ulaşılamamış olsa bile (ör. kasa erişilemezse) kim
+    // ne sormuş görülebilsin diye prompt zaten kaydedilmişti; en azından
+    // isteğin başarısız olduğu ve nedeni de görünsün.
+    if (logId) {
+      const latencyMs = Date.now() - startTime;
+      const failPromise = dbService.logRequestComplete(
+        logId, provider, model, null, null, latencyMs, false,
+        String(error?.message ?? 'Internal Edge Proxy Error')
+      );
+      try {
+        if (c.executionCtx && c.executionCtx.waitUntil) {
+          c.executionCtx.waitUntil(failPromise);
+        } else {
+          failPromise.catch(console.error);
+        }
+      } catch (e) {
+        failPromise.catch(console.error);
+      }
+    }
+
     return c.json({ success: false, error: 'Internal Edge Proxy Error' }, 500);
   }
 });

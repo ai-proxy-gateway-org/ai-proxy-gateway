@@ -1254,6 +1254,28 @@ ${YAZI_TIPI}
       '<dt>Input tokens</dt><dd>' + bin(gi) + '</dd>' +
       '<dt>Output tokens</dt><dd>' + bin(ci) + '</dd></dl>';
 
+    // Prompt / cevap. Denetim amaçlı: şüpheli bir istekte tam olarak ne
+    // sorulup ne cevap verildiğini görebilmek için. prompt JSON olarak
+    // saklanıyor (mesaj dizisi) — okunur olsun diye biçimlendirilmeye
+    // çalışılıyor, olmazsa ham haliyle gösteriliyor.
+    const bicimle = (t) => {
+      if (t == null || t === '') return null;
+      try { return JSON.stringify(JSON.parse(t), null, 2); } catch { return t; }
+    };
+    const promptGosterim = bicimle(k.prompt);
+    const cevapGosterim = bicimle(k.response);
+    if (promptGosterim || cevapGosterim) {
+      govde += '<div class="bolumBaslik">Prompt &amp; response</div>';
+      if (promptGosterim) {
+        govde += '<div class="yardim" style="margin-top:.4rem">Prompt</div>' +
+          '<pre class="kodKutu">' + kacir(promptGosterim) + '</pre>';
+      }
+      if (cevapGosterim) {
+        govde += '<div class="yardim" style="margin-top:.6rem">Response</div>' +
+          '<pre class="kodKutu">' + kacir(cevapGosterim) + '</pre>';
+      }
+    }
+
     if (k.status === 'error') {
       govde += '<div class="bolumBaslik">Why it was rejected</div>' +
         (k.error_message
@@ -3210,7 +3232,7 @@ export function adminRoutes(app: Hono) {
     // 2) Görüntülenecek sayfa
     const { data: sayfa, error: h2 } = await filtrele(
       supabase.from('logs')
-        .select('client_id, key_id, provider, model, status, input_tokens, output_tokens, cost, latency_ms, created_at, error_message, input_price_used, output_price_used')
+        .select('client_id, key_id, provider, model, status, input_tokens, output_tokens, cost, latency_ms, created_at, error_message, input_price_used, output_price_used, prompt, response')
         .order('created_at', { ascending: false })
         .range(offset, offset + SAYFA - 1) as any
     );

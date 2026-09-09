@@ -26,6 +26,11 @@ export const logs = pgTable('logs', {
   model: varchar('model', { length: 100 }),
   status: varchar('status', { length: 50 }),
   error_message: text('error_message'),
+  // İsteğin ve cevabın tam metni. Denetim amaçlı: şüpheli/tehlikeli bir
+  // istek olduğunda tam olarak ne sorulup ne cevap verildiğini görebilmek
+  // için — mission brief'te "Prompt" loglanması zaten isteniyordu.
+  prompt: text('prompt'),
+  response: text('response'),
   input_tokens: integer('input_tokens'),
   output_tokens: integer('output_tokens'),
   cost: doublePrecision('cost'),

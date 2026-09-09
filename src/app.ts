@@ -27,13 +27,22 @@ app.post('/v1/chat/completions', authMiddleware, rateLimitMiddleware, async (c) 
   const client = c.get('client');
   const startTime = Date.now();
 
+  // try bloğunun dışında tanımlı: sağlayıcıya ulaşmadan önce bir şey
+  // patlarsa (ör. kasa/vault erişilemezse) alttaki catch bloğu da bu
+  // kayda erişip "başarısız" diye kapatabilsin diye. Önceden bu durumda
+  // kayıt sonsuza kadar "pending" kalıyordu — prompt kaydedilmiş oluyordu
+  // ama hiçbir zaman başarısız olarak işaretlenmiyordu, hata sebebi de
+  // hiç yazılmıyordu.
+  let logId: string | null = null;
+  let provider = 'openai';
+  let model = 'gpt-4o';
+
   try {
     // 1. Müşteriden gelen isteği oku
     const body = await c.req.json();
-    const model = body.model || 'gpt-4o'; 
-    
+    model = body.model || 'gpt-4o';
+
     // Sağlayıcı Tespiti (Basit Routing)
-    let provider = 'openai';
     if (model.includes('claude')) provider = 'anthropic';
     if (model.includes('gemini')) provider = 'gemini';
 
@@ -43,7 +52,7 @@ app.post('/v1/chat/completions', authMiddleware, rateLimitMiddleware, async (c) 
     // şey bu. messages yoksa (beklenmedik bir gövde gelirse) gövdenin
     // tamamı saklanıyor, hiç kayıt kaybetmemek için.
     const promptText = JSON.stringify(body.messages ?? body);
-    const logId = await dbService.logRequestStart(client.id, provider, model, promptText);
+    logId = await dbService.logRequestStart(client.id, provider, model, promptText);
 
     // 3. Vault (Kasa) üzerinden gerçek API anahtarını al (Önbellekli / SWR)
     const realApiKey = await getProviderKey(provider, c);
@@ -117,6 +126,28 @@ app.post('/v1/chat/completions', authMiddleware, rateLimitMiddleware, async (c) 
 
   } catch (error: any) {
     console.error("Proxy Error:", error);
+
+    // Kayıt "pending" olarak asılı kalmasın diye burada da kapatılıyor.
+    // Sağlayıcıya hiç ulaşılamamış olsa bile (ör. kasa erişilemezse) kim
+    // ne sormuş görülebilsin diye prompt zaten kaydedilmişti; en azından
+    // isteğin başarısız olduğu ve nedeni de görünsün.
+    if (logId) {
+      const latencyMs = Date.now() - startTime;
+      const failPromise = dbService.logRequestComplete(
+        logId, provider, model, null, null, latencyMs, false,
+        String(error?.message ?? 'Internal Edge Proxy Error')
+      );
+      try {
+        if (c.executionCtx && c.executionCtx.waitUntil) {
+          c.executionCtx.waitUntil(failPromise);
+        } else {
+          failPromise.catch(console.error);
+        }
+      } catch (e) {
+        failPromise.catch(console.error);
+      }
+    }
+
     return c.json({ success: false, error: 'Internal Edge Proxy Error' }, 500);
   }
 });

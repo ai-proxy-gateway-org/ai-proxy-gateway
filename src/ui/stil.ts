@@ -141,8 +141,19 @@ export const STIL = `
     box-shadow:var(--golge); }
   .metrik .ad { font-size:.9rem; font-weight:600; color:var(--ink); }
   .metrik .aciklama { font-size:.78rem; color:var(--ink-3); margin-top:.1rem; }
-  .metrik .sayi { font-size:2.1rem; font-weight:600; margin-top:.65rem;
-    letter-spacing:-.035em; line-height:1.05; font-variant-numeric:tabular-nums; }
+  .metrik .sayi { font-size:2.1rem; font-weight:700; margin-top:.65rem;
+    letter-spacing:-.04em; line-height:1.05; font-variant-numeric:tabular-nums; }
+  /* Kötü bir değeri (ör. yüksek hata oranı) nötr rakamlardan ayırt etmek
+     için. Sayının kendisi rengi taşıyor, kart etrafına dokunulmuyor —
+     göz taraması yaparken hemen fark edilsin diye. */
+  .metrik .sayi.uyari { color:var(--sari); }
+  .metrik .sayi.tehlike { color:var(--kirmizi); }
+
+  /* Panodaki "bekleyen onay" şeridi — sıradan bir bilgi kartı değil,
+     harekete geçilmesi gereken bir şey olduğunu belli etsin diye kenarlık
+     ve hafif ton farkı var. */
+  .kartUyari { border:1px solid color-mix(in srgb, var(--sari) 35%, var(--line-2));
+    background:color-mix(in srgb, var(--sari-soft) 55%, var(--surface)); }
   .metrik .fark { font-size:.8rem; color:var(--ink-3); margin-top:.65rem;
                   display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; }
   .etiket-degisim { display:inline-flex; align-items:center; gap:.2rem;
@@ -264,6 +275,31 @@ export const STIL = `
   thead tr.suzgecSatiri th { padding-top:0; padding-bottom:.55rem;
     background:var(--sunk); border-bottom:1px solid var(--line-2); }
   thead tr.suzgecSatiri select { cursor:pointer; }
+
+  /* Excel tarzı sütun filtresi: başlığın kendi içinde küçük bir ok, ayrı
+     bir satır yok. Ok tıklanınca o hücrenin altına açılır bir panel iner —
+     panel <th>'nin kendi içinde, position:relative sayesinde ayrıca
+     konumlandırma hesabı gerekmiyor. */
+  th.sutunBaslik { position:relative; }
+  .sutunOk { background:none; border:0; color:var(--ink-3); cursor:pointer;
+    font-size:.7rem; padding:.1rem .3rem; margin-left:.15rem; border-radius:4px;
+    vertical-align:middle; }
+  .sutunOk:hover { background:var(--line-2); color:var(--ink); }
+  .sutunOk.etkin { color:var(--mavi); }
+  .sutunFiltrePopup { position:absolute; top:100%; left:0; margin-top:.3rem;
+    background:var(--surface); border:1px solid var(--line-2); border-radius:10px;
+    box-shadow:0 8px 24px rgba(0,0,0,.25), 0 0 0 1px rgba(0,0,0,.04);
+    padding:.7rem; min-width:11rem; z-index:20; text-transform:none;
+    letter-spacing:normal; font-weight:400; cursor:default; }
+  .sutunFiltrePopup label { display:flex; align-items:center; gap:.45rem;
+    font-size:.85rem; color:var(--ink-2); padding:.2rem 0; cursor:pointer; white-space:nowrap; }
+  .sutunFiltrePopup input[type="text"], .sutunFiltrePopup input[type="number"] {
+    font:inherit; font-size:.83rem; padding:.35rem .5rem; border:1px solid var(--line-2);
+    border-radius:6px; background:var(--sunk); color:var(--ink); width:100%; }
+  .sutunFiltrePopup .araGrubu { display:flex; align-items:center; gap:.4rem; }
+  .sutunFiltrePopup .araGrubu input { width:4.5rem; }
+  .sutunFiltrePopup .temizle { display:block; margin-top:.5rem; font-size:.78rem;
+    color:var(--mavi); background:none; border:0; cursor:pointer; padding:.15rem 0; }
 
   /* İstek listesinin süzgeç çubuğu. */
   .suzgecCubugu { display:flex; align-items:flex-end; gap:.9rem; flex-wrap:wrap;

@@ -5,6 +5,7 @@ import { clients, client_keys, logs } from './schema.js';
 // ...
 import { eq } from 'drizzle-orm';
 import { hashApiKey, generateProxyKey } from '../utils/auth.js';
+import { supabase } from '../utils/supabaseClient.js';
 import pricingData from '../model_pricing.json' with { type: 'json' };
 
 
@@ -71,12 +72,32 @@ export class DrizzleAdapter implements IDatabase {
     isSuccess: boolean = true, error_message?: string, response?: string | null
   ) {
     try {
-      const modelKey = `${provider}/${model}`;
-      const modelPricing = pricing[modelKey];
       let totalCost = 0;
 
-      if (modelPricing && inputTokens !== null && outputTokens !== null) {
-        totalCost = ((inputTokens / 1000) * modelPricing.input) + ((outputTokens / 1000) * modelPricing.output);
+      if (inputTokens !== null && outputTokens !== null) {
+        // Asıl fiyat kaynağı admin panelindeki Models tablosu (model_catalog) —
+        // orada girilen/doğrulanan güncel fiyatlar. model_pricing.json çok
+        // eski ve sadece 3 model içeriyor, artık yalnızca model_catalog'da
+        // henüz kaydı olmayan bir model için yedek (fallback) olarak kullanılıyor.
+        const { data: katalogKaydi } = await supabase
+          .from('model_catalog')
+          .select('input_price, output_price')
+          .eq('provider', provider)
+          .eq('model', model)
+          .maybeSingle();
+
+        if (katalogKaydi && katalogKaydi.input_price != null && katalogKaydi.output_price != null) {
+          // model_catalog fiyatları da (model_pricing.json ile aynı birimde)
+          // 1000 token başına saklanıyor — admin panelindeki "$ per 1M tokens"
+          // input'u kaydedilirken zaten /1000 ile buraya çevriliyor (bkz.
+          // admin.ts, PATCH /models/:id).
+          totalCost = (inputTokens / 1000) * Number(katalogKaydi.input_price) + (outputTokens / 1000) * Number(katalogKaydi.output_price);
+        } else {
+          const modelPricing = pricing[`${provider}/${model}`];
+          if (modelPricing) {
+            totalCost = ((inputTokens / 1000) * modelPricing.input) + ((outputTokens / 1000) * modelPricing.output);
+          }
+        }
       }
 
       await db.update(logs)

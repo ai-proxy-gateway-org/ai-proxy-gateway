@@ -5,7 +5,7 @@ import { clients, client_keys, logs } from './schema.js';
 // ...
 import { eq } from 'drizzle-orm';
 import { hashApiKey, generateProxyKey } from '../utils/auth.js';
-import pricingData from '../model_pricing.json';
+import pricingData from '../model_pricing.json' with { type: 'json' };
 
 
 type PricingMap = Record<string, { input: number; output: number }>;

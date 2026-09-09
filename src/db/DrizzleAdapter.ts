@@ -5,7 +5,7 @@ import { clients, client_keys, logs } from './schema.js';
 // ...
 import { eq } from 'drizzle-orm';
 import { hashApiKey, generateProxyKey } from '../utils/auth.js';
-import pricingData from '../model_pricing.json';
+import pricingData from '../model_pricing.json' with { type: 'json' };
 
 
 type PricingMap = Record<string, { input: number; output: number }>;
@@ -54,10 +54,10 @@ export class DrizzleAdapter implements IDatabase {
     }
   }
 
-  async logRequestStart(clientId: string, provider: string, model: string) {
+  async logRequestStart(clientId: string, provider: string, model: string, prompt?: string | null) {
     try {
       const [newLog] = await db.insert(logs)
-        .values({ client_id: clientId, provider, model, status: 'pending' })
+        .values({ client_id: clientId, provider, model, status: 'pending', prompt: prompt ?? null })
         .returning({ id: logs.id });
       return newLog.id;
     } catch (error) {
@@ -65,7 +65,11 @@ export class DrizzleAdapter implements IDatabase {
     }
   }
 
-  async logRequestComplete(logId: string, provider: string, model: string, inputTokens: number | null, outputTokens: number | null, latencyMs: number, isSuccess: boolean = true, error_message?: string) {
+  async logRequestComplete(
+    logId: string, provider: string, model: string,
+    inputTokens: number | null, outputTokens: number | null, latencyMs: number,
+    isSuccess: boolean = true, error_message?: string, response?: string | null
+  ) {
     try {
       const modelKey = `${provider}/${model}`;
       const modelPricing = pricing[modelKey];
@@ -83,7 +87,8 @@ export class DrizzleAdapter implements IDatabase {
           cost: totalCost,
           latency_ms: latencyMs,
           completed_at: new Date(),
-          error_message: error_message || null
+          error_message: error_message || null,
+          response: response ?? null
         })
         .where(eq(logs.id, logId));
     } catch (error) {

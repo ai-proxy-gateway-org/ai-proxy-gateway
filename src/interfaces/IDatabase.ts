@@ -9,18 +9,22 @@ export interface IDatabase {
   // API Key doğrulama
   verifyClient(token: string): Promise<{ success: boolean; client?: any; error?: string; status?: number }>;
   
-  // Log başlatma
-  logRequestStart(clientId: string, provider: string, model: string): Promise<string | null>;
-  
-  // Log bitirme
+  // Log başlatma. prompt isteğin tam metni — cevaptan önce elimizde olan
+  // tek şey bu, o yüzden başlatma anında kaydediliyor.
+  logRequestStart(
+    clientId: string, provider: string, model: string, prompt?: string | null
+  ): Promise<string | null>;
+
+  // Log bitirme. response, sağlayıcıdan dönen cevabın tam metni.
   logRequestComplete(
-    logId: string, 
-    provider: string, 
-    model: string, 
-    inputTokens: number | null, 
-    outputTokens: number | null, 
+    logId: string,
+    provider: string,
+    model: string,
+    inputTokens: number | null,
+    outputTokens: number | null,
     latencyMs: number,
     isSuccess: boolean,
-    error_message?: string
+    error_message?: string,
+    response?: string | null
   ): Promise<void>;
 }

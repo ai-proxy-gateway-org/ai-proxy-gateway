@@ -38,7 +38,12 @@ app.post('/v1/chat/completions', authMiddleware, rateLimitMiddleware, async (c) 
     if (model.includes('gemini')) provider = 'gemini';
 
     // 2. Asenkron Log Başlat (Pending)
-    const logId = await dbService.logRequestStart(client.id, provider, model);
+    //
+    // İsteğin tam metni burada kaydediliyor — cevaptan önce elimizdeki tek
+    // şey bu. messages yoksa (beklenmedik bir gövde gelirse) gövdenin
+    // tamamı saklanıyor, hiç kayıt kaybetmemek için.
+    const promptText = JSON.stringify(body.messages ?? body);
+    const logId = await dbService.logRequestStart(client.id, provider, model, promptText);
 
     // 3. Vault (Kasa) üzerinden gerçek API anahtarını al (Önbellekli / SWR)
     const realApiKey = await getProviderKey(provider, c);
@@ -76,16 +81,24 @@ app.post('/v1/chat/completions', authMiddleware, rateLimitMiddleware, async (c) 
     const data = await aiResponse.json();
     const latencyMs = Date.now() - startTime;
 
-    // 5. Token ve Cost verilerini topla
+    // 6. Token ve Cost verilerini topla
     const inputTokens = data.usage?.prompt_tokens || 0;
     const outputTokens = data.usage?.completion_tokens || 0;
     const isSuccess = aiResponse.ok;
     const errorMessage = isSuccess ? undefined : data.error?.message;
 
-    // 6. EDGE Büyüsü: Log işlemini arka planda tamamla (Kullanıcıyı bekletmez)
+    // Cevabın okunabilir metnini sağlayıcıya göre çıkar; hangi şekle
+    // denk geldiğini bilemiyorsak (ya da hata gövdesiyse) ham JSON'u
+    // saklıyoruz — hiçbir zaman boş kalmasın diye.
+    const responseText =
+      data.content?.[0]?.text ??      // anthropic
+      data.choices?.[0]?.message?.content ?? // openai / gemini (uyumluluk katmanı)
+      JSON.stringify(data);
+
+    // 7. EDGE Büyüsü: Log işlemini arka planda tamamla (Kullanıcıyı bekletmez)
     if (logId) {
       const logPromise = dbService.logRequestComplete(
-        logId, provider, model, inputTokens, outputTokens, latencyMs, isSuccess, errorMessage
+        logId, provider, model, inputTokens, outputTokens, latencyMs, isSuccess, errorMessage, responseText
       );
       
       try {
@@ -99,7 +112,7 @@ app.post('/v1/chat/completions', authMiddleware, rateLimitMiddleware, async (c) 
       }
     }
 
-    // 7. Sonucu döndür
+    // 8. Sonucu döndür
     return c.json(data, aiResponse.status as any);
 
   } catch (error: any) {

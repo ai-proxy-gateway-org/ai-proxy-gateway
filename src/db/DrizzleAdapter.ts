@@ -1,9 +1,9 @@
 // src/db/DrizzleAdapter.ts
 import type { IDatabase } from '../interfaces/IDatabase.js';
 import { db } from './index.js'; // Senin kurduğun Drizzle bağlantısı
-import { clients, client_keys, logs } from './schema.js';
+import { clients, client_keys, logs, sessions } from './schema.js';
 // ...
-import { eq } from 'drizzle-orm';
+import { eq, desc } from 'drizzle-orm';
 import { hashApiKey, generateProxyKey } from '../utils/auth.js';
 import { supabase } from '../utils/supabaseClient.js';
 import pricingData from '../model_pricing.json' with { type: 'json' };
@@ -114,6 +114,45 @@ export class DrizzleAdapter implements IDatabase {
         .where(eq(logs.id, logId));
     } catch (error) {
       console.error('Error updating log:', error);
+    }
+  }
+
+  async saveSession(
+    sessionId: string,
+    clientId: string,
+    startedAt: string,
+    messageCount: number,
+    summary: string,
+    summaryTokens: number,
+    summaryCost: number
+  ) {
+    try {
+      await db.insert(sessions).values({
+        id: sessionId,
+        client_id: clientId,
+        started_at: new Date(startedAt),
+        ended_at: new Date(),
+        message_count: messageCount,
+        summary,
+        summary_tokens: summaryTokens,
+        summary_cost: summaryCost,
+      });
+    } catch (error) {
+      console.error('Error saving session:', error);
+    }
+  }
+
+  async getSessionsByClient(clientId: string, limit: number = 10) {
+    try {
+      return await db
+        .select()
+        .from(sessions)
+        .where(eq(sessions.client_id, clientId))
+        .orderBy(desc(sessions.started_at))
+        .limit(limit);
+    } catch (error) {
+      console.error('Error fetching sessions:', error);
+      return [];
     }
   }
 }

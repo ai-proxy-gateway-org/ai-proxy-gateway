@@ -27,4 +27,19 @@ export interface IDatabase {
     error_message?: string,
     response?: string | null
   ): Promise<void>;
+
+  // Oturum kaydetme: Redis'teki geçici oturum verisi TTL dolunca silinir,
+  // bu metod ile özet ve metadata PostgreSQL'e kalıcı olarak yazılır.
+  saveSession(
+    sessionId: string,
+    clientId: string,
+    startedAt: string,
+    messageCount: number,
+    summary: string,
+    summaryTokens: number,
+    summaryCost: number
+  ): Promise<void>;
+
+  // Müşterinin son N oturumunu listeler (admin paneli ve portal için).
+  getSessionsByClient(clientId: string, limit?: number): Promise<any[]>;
 }

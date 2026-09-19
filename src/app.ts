@@ -4,9 +4,19 @@ import { authMiddleware } from './middleware/authMiddleware.js';
 import { rateLimitMiddleware } from './middleware/rateLimitMiddleware.js';
 import { dbService } from './services/databaseService.js';
 import { getProviderKey } from './utils/vault.js';
+import {
+  getOrCreateSession, addMessageToSession, getActiveSession,
+  getSessionMessages, generateSessionSummary
+} from './utils/sessionManager.js';
 
 // Hono uygulamasını başlatıyoruz
 const app = new Hono();
+
+// Hata yakalayıcı: Tüm yakalanmamış hataları konsola basar (Debug için)
+app.onError((err, c) => {
+  console.error('HONO ERROR:', err.message, err.stack);
+  return c.json({ success: false, error: 'Internal Edge Proxy Error', detail: err.message }, 500);
+});
 
 // Sağlık kontrolü rotası
 //
@@ -45,6 +55,15 @@ app.post('/v1/chat/completions', authMiddleware, rateLimitMiddleware, async (c) 
     // Sağlayıcı Tespiti (Basit Routing)
     if (model.includes('claude')) provider = 'anthropic';
     if (model.includes('gemini')) provider = 'gemini';
+
+    // Oturum (Session) Yönetimi:
+    // X-Summarize header'ı varsa onu kullan, yoksa müşterinin admin ayarına bak.
+    const headerSummarize = c.req.header('X-Summarize');
+    const summaryEnabled = headerSummarize !== undefined
+      ? headerSummarize === 'true'
+      : !!client.summary_enabled;
+
+    const session = await getOrCreateSession(client.id, summaryEnabled);
 
     // 2. Asenkron Log Başlat (Pending)
     //
@@ -121,7 +140,23 @@ app.post('/v1/chat/completions', authMiddleware, rateLimitMiddleware, async (c) 
       }
     }
 
-    // 8. Sonucu döndür
+    // 8. Oturum Takibi: Soru-cevap çiftini oturuma ekle (arka planda, sıfır gecikme)
+    if (session.summaryEnabled && isSuccess) {
+      const sessionPromise = addMessageToSession(
+        client.id, session.sessionId, promptText, responseText, model, provider
+      );
+      try {
+        if (c.executionCtx?.waitUntil) {
+          c.executionCtx.waitUntil(sessionPromise);
+        } else {
+          sessionPromise.catch(console.error);
+        }
+      } catch (e) {
+        sessionPromise.catch(console.error);
+      }
+    }
+
+    // 9. Sonucu döndür
     return c.json(data, aiResponse.status as any);
 
   } catch (error: any) {
@@ -150,6 +185,69 @@ app.post('/v1/chat/completions', authMiddleware, rateLimitMiddleware, async (c) 
 
     return c.json({ success: false, error: 'Internal Edge Proxy Error' }, 500);
   }
+});
+
+// ─── Oturum (Session) API Endpoint'leri ───────────────────────────────────
+
+// Müşterinin aktif oturumunu görüntüle
+app.get('/v1/sessions/current', authMiddleware, async (c) => {
+  const client = c.get('client');
+  const session = await getActiveSession(client.id);
+
+  if (!session) {
+    return c.json({ active: false, message: 'Aktif oturum bulunamadı.' });
+  }
+
+  return c.json({
+    active: true,
+    sessionId: session.sessionId,
+    startedAt: session.startedAt,
+    messageCount: session.messageCount,
+    summaryEnabled: session.summaryEnabled,
+  });
+});
+
+// Belirli bir oturumun mesajlarını getir (aktif oturum — Redis'ten)
+app.get('/v1/sessions/:sessionId/messages', authMiddleware, async (c) => {
+  const sessionId = c.req.param('sessionId');
+  const messages = await getSessionMessages(sessionId);
+  return c.json({ sessionId, messageCount: messages.length, messages });
+});
+
+// Manuel olarak özet tetikle (oturum bitmeden de çağrılabilir)
+app.post('/v1/sessions/:sessionId/summarize', authMiddleware, async (c) => {
+  const client = c.get('client');
+  const sessionId = c.req.param('sessionId');
+  const messages = await getSessionMessages(sessionId);
+
+  if (messages.length === 0) {
+    return c.json({ error: 'Bu oturumda özetlenecek mesaj bulunamadı.' }, 404);
+  }
+
+  const { summary, inputTokens, outputTokens } = await generateSessionSummary(sessionId);
+
+  // Özeti kalıcı olarak veritabanına kaydet
+  const session = await getActiveSession(client.id);
+  const cost = ((inputTokens / 1000) * 0.00015) + ((outputTokens / 1000) * 0.0006); // gpt-4o-mini fiyatı
+  await dbService.saveSession(
+    sessionId,
+    client.id,
+    session?.startedAt ?? new Date().toISOString(),
+    messages.length / 2, // her soru-cevap çifti = 2 mesaj
+    summary,
+    inputTokens + outputTokens,
+    cost
+  );
+
+  return c.json({ sessionId, summary, tokens: inputTokens + outputTokens, cost });
+});
+
+// Müşterinin geçmiş oturumlarını listele (veritabanından — kalıcı kayıtlar)
+app.get('/v1/sessions/history', authMiddleware, async (c) => {
+  const client = c.get('client');
+  const limit = parseInt(c.req.query('limit') || '10');
+  const sessions = await dbService.getSessionsByClient(client.id, limit);
+  return c.json({ sessions });
 });
 
 // Admin (yönetim paneli) her kurulumda gerekli — müşteri/fiyat/model

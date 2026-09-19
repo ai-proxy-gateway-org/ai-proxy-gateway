@@ -23,6 +23,7 @@
   "homepage": "https://github.com/umrtkyrk/ai-proxy-gateway#readme",
   "devDependencies": {
     "@types/node": "^26.2.0",
+    "autocannon": "^8.0.0",
     "drizzle-kit": "^0.31.10",
     "supabase": "^2.114.0",
     "tsx": "^4.23.12",

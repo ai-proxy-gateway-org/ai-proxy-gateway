@@ -8,8 +8,8 @@ const redis = new Redis({
 })
 
 // Kasa (Vault) servisimizin gizli adresi ve yetki anahtarı
-const VAULT_API_URL = process.env.VAULT_API_URL!
-const VAULT_ACCESS_TOKEN = process.env.VAULT_ACCESS_TOKEN!
+const VAULT_API_URL = process.env.VAULT_API_URL
+const VAULT_ACCESS_TOKEN = process.env.VAULT_ACCESS_TOKEN
 
 interface CachedKey {
   apiKey: string;
@@ -17,6 +17,17 @@ interface CachedKey {
 }
 
 export async function getProviderKey(provider: string, c?: Context): Promise<string> {
+  // Eğer Kasa (Vault) URL'i tanımlanmamışsa (örn. açık kaynak test ortamı),
+  // doğrudan .env dosyasındaki yerel değişkenlere başvur (Fallback mekanizması)
+  if (!VAULT_API_URL) {
+    const envKeyName = `${provider.toUpperCase()}_API_KEY`;
+    const localKey = process.env[envKeyName];
+    if (!localKey) {
+      throw new Error(`Kasa devre dışı ancak .env dosyasında ${envKeyName} bulunamadı!`);
+    }
+    return localKey;
+  }
+
   const cacheKey = `vault_key:${provider}`
 
   // 1. ADIM: Önce Redis'e (Önbelleğe) bak (Süre: ~2-5ms)

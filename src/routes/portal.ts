@@ -541,6 +541,20 @@ ${YAZI_TIPI}
         '<dt>Output tokens</dt><dd>' + bin(ci) + '</dd>' +
       '</dl>';
 
+    // Kişi kendi isteğinin tam olarak ne sorup ne cevap aldığını görebilsin —
+    // admin panelindeki aynı bölümün portal karşılığı.
+    const bicimle = (t) => {
+      if (t == null || t === '') return null;
+      try { return JSON.stringify(JSON.parse(t), null, 2); } catch { return t; }
+    };
+    const promptGosterim = bicimle(k.prompt);
+    const cevapGosterim = bicimle(k.response);
+    if (promptGosterim || cevapGosterim) {
+      govde += '<div class="bolumBaslik">Prompt &amp; response</div>';
+      if (promptGosterim) govde += '<div class="yardim">Prompt</div><pre class="kodKutu">' + kacir(promptGosterim) + '</pre>';
+      if (cevapGosterim) govde += '<div class="yardim">Response</div><pre class="kodKutu">' + kacir(cevapGosterim) + '</pre>';
+    }
+
     if (k.status === 'pending') {
       govde += '<div class="bolumBaslik">Cost</div>' +
         '<div class="dogrula bek">This request was not fully recorded. ' +
@@ -1450,7 +1464,7 @@ export function portalRoutes(app: Hono) {
     // 2. Görüntülenecek sayfa. "Sadece başarısız" seçiliyse tablo filtreleniyor.
     let sayfaSorgu = supabase
       .from('logs')
-      .select('provider, model, status, input_tokens, output_tokens, cost, latency_ms, created_at, error_message')
+      .select('provider, model, status, input_tokens, output_tokens, cost, latency_ms, created_at, error_message, prompt, response')
       .eq('client_id', clientId) as any;
     if (durumSuzgec) sayfaSorgu = sayfaSorgu.eq('status', durumKarsiligi[durumSuzgec]);
     if (modelSuzgec) {

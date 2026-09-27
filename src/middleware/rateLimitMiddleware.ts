@@ -1,6 +1,7 @@
 // src/middleware/rateLimitMiddleware.ts
 import type { Context, Next } from 'hono';
 import { checkRateLimit } from './rateLimiter.js';
+
 export async function rateLimitMiddleware(c: Context, next: Next) {
   // authMiddleware'den geçen müşteri bilgisini alıyoruz
   const client = c.get('client');

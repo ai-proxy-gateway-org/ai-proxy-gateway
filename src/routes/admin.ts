@@ -339,7 +339,7 @@ ${YAZI_TIPI}
         Models</button>
       <button data-bolum="kisiler">
         <svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2 20c0-3.3 3.1-6 7-6s7 2.7 7 6M17 11h5M19.5 8.5v5"/></svg>
-        People</button>
+        Teams</button>
       <button data-bolum="istekler">
         <svg viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
         Requests</button>
@@ -539,7 +539,7 @@ ${YAZI_TIPI}
         <div class="kart" id="politikaKart" style="margin-bottom:1.25rem"></div>
 
         <div class="satirbasi" style="margin-top:0">
-          <div class="baslikkucuk">People</div>
+          <div class="baslikkucuk">Teams</div>
           <div class="sayac" id="kiSayac"></div>
         </div>
         <div class="tablokart">
@@ -925,7 +925,7 @@ ${YAZI_TIPI}
   const BASLIK = {
     ozet:       ['Dashboard', 'Traffic, spend and system health'],
     modeller:   ['Models',    'Model catalog and pricing'],
-    kisiler:    ['People',    'Who can use the gateway, and what they can reach'],
+    kisiler:    ['Teams',    'Who can use the gateway, and what they can reach'],
     istekler:   ['Requests',  'All requests across customers'],
     fiyatlar:     ['Price audit', 'Stored prices checked against a live source'],
     yoneticiler:  ['Administrators', 'Who can sign in to this console']
@@ -1583,10 +1583,10 @@ ${YAZI_TIPI}
   }
 
   function kisiTabloCiz() {
-    $('kiSayac').textContent = kisiler.length + (kisiler.length === 1 ? ' person' : ' people');
+    $('kiSayac').textContent = kisiler.length + (kisiler.length === 1 ? ' team' : ' teams');
     if (!kisiler.length) {
       $('kiTablo').innerHTML = '';
-      $('kiBos').innerHTML = '<div class="simge">◷</div><h3>No people yet</h3>' +
+      $('kiBos').innerHTML = '<div class="simge">◷</div><h3>No teams yet</h3>' +
         '<p>Add someone so they can sign in to the portal and get a key.</p>';
       $('kiBos').classList.remove('gizli');
       $('kiAltNot').textContent = '';
@@ -1595,7 +1595,7 @@ ${YAZI_TIPI}
     $('kiBos').classList.add('gizli');
 
     $('kiTablo').innerHTML =
-      '<thead><tr><th>Person</th><th>Can use</th><th>Today</th><th>This month</th>' +
+      '<thead><tr><th>Team Name</th><th>Can use</th><th>Today</th><th>This month</th>' +
       '<th>Keys</th><th class="sayi">Requests</th><th>Last seen</th><th></th></tr></thead><tbody>' +
       kisiler.map((k, i) => {
         const izinli = k.allowed_models || [];
@@ -1737,7 +1737,7 @@ ${YAZI_TIPI}
   function kisiAc(k) {
     const u = k.kullanim || {};
     $('ypBaslik').textContent = k.email;
-    $('ypZaman').textContent = (k.role === 'owner' ? 'Owner' : 'Member') + ' since ' +
+    $('ypZaman').textContent = (k.role === 'owner' ? 'Owner' : k.role === 'team' ? 'Team' : 'Member') + ' since ' +
       new Date(k.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
 
     const tavan = k.max_output_price;
@@ -1810,6 +1810,27 @@ ${YAZI_TIPI}
       '<label class="secim" style="margin-top:.7rem"><input type="checkbox" id="ypEskiKapat">Revoke existing keys</label>' +
       '<button class="dugme cerceveli" id="ypYeniAnahtar" style="margin-top:.7rem">Issue key</button>' +
 
+      '<div class="bolumBaslik" style="margin-top:1.8rem">Employees</div>' +
+      '<div class="yardim" style="margin-bottom:.7rem">' +
+      'People assigned to this team. They inherit the team\\'s model access and budget limits.</div>' +
+      '<div id="ypCalisanlar">' +
+      ((k.calisanlar || []).length
+        ? '<table class="tablokart" style="margin-bottom:.7rem"><thead><tr><th>Email</th><th>Role</th><th>Joined</th></tr></thead><tbody>' +
+          (k.calisanlar || []).map(function(c) {
+            return '<tr><td>' + kacir(c.email) + '</td>' +
+              '<td>' + (c.role === 'owner' ? '<span class="hap ok">owner</span>' : 'member') + '</td>' +
+              '<td>' + gunTarih(c.created_at) + '</td></tr>';
+          }).join('') +
+          '</tbody></table>'
+        : '<div class="yardim" style="margin-bottom:.7rem">No employees in this team yet.</div>') +
+      '</div>' +
+      '<div class="formSatir" style="grid-template-columns:2fr 1fr;margin-top:.5rem">' +
+      '<label>Email<input id="ypCalisanEposta" type="email" placeholder="employee@company.com"></label>' +
+      '<label>Role<select id="ypCalisanRol"><option value="member">member</option><option value="owner">owner</option></select></label></div>' +
+      '<button class="dugme cerceveli" id="ypCalisanEkle" style="margin-top:.5rem">+ Add employee</button>' +
+      '<div class="uyari gizli" id="ypCalisanHata" style="margin-top:.5rem"></div>' +
+      '<div class="basarili gizli" id="ypCalisanOk" style="margin-top:.5rem"></div>' +
+
       '<div class="bolumBaslik" style="margin-top:1.8rem">Account</div>' +
       '<div class="dugmeler" style="display:flex;gap:.6rem">' +
       '<button class="dugme cerceveli" id="ypEposta">Change email</button>' +
@@ -1827,6 +1848,37 @@ ${YAZI_TIPI}
       const e = $(id);
       if (e) e.addEventListener('change', () => $('ypDegisti').classList.remove('gizli'));
     });
+
+    // Çalışan ekleme butonu: POST /admin/api/customers/:teamId/users
+    $('ypCalisanEkle').onclick = async () => {
+      const eposta = $('ypCalisanEposta').value.trim();
+      const rol = $('ypCalisanRol').value;
+      $('ypCalisanHata').classList.add('gizli');
+      $('ypCalisanOk').classList.add('gizli');
+      if (!eposta || !/^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test(eposta)) {
+        $('ypCalisanHata').textContent = 'Enter a valid email address.';
+        $('ypCalisanHata').classList.remove('gizli');
+        return;
+      }
+      $('ypCalisanEkle').disabled = true;
+      try {
+        const sonuc = await api('/customers/' + k.id + '/users', {
+          method: 'POST',
+          body: JSON.stringify({ email: eposta, role: rol })
+        });
+        const sifre = sonuc.sifre || '(generated)';
+        $('ypCalisanOk').innerHTML = 'Employee added! Temporary password: <code>' + kacir(sifre) + '</code> — share it securely.';
+        $('ypCalisanOk').classList.remove('gizli');
+        $('ypCalisanEposta').value = '';
+        await kisilerYukle();
+        kisiAc(kisiler.find(t => t.id === k.id) || k);
+      } catch (e) {
+        $('ypCalisanHata').textContent = e.message || 'Failed to add employee.';
+        $('ypCalisanHata').classList.remove('gizli');
+      } finally {
+        $('ypCalisanEkle').disabled = false;
+      }
+    };
 
     $('ypKaydet').onclick = async () => {
       const t = $('ypTavan').value.trim();
@@ -5176,17 +5228,10 @@ export function adminRoutes(app: Hono) {
       return c.json({ error: 'Unauthorized.' }, 401 as any);
     }
 
-    const { data: kullanicilar, error } = await supabase
+    const { data: kullanicilar, error: uErr } = await supabase
       .from('users')
-      .select('id, email, role, client_id, created_at, last_login_at, allowed_models, max_output_price, monthly_budget, daily_budget')
+      .select('id, email, role, client_id, created_at, last_login_at')
       .order('created_at', { ascending: true });
-
-    if (error) {
-      const eksik = /allowed_models|max_output_price|column|relation/i.test(String(error.message));
-      return c.json({
-        error: eksik ? 'Run tek-sirket.sql first.' : 'Could not read people.'
-      }, eksik ? 428 : 500 as any);
-    }
 
     const { data: sirketler } = await supabase
       .from('clients')
@@ -5194,81 +5239,74 @@ export function adminRoutes(app: Hono) {
 
     const { data: anahtarlar } = await supabase
       .from('client_keys')
-      .select('id, label, environment, is_active, user_id, key_prefix, created_at');
+      .select('id, label, environment, is_active, user_id, client_id, key_prefix, created_at');
 
-    // Kişi başına kullanım. Anahtar üzerinden bağlanıyor: ağ geçidine gelen
-    // istekte insan yok, anahtar var.
     const { data: kayitlar } = await supabase
-      .from('logs').select('key_id, status, input_tokens, output_tokens, cost, created_at').limit(10000);
-
-    const anahtarSahibi = new Map(
-      ((anahtarlar ?? []) as Array<{ id: string; user_id: string | null }>)
-        .map((a) => [a.id, a.user_id])
-    );
+      .from('logs').select('client_id, status, input_tokens, output_tokens, cost, created_at').limit(10000);
 
     type Toplam = { istek: number; hata: number; token: number; maliyet: number; son: string | null };
     const bos = (): Toplam => ({ istek: 0, hata: 0, token: 0, maliyet: 0, son: null });
     const kisiToplam = new Map<string, Toplam>();
     const ortakToplam = bos();
 
-    for (const k of (kayitlar ?? []) as Array<{
-      key_id: string | null; status: string;
-      input_tokens: number | null; output_tokens: number | null;
-      cost: number | null; created_at: string;
-    }>) {
-      const sahip = k.key_id ? anahtarSahibi.get(k.key_id) ?? null : null;
-      const hedef = sahip ? (kisiToplam.get(sahip) ?? bos()) : ortakToplam;
+    for (const k of (kayitlar ?? [])) {
+      if (!k.client_id) {
+        ortakToplam.istek += 1;
+        ortakToplam.maliyet += Number(k.cost ?? 0);
+        continue;
+      }
+      const hedef = kisiToplam.get(k.client_id) ?? bos();
       hedef.istek += 1;
       hedef.hata += k.status === 'error' ? 1 : 0;
       hedef.token += (k.input_tokens ?? 0) + (k.output_tokens ?? 0);
       hedef.maliyet += Number(k.cost ?? 0);
       if (!hedef.son || k.created_at > hedef.son) hedef.son = k.created_at;
-      if (sahip) kisiToplam.set(sahip, hedef);
+      kisiToplam.set(k.client_id, hedef);
     }
 
-    const anahtarPerKisi = new Map<string, unknown[]>();
-    for (const a of (anahtarlar ?? []) as Array<{ user_id: string | null }>) {
-      if (!a.user_id) continue;
-      const d = anahtarPerKisi.get(a.user_id) ?? [];
+    const anahtarPerClient = new Map<string, unknown[]>();
+    for (const a of (anahtarlar ?? [])) {
+      if (!a.client_id) continue;
+      const d = anahtarPerClient.get(a.client_id) ?? [];
       d.push(a);
-      anahtarPerKisi.set(a.user_id, d);
+      anahtarPerClient.set(a.client_id, d);
     }
 
-    // Bütçe sayacı Redis'te; kalan miktar oradan okunuyor.
+    const kullaniciPerClient = new Map<string, unknown[]>();
+    for (const u of (kullanicilar ?? [])) {
+      if (!u.client_id) continue;
+      const d = kullaniciPerClient.get(u.client_id) ?? [];
+      d.push(u);
+      kullaniciPerClient.set(u.client_id, d);
+    }
+
     const kisiler = await Promise.all(
-      ((kullanicilar ?? []) as Array<Record<string, unknown>>).map(async (u) => {
-        const id = String(u.id);
+      ((sirketler ?? []) as Array<Record<string, unknown>>).map(async (s) => {
+        const id = String(s.id);
         const butce = await butceDurumu(id, {
-          aylik: (u.monthly_budget as number | null) ?? null,
-          gunluk: (u.daily_budget as number | null) ?? null
+          aylik: (s.monthly_budget as number | null) ?? null,
+          gunluk: (s.daily_budget as number | null) ?? null
         });
         return {
-          ...u,
-          anahtarlar: anahtarPerKisi.get(id) ?? [],
+          ...s,
+          email: s.name, // To mimic user structure for frontend
+          role: 'team',
+          created_at: s.created_at || new Date().toISOString(), // Fallback
+          anahtarlar: anahtarPerClient.get(id) ?? [],
           kullanim: kisiToplam.get(id) ?? bos(),
-          butce
+          butce,
+          calisanlar: kullaniciPerClient.get(id) ?? []
         };
       })
     );
 
-    // Sahibi olmayan anahtarlar: ortak servis anahtarları. Kimsenin kendi
-    // kullanımı sayılmıyor ama şirket toplamına giriyor, o yüzden ayrı
-    // gösteriliyor.
-    const ortakAnahtarlar = ((anahtarlar ?? []) as Array<{ user_id: string | null }>)
-      .filter((a) => !a.user_id);
-
-    const sirketSatir = (sirketler ?? [])[0] as Record<string, unknown> | undefined;
-    const sirketButce = sirketSatir
-      ? await butceDurumu(String(sirketSatir.id), {
-          aylik: (sirketSatir.monthly_budget as number | null) ?? null,
-          gunluk: (sirketSatir.daily_budget as number | null) ?? null
-        }, 'sirket')
-      : null;
+    const ortakAnahtarlar = ((anahtarlar ?? []) as Array<{ client_id: string | null }>).filter((a) => !a.client_id);
 
     return c.json({
       kisiler,
-      sirket: sirketSatir ? { ...sirketSatir, butce: sirketButce } : null,
+      sirket: null, // Since we are showing teams, we don't need a top-level single company
       ortak: { anahtarlar: ortakAnahtarlar, kullanim: ortakToplam }
     });
   });
 }
+

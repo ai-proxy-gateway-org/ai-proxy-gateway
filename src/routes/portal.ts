@@ -1005,7 +1005,7 @@ ${YAZI_TIPI}
     // kapatmazdı, çerez bir sonraki açılışta yine geçerli olurdu.
     try { await fetch('/portal/api/session', { method: 'DELETE' }); } catch (e) {}
     anahtar = null; hesap = null; anahtarYaz(null);
-    $('anahtar').value = ''; $('sifre').value = ''; $('ozet').innerHTML = '';
+    $('anahtar').value = ''; $('sifre').value = ''; $('icerik').innerHTML = '';
     $('uygulama').classList.add('gizli'); $('girisEkran').classList.remove('gizli');
   });
   $('filtre').addEventListener('click', e => {

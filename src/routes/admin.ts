@@ -392,17 +392,17 @@ ${YAZI_TIPI}
       <div class="yukleniyor gizli" id="yukleniyor">Loading...</div>
 
       <section data-bolum="ozet">
-        <div class="kart kartUyari gizli" id="oTalep" style="margin-bottom:1.25rem"></div>
+        <div class="kart kartUyari ozetBanner gizli" id="oTalep"></div>
 
-        <div style="display:flex;justify-content:flex-end;margin-bottom:.6rem">
+        <div class="ozetUst">
           <button class="dugme cerceveli" id="oYenile">Refresh</button>
         </div>
-        <div class="metrikkart" id="oOzet" style="margin-bottom:1.25rem"></div>
+        <div class="metrikkart ozetMetrikler" id="oOzet"></div>
 
-        <div class="kart" style="margin-bottom:1.25rem">
+        <div class="kart ozetGrafikKart">
           <div class="grafikUst">
             <div class="grafikbaslik" id="oGrafikBaslik">Daily spend</div>
-            <div style="display:flex;align-items:center;gap:.85rem;flex-wrap:wrap">
+            <div class="grafikSagGrup">
               <div class="grafikOkuma" id="oGrafikOkuma"></div>
               <div class="segment" id="oFiltre">
                 <button data-gun="7">7 days</button>
@@ -416,7 +416,7 @@ ${YAZI_TIPI}
 
         <div class="ikiSutun">
           <div>
-            <div class="satirbasi" style="margin-top:0">
+            <div class="satirbasi">
               <div class="baslikkucuk">Top customers</div>
               <div class="sayac" id="oMusteriSayac"></div>
             </div>
@@ -425,7 +425,7 @@ ${YAZI_TIPI}
             </div>
           </div>
           <div>
-            <div class="satirbasi" style="margin-top:0">
+            <div class="satirbasi">
               <div class="baslikkucuk">Model usage</div>
               <div class="sayac" id="oModelSayac"></div>
             </div>

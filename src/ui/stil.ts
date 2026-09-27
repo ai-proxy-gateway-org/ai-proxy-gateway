@@ -18,6 +18,10 @@ export const STIL = `
     --golge:0 1px 2px rgba(16,18,22,.05), 0 0 0 1px rgba(16,18,22,.04);
     --satirHover:#fafafb; --menuSecili:#e9eaed;
     --menu:238px;
+    /* Aralık ölçeği: tüm sayfada tek bir kaynaktan gelsin diye — dashboard
+       düzenlemesinden başlanarak dağınık satır-içi (inline) stiller yerine
+       buradan besleniyor. */
+    --sp-1:.4rem; --sp-2:.65rem; --sp-3:1rem; --sp-4:1.5rem; --sp-5:2rem; --sp-6:2.75rem;
     color-scheme:light;
   }
 
@@ -105,7 +109,7 @@ export const STIL = `
   .ustCubuk { background:var(--surface); border-bottom:1px solid var(--line);
               padding:1.25rem 2.5rem; display:flex; justify-content:space-between;
               align-items:center; gap:1rem; flex-wrap:wrap; position:sticky; top:0; z-index:5; }
-  .ustCubuk h1 { font-size:1.3rem; font-weight:700; margin:0; letter-spacing:-.02em; }
+  .ustCubuk h1 { font-size:1.45rem; font-weight:700; margin:0; letter-spacing:-.025em; }
   .ustCubuk .altbilgi { font-size:.82rem; color:var(--ink-3); margin-top:.1rem; }
   .govde { padding:2.25rem 2.5rem 5rem; max-width:78rem; }
 
@@ -128,11 +132,17 @@ export const STIL = `
 
   .kart { background:var(--surface); border-radius:16px; padding:1.9rem 2.15rem;
           box-shadow:var(--golge); }
-  .baslikkucuk { font-size:1.05rem; font-weight:700; margin:0; letter-spacing:-.01em; }
+  .baslikkucuk { font-size:1.08rem; font-weight:700; margin:0; letter-spacing:-.015em; }
   .yardim { font-size:.88rem; color:var(--ink-3); }
   .satirbasi { display:flex; justify-content:space-between; align-items:center;
-               gap:1rem; flex-wrap:wrap; margin:2.25rem 0 1rem; }
+               gap:1rem; flex-wrap:wrap; margin:var(--sp-5) 0 var(--sp-3); }
   .satirbasi:first-child { margin-top:0; }
+
+  /* Dashboard'un kendi düzen sınıfları — satır-içi (inline) stiller yerine.
+     Aralıklar --sp ölçeğinden geliyor ki tüm sekme tek bir ritimle aksın. */
+  .ozetBanner { margin-bottom:var(--sp-4); }
+  .ozetUst { display:flex; justify-content:flex-end; margin-bottom:var(--sp-2); }
+  .ozetGrafikKart, .ozetMetrikler { margin-bottom:var(--sp-4); }
 
   .metrikkart { display:grid; grid-template-columns:repeat(4,1fr); gap:.85rem; }
   @media (max-width:1180px) { .metrikkart { grid-template-columns:repeat(2,1fr); } }
@@ -165,6 +175,7 @@ export const STIL = `
 
   .grafikUst { display:flex; justify-content:space-between; align-items:baseline;
                gap:1rem; flex-wrap:wrap; margin-bottom:1.4rem; }
+  .grafikSagGrup { display:flex; align-items:center; gap:.85rem; flex-wrap:wrap; }
   .grafikbaslik { font-size:.9rem; color:var(--ink-2); }
   .grafikOkuma { font-size:.85rem; color:var(--ink-3); }
   .grafikOkuma b { color:var(--ink); font-weight:600; }

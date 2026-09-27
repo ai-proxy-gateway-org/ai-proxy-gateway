@@ -1,462 +1,495 @@
-# AI Proxy Gateway
+<p align="center">
+  <img src="https://img.shields.io/badge/runtime-Hono%20Edge-E36002?style=for-the-badge&logo=hono&logoColor=white" alt="Hono" />
+  <img src="https://img.shields.io/badge/deploy-Vercel%20Edge-000000?style=for-the-badge&logo=vercel&logoColor=white" alt="Vercel" />
+  <img src="https://img.shields.io/badge/cache-Upstash%20Redis-00E9A3?style=for-the-badge&logo=upstash&logoColor=white" alt="Upstash" />
+  <img src="https://img.shields.io/badge/database-Supabase-3FCF8E?style=for-the-badge&logo=supabase&logoColor=white" alt="Supabase" />
+  <img src="https://img.shields.io/badge/orm-Drizzle-C5F74F?style=for-the-badge&logo=drizzle&logoColor=black" alt="Drizzle" />
+  <img src="https://img.shields.io/badge/language-TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript" />
+</p>
 
-Şirketin yapay zeka sağlayıcı anahtarlarını istemcilerle paylaşmadan, tek bir kapıdan
-güvenli erişim sağlayan proxy servisi. İstemciler (Client) kendi proxy anahtarlarıyla
-bu servise istek gönderir; servis güvenlik kontrollerini yapıp isteği ilgili sağlayıcıya
-şirketin gerçek anahtarıyla iletir, yanıtı olduğu gibi geri akıtır ve kullanımı kaydeder.
+# 🚀 AI Proxy Gateway
 
-**Bu dosyanın kapsamı:** sistemin mimarisi, veri akışı, alınan tasarım kararları ve
-gerekçeleri, güvenlik katmanları, yerel geliştirme talimatları ve **henüz tamamlanmamış
-kısımların dürüst listesi**.
+**A blazing-fast, production-ready AI API Gateway built on edge infrastructure.**
 
----
-
-## 1. Teknoloji seçimleri
-
-| Katman | Seçim | Gerekçe |
-|---|---|---|
-| Dil / çalışma ortamı | TypeScript + Node.js | Ekip yetkinliği; `fetch` ve `ReadableStream` gibi akış API'leri yerleşik |
-| HTTP çatısı | Fastify 5 | Düşük overhead — proxy'de her milisaniye isteğe eklenir. `reply.raw` ile ham akış kontrolü sağlıyor |
-| Kalıcı veri | PostgreSQL (Supabase) | `clients`, `client_keys`, `logs` tabloları |
-| Geçici bellek | Redis (Upstash) | Rate limit sayaçları — `INCR` + `TTL` |
-| Dağıtım | Vercel Serverless Functions | Kullanıcıya yakın uçta çalıştırma, ölçeklenme yönetimi gerektirmiyor |
+Route requests across OpenAI, Anthropic, and Google Gemini through a single, unified endpoint — with built-in authentication, rate limiting, cost tracking, session summarization, and a full admin console. Designed to run on **Vercel Edge Functions** with zero cold-start overhead.
 
 ---
 
-## 2. Mimari
+## ✨ Features
 
-```
-                     ┌──────────────────────────────────────────┐
-   Client ─────────► │  routes/  (Provider Adapter katmanı)     │
-   sk-proxy-...      │  openai.ts · anthropic.ts · gemini.ts    │
-                     └───────────────┬──────────────────────────┘
-                                     │
-                     ┌───────────────▼──────────────────────────┐
-                     │  core/security.ts                        │
-                     │  kimlik → domain → hız limiti            │
-                     └───────────────┬──────────────────────────┘
-                                     │
-                     ┌───────────────▼──────────────────────────┐
-                     │  core/modelAuthorization.ts              │
-                     │  katalog + client yetkisi                │
-                     └───────────────┬──────────────────────────┘
-                                     │
-                     ┌───────────────▼──────────────────────────┐
-                     │  core/proxyForward.ts  (Common Core)     │
-                     │  iletim · akış · ölçüm                   │
-                     └──────┬─────────────────────┬─────────────┘
-                            │                     │
-             ┌──────────────▼───────┐   ┌─────────▼─────────────┐
-             │ core/providerConfig  │   │ core/logCapture       │
-             │ hedef adres + gerçek │   │ log servisine açılan  │
-             │ API anahtarı         │   │ seam                  │
-             └──────────┬───────────┘   └─────────┬─────────────┘
-                        │                         │
-                   AI sağlayıcı            logs tablosu (+ cost)
-```
-
-### Dosya sorumlulukları
-
-| Dosya | Görevi |
-|---|---|
-| `src/app.ts` | Fastify örneğini kurar, route'ları kaydeder, `/health` uç noktası |
-| `src/server.ts` | Yerel geliştirme sunucusu (port 3000) |
-| `api/index.ts` | Vercel giriş noktası — aynı uygulamayı serverless fonksiyon olarak sarar |
-| `src/routes/*.ts` | Provider Adapter'lar: sağlayıcıya özgü yol ve model konumu |
-| `src/core/security.ts` | Güvenlik zinciri; B tarafının middleware'lerine açılan seam |
-| `src/core/modelAuthorization.ts` | İki katmanlı model erişim kontrolü |
-| `src/core/modelCatalog.ts` | Tanınan modelleri `model_pricing.json`'dan okur |
-| `src/core/proxyForward.ts` | Sağlayıcıya iletim, SSE akışı, token/süre/başarı ölçümü |
-| `src/core/providerConfig.ts` | Hedef adres ve gerçek API anahtarı başlıkları |
-| `src/core/logCapture.ts` | Log servisine açılan seam (iki fazlı) |
-| `src/core/localOrigins.ts` | `localhost` / `127.0.0.1` tanıma, porttan bağımsız |
-| `mock-server/` | Gerçek anahtar olmadan test için sahte sağlayıcı |
+| Category | Feature | Description |
+|----------|---------|-------------|
+| 🔀 **Routing** | Unified Endpoint | Single `POST /v1/chat/completions` routes to OpenAI, Anthropic, or Gemini based on model name |
+| 🔐 **Security** | API Key Management | Issue `sk-proxy-*` keys per client. Keys are SHA-256 hashed — never stored in plaintext |
+| 🔐 **Security** | Vault Integration | Provider secrets stored in a centralized Vault server, never exposed to edge functions |
+| 🔐 **Security** | One-Time Key Delivery | Generated keys are delivered via AES-256-GCM encrypted single-use links |
+| ⚡ **Performance** | SWR Caching | Stale-While-Revalidate pattern for Vault keys — 0 ms latency overhead on cache hits |
+| ⚡ **Performance** | Edge-Native | Runs on Vercel Edge worldwide. 17,750+ req/sec throughput benchmarked |
+| 🛡️ **Protection** | Rate Limiting | Redis-based fixed-window rate limiter with fail-open fault tolerance |
+| 💰 **Cost Control** | Token & Cost Tracking | Every request logged with input/output tokens, latency, and calculated USD cost |
+| 💰 **Cost Control** | Budget Limits | Set daily and monthly spending caps per client |
+| 💰 **Cost Control** | Dynamic Pricing | Auto-syncs model prices from OpenRouter. Price drops adopted automatically |
+| 📊 **Analytics** | Admin Console | Full-featured web dashboard — clients, requests, models, pricing, budgets |
+| 📊 **Analytics** | Customer Portal | Self-service portal where clients view their own usage, costs, and API keys |
+| 🧠 **AI Insights** | Session Summarization | Groups conversations into 15-min sessions and generates AI summaries via `gpt-4o-mini` |
+| 🌍 **Flexibility** | Multi-Provider | OpenAI, Anthropic, and Google Gemini supported out of the box |
+| 🌍 **Flexibility** | Vault Fallback | No Vault server? Falls back to `.env` provider keys for easy local development |
 
 ---
 
-## 3. Veri akışı
-
-Bir isteğin baştan sona yolculuğu ve her adımda dönebilecek yanıtlar:
+## 🏗️ Architecture
 
 ```
-1. Client isteği gelir
-   Authorization: Bearer sk-proxy-...
-   Origin: https://app.company.com
-        │
-2. Kimlik doğrulama (verifyClient)
-   Anahtar SHA-256'lanıp client_keys tablosuyla karşılaştırılır
-   ✗ 401  anahtar biçimi geçersiz / kayıtlı değil
-   ✗ 403  client veya anahtar devre dışı
-        │
-3. Domain kontrolü (checkDomainWhitelist)
-   Yalnızca browser-based client'lara uygulanır; server-based atlanır
-   localhost / 127.0.0.1 porttan bağımsız kabul edilir
-   ✗ 403  yetkisiz domain
-        │
-4. Hız limiti (checkRateLimit)
-   Redis INCR + TTL, client başına pencere sayacı
-   ✗ 429  limit aşıldı
-        │
-5. Model yetkilendirme (authorizeModel)
-   ✗ 400  model belirtilmemiş / katalogda yok
-   ✗ 403  bu client bu modeli kullanamaz
-        │
-6. pending log kaydı açılır (await edilmez)
-        │
-7. Sağlayıcıya iletim (proxyForward)
-   Gerçek API anahtarı başlığı eklenir, gövde olduğu gibi geçirilir
-   ✗ 502  sağlayıcıya ulaşılamadı
-   ✗ 4xx/5xx  sağlayıcının kodu ve gövdesi aynen aktarılır
-        │
-8. Yanıt Client'a döner
-   Normal: gövde ham metin olarak geçirilir
-   Stream: SSE parçaları ham byte olarak akıtılır
-        │
-9. Log tamamlanır (await edilmez)
-   input/output token · latency · success/error → cost hesaplanır
+┌─────────────────────────────────────────────────────────────────┐
+│                        Client Application                       │
+│                   (sends sk-proxy-* API key)                    │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │  POST /v1/chat/completions
+                           ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                     AI Proxy Gateway (Hono)                      │
+│  ┌──────────┐  ┌───────────────┐  ┌──────────────────────────┐  │
+│  │   Auth   │→ │  Rate Limit   │→ │   Provider Router        │  │
+│  │Middleware │  │  (Redis)      │  │  claude* → Anthropic     │  │
+│  │(Supabase)│  │  60 req/min   │  │  gemini* → Google        │  │
+│  └──────────┘  └───────────────┘  │  default → OpenAI        │  │
+│                                    └────────────┬─────────────┘  │
+│  ┌──────────────────┐  ┌────────────────────┐   │               │
+│  │  Session Tracker  │  │   Cost Calculator  │   │               │
+│  │  (Redis, 15-min)  │  │  (model_catalog)   │   │               │
+│  └──────────────────┘  └────────────────────┘   │               │
+└─────────────────────────────────────────────────┼───────────────┘
+                           │                      │
+              ┌────────────┘                      │
+              ▼                                   ▼
+┌──────────────────────┐          ┌──────────────────────────────┐
+│   Vault Server       │          │   AI Provider APIs           │
+│   (Secret Storage)   │          │   • api.openai.com           │
+│   SWR-cached in      │          │   • api.anthropic.com        │
+│   Redis (5 min)      │          │   • generativelanguage.      │
+└──────────────────────┘          │     googleapis.com           │
+                                  └──────────────────────────────┘
 ```
-
-Kritik nokta: **6 ve 9 asla ana yanıtı bekletmez.** Log yazımı `void` ile başlatılır,
-hata verse bile isteği etkilemez. wf-ortak §5'in "non-blocking" şartı bu şekilde karşılanır.
 
 ---
 
-## 4. Uç nokta yapısı ve neden pass-through
+## 📦 Supported Models
 
-İstekler ortak bir formata **çevrilmez**. Client, sağlayıcının kendi gövde formatını
-kullanır ve proxy yalnızca güvenlik + kayıt katmanı ekler.
+### OpenAI
+`gpt-4o` · `gpt-4o-mini` · `o1-preview` · `o1-mini` · `o3-mini`
 
-```
-POST /v1/openai/chat/completions     →  {base}/v1/chat/completions
-POST /v1/anthropic/messages          →  {base}/v1/messages
-POST /v1/gemini/models/{model}       →  {base}/v1beta/models/{model}:generateContent
-                                        (stream ise :streamGenerateContent?alt=sse)
-```
+### Anthropic
+`claude-sonnet-5` · `claude-opus-5` · `claude-haiku-4-5-20251001` · `claude-sonnet-4-20250514` · `claude-3-5-sonnet-latest` · `claude-3-opus-20240229`
 
-**Neden ortak format değil:** Sağlayıcılar yeni alan ve yetenek eklediğinde (araç
-kullanımı, görsel girdi, düşünme blokları) ortak formatın da güncellenmesi gerekir.
-Pass-through ile proxy bu değişikliklerden etkilenmez; client sağlayıcının resmi
-SDK'sını `baseURL` değiştirerek kullanabilir.
+### Google Gemini
+`gemini-3.6-flash` · `gemini-2.5-flash` · `gemini-2.0-flash` · `gemini-1.5-pro` · `gemini-1.5-flash`
 
-**Neden her sağlayıcı için tek uç, catch-all değil:** wf-rol örneklerinde `/v1/openai/*`
-yazıyor, ancak sağlayıcının tüm uç nokta alanını körü körüne açmak ciddi bir açık
-oluşturur — client OpenAI'nin dosya yönetimi, fine-tuning veya organizasyon ayarları
-uçlarına erişebilirdi. Bu, wf-ortak §4'ün model erişiminde yasakladığı wildcard
-mantığının aynısıdır. Bu yüzden **açık uç nokta listesi** tercih edildi; yeni uç
-ihtiyaç oldukça bilinçli olarak eklenir.
-
-**Tek istisna — Gemini:** Gövdedeki `stream` alanı ayıklanır. Gerçek Gemini API'sinde
-böyle bir alan yok; akış ayrı bir uç nokta (`:streamGenerateContent`) ile ifade edilir.
-Alan olduğu gibi iletilse sağlayıcı bilinmeyen alan diye reddederdi.
+> **Note:** Model pricing is dynamically fetched from a database catalog. The static `model_pricing.json` serves as an automatic fallback. New models can be added from the Admin Console without code changes.
 
 ---
 
-## 5. Güvenlik önlemleri
+## 🚀 Quick Start
 
-**Sağlayıcı anahtarları asla client'a ulaşmaz.** Anahtarlar yalnızca sunucu tarafında,
-ortam değişkenlerinden okunur ve isteğe `providerConfig.ts` içinde eklenir:
+### Prerequisites
 
-| Sağlayıcı | Başlık |
-|---|---|
-| OpenAI | `Authorization: Bearer <key>` |
-| Anthropic | `x-api-key: <key>` + `anthropic-version` |
-| Gemini | `x-goog-api-key: <key>` |
+- [Node.js](https://nodejs.org/) v20+
+- A [Supabase](https://supabase.com/) project (free tier works)
+- An [Upstash Redis](https://upstash.com/) database (free tier works)
+- At least one AI provider API key (OpenAI, Anthropic, or Gemini)
 
-**Client anahtarları düz metin saklanmaz.** `sk-proxy-<random>` biçiminde üretilir,
-veritabanında SHA-256 özeti tutulur.
-
-**Client başına bağımsız kontroller:** hangi sağlayıcılar, hangi modeller, hangi
-domainler, hangi hız limitleri — ve gerektiğinde tüm erişimin kapatılması (`is_active`).
-
-**Hata gövdeleri sızdırılmaz.** Sağlayıcıya ulaşılamadığında client'a genel bir mesaj
-döner; ayrıntı yalnızca log tarafına yazılır.
-
-**İstemci bağlantısı kesilirse sağlayıcıdan veri çekme durur** (`reader.cancel()`).
-Bu bir güvenlik değil maliyet önlemi: kopmuş bir istek için sağlayıcıya ödeme yapılmaz.
-
----
-
-## 6. Streaming (SSE)
-
-Uzun yanıtlar bekletilmez; sağlayıcının akışı parça parça client'a geçirilir. Bu
-katmanda alınmış dört karar ve gerekçeleri:
-
-**`reply.hijack()` kullanılıyor.** Akış `reply.raw` üzerinden doğrudan yazıldığı için
-Fastify'ın yanıtı yönetmesi devre dışı bırakılır. Bu olmadan, akış başladıktan sonra
-oluşan bir hata Fastify'ı başlıkları yeniden yazmaya zorluyor ve `ERR_HTTP_HEADERS_SENT`
-yakalanmamış istisnasıyla **tüm Node süreci çöküyordu** — yani tek bir kopan bağlantı
-o an bağlı bütün client'ları düşürüyordu.
-
-**Client'a ham byte yazılıyor** (`reply.raw.write(value)`), decode edilmiş metin değil.
-Çok baytlı bir karakter chunk sınırına denk geldiğinde parça parça decode etmek onu
-bozuyordu (`ş` → `��`). Ayrıca gereksiz bir decode/encode turu da kalkmış oluyor.
-
-**Token okumak için ayrı bir decode var** ve `{ stream: true }` ile yapılıyor; yarım
-kalan bayt bir sonraki parçaya taşınır.
-
-**SSE satır tamponu tutuluyor.** `data:` satırları chunk sınırında bölünebiliyor.
-Kullanım (`usage`) bilgisi genelde son parçada geldiği için, tampon olmadan token
-sayıları kaybolabiliyordu.
-
-**Sağlayıcı hatası akışa karıştırılmaz.** SSE başlıkları yazılmadan önce
-`response.ok` kontrol edilir; hata varsa normal JSON yanıtı ve doğru durum kodu döner.
-
----
-
-## 7. Loglama ve maliyet
-
-Kayıt iki fazlı çalışır (wf-ortak §5):
-
-```
-İstek başlar   →  logRequestStart(clientId, provider, model)     →  status: 'pending'
-Yanıt biter    →  logRequestComplete(logId, ..., isSuccess)      →  status: 'success' | 'error'
-                                                                     + cost hesaplanır
-```
-
-**İş bölümü:** Token sayılarını, gecikmeyi ve başarı durumunu yakalamak A tarafının
-işi; `pending` kaydını açmak, `model_pricing.json` üzerinden maliyeti hesaplamak ve
-kaydı güncellemek B tarafının işi.
-
-Token alanları sağlayıcıya ve moda göre farklı yerlerde bulunur:
-
-| Sağlayıcı | Girdi | Çıktı |
-|---|---|---|
-| OpenAI | `usage.prompt_tokens` | `usage.completion_tokens` |
-| Gemini | `usageMetadata.promptTokenCount` | `usageMetadata.candidatesTokenCount` |
-| Anthropic (normal) | `usage.input_tokens` | `usage.output_tokens` |
-| Anthropic (stream) | `message_start` → `message.usage.input_tokens` | `message_delta` → `usage.output_tokens` |
-
-Not: OpenAI akışında `usage` yalnızca istekte `stream_options: { include_usage: true }`
-gönderildiyse gelir.
-
-**Maliyet formülü** (`provider/model` anahtarıyla):
-```
-cost = (inputTokens / 1000) × fiyat.input + (outputTokens / 1000) × fiyat.output
-```
-
-Gerçek ölçüm — Supabase `logs` tablosundan:
-
-```
-provider   model                in  out  cost        latency  status
-openai     gpt-4o               10   15  $0.000275   12ms     success
-anthropic  claude-3-5-sonnet     9   14  $0.000237   1096ms   success
-```
-
-**Sağlayıcı adı bilerek `anthropic`,** `claude` değil. Maliyet anahtarı
-`${provider}/${model}` biçiminde kurulduğu ve fiyat dosyası `anthropic/...` ile
-başladığı için, `claude` gönderildiğinde eşleşme olmuyor ve maliyet **sessizce $0**
-hesaplanıyordu.
-
----
-
-## 8. Model yetkilendirme — neden iki katman
-
-```
-1. KATALOG   Bu model sistemde tanımlı mı?     kaynak: model_pricing.json
-2. YETKİ     Bu client bu modeli kullanabilir mi?   kaynak: client kaydı
-```
-
-İkisinin ayrı olması bir tercih değil, zorunluluk: katalogdaki her modeli herkese
-açmak fiilen wildcard erişim olurdu ve wf-ortak §4 bunu açıkça yasaklıyor
-("wildcard (`*`) erişimi kullanılmaz; böylece yeni ve pahalı modellere kontrolsüz
-erişim engellenir"). Fiyat dosyasına yeni bir model eklendiğinde tüm client'lar ona
-erişemez; erişim ayrıca tanımlanmalıdır.
-
-Katalog katmanının yan faydası: fiyatı olmayan bir model sisteme hiç giremez, dolayısıyla
-maliyeti $0 olarak kaydedilen "görünmez" kullanım oluşmaz.
-
----
-
-## 9. Yerel geliştirme
+### 1. Clone & Install
 
 ```bash
+git clone https://github.com/ai-proxy-gateway-org/ai-proxy-gateway.git
+cd ai-proxy-gateway
 npm install
-
-# 1. terminal — sahte sağlayıcı (gerçek API anahtarı gerekmez)
-npm run mock          # http://localhost:4000
-
-# 2. terminal — proxy
-npm run dev           # http://localhost:3000
 ```
 
-Ortam değişkenleri `.env` dosyasına yazılır (`.gitignore` ile korunur):
+### 2. Configure Environment
 
-```
-SUPABASE_URL=            SUPABASE_SERVICE_KEY=
-UPSTASH_REDIS_REST_URL=  UPSTASH_REDIS_REST_TOKEN=
-OPENAI_API_KEY=          ANTHROPIC_API_KEY=        GEMINI_API_KEY=
-OPENAI_BASE_URL=         ANTHROPIC_BASE_URL=       GEMINI_BASE_URL=
+```bash
+cp .env.example .env
 ```
 
-`*_BASE_URL` boş bırakılırsa istekler mock sunucuya gider. Böylece gerçek anahtar
-olmadan tüm akış test edilebilir.
+Open `.env` and fill in the required values:
 
-### Test client'ı ve anahtarı oluşturma
+```env
+# --- Database ---
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_KEY=eyJhbGciOi...
+DATABASE_URL=postgresql://postgres.xxx:password@aws-1-eu-west-1.pooler.supabase.com:6543/postgres
 
-Kimlik doğrulama gerçek veritabanına karşı çalıştığı için, isteklerde `client_keys`
-tablosunda karşılığı bulunan bir anahtar gerekir. Yeni bir client ve anahtar üretmek için
-`createNewClient(name, environment)` çağrılır; ürettiği `sk-proxy-...` anahtarı yalnızca
-o an gösterilir (veritabanında SHA-256 özeti saklanır).
+# --- Cache & Rate Limiting ---
+UPSTASH_REDIS_REST_URL=https://your-redis.upstash.io
+UPSTASH_REDIS_REST_TOKEN=AQ...
 
-Client'ın hangi modelleri kullanabileceği `clients.allowed_models` kolonunda tanımlanır:
+# --- Admin Panel ---
+ADMIN_TOKEN=your-long-random-secret-token
+SESSION_SECRET=another-random-secret
+
+# --- AI Provider Keys (for Vault-less local development) ---
+OPENAI_API_KEY=sk-proj-...
+ANTHROPIC_API_KEY=sk-ant-...
+GEMINI_API_KEY=AI...
+
+# --- Optional ---
+ENABLE_PORTAL=true
+```
+
+### 3. Set Up Database
+
+Run the following SQL in your Supabase SQL Editor to create the required tables:
 
 ```sql
-update clients
-set allowed_models = array['openai/gpt-4o', 'anthropic/claude-3-5-sonnet'],
-    client_type    = 'browser-based',
-    allowed_domains = array['company.com']
-where name = 'Test - Ayselin';
+-- Clients
+CREATE TABLE IF NOT EXISTS clients (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  name varchar(255) NOT NULL,
+  client_type varchar(50) DEFAULT 'server-based',
+  allowed_domains jsonb DEFAULT '[]',
+  allowed_models jsonb DEFAULT '[]',
+  is_active boolean DEFAULT true,
+  summary_enabled boolean DEFAULT false
+);
+
+-- API Keys
+CREATE TABLE IF NOT EXISTS client_keys (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  client_id uuid REFERENCES clients(id),
+  key_hash varchar(255) UNIQUE NOT NULL,
+  key_prefix varchar(20),
+  label varchar(255),
+  environment varchar(50) DEFAULT 'production',
+  is_active boolean DEFAULT true,
+  created_at timestamp DEFAULT now()
+);
+
+-- Request Logs
+CREATE TABLE IF NOT EXISTS logs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  client_id uuid,
+  provider varchar(50),
+  model varchar(100),
+  status varchar(50) DEFAULT 'pending',
+  error_message text,
+  prompt text,
+  response text,
+  input_tokens integer,
+  output_tokens integer,
+  cost double precision,
+  latency_ms integer,
+  session_id uuid,
+  completed_at timestamp,
+  created_at timestamp DEFAULT now()
+);
+
+-- Sessions (for AI summarization)
+CREATE TABLE IF NOT EXISTS sessions (
+  id uuid PRIMARY KEY,
+  client_id uuid REFERENCES clients(id),
+  started_at timestamp DEFAULT now(),
+  ended_at timestamp,
+  message_count integer DEFAULT 0,
+  summary text,
+  summary_tokens integer,
+  summary_cost double precision
+);
 ```
 
-Anahtarı `.env` dosyasına yazıp örneklerde kullanabilirsiniz:
-
-```
-TEST_PROXY_KEY=sk-proxy-...
-```
-
-### Örnek istekler
+### 4. Start Development Server
 
 ```bash
-# Normal istek
-curl -X POST http://localhost:3000/v1/openai/chat/completions \
-  -H 'content-type: application/json' \
-  -H "authorization: Bearer $TEST_PROXY_KEY" \
-  -H 'origin: http://localhost:5173' \
-  -d '{"model":"gpt-4o","messages":[{"role":"user","content":"selam"}]}'
-
-# Streaming
-curl -N -X POST http://localhost:3000/v1/anthropic/messages \
-  -H 'content-type: application/json' \
-  -H "authorization: Bearer $TEST_PROXY_KEY" \
-  -H 'origin: http://localhost:5173' \
-  -d '{"model":"claude-3-5-sonnet","stream":true,"messages":[{"role":"user","content":"selam"}]}'
-
-# Gemini
-curl -X POST http://localhost:3000/v1/gemini/models/gemini-1.5-pro \
-  -H 'content-type: application/json' \
-  -H "authorization: Bearer $TEST_PROXY_KEY" \
-  -H 'origin: http://localhost:5173' \
-  -d '{"contents":[{"role":"user","parts":[{"text":"selam"}]}]}'
+npm run dev
 ```
 
-### Hata senaryolarını test etmek
+The gateway will be available at `http://127.0.0.1:3000`.
 
-Mock sunucu, mutlu yol dışındaki durumları da üretebilir. Gövdeye `_mock` alanı eklenir:
-
-| Değer | Simüle ettiği durum | Beklenen davranış |
-|---|---|---|
-| `rate_limit` | Sağlayıcı 429 döndürür | Proxy 429 ve gövdeyi aynen aktarır |
-| `html_error` | Sağlayıcı JSON değil HTML döndürür | Proxy 502 ve gövdeyi aynen aktarır, çökmez |
-| `stream_abort` | Akış ortasında bağlantı kopar | Sunucu ayakta kalır, kısmi veri teslim edilir |
-| `utf8_split` | Türkçe karakter chunk sınırında bölünür | Metin bozulmadan geçer |
+### 5. Create Your First API Key
 
 ```bash
-curl -N -X POST http://localhost:3000/v1/anthropic/messages \
-  -H 'content-type: application/json' \
-  -H "authorization: Bearer $TEST_PROXY_KEY" \
-  -H 'origin: http://localhost:5173' \
-  -d '{"model":"claude-3-5-sonnet","stream":true,"_mock":"utf8_split","messages":[]}'
+# Open the Admin Console in your browser
+open http://127.0.0.1:3000/admin
+
+# Or use the test script
+npx tsx --env-file=.env src/test.ts
+```
+
+### 6. Send Your First Request
+
+```bash
+curl -X POST http://127.0.0.1:3000/v1/chat/completions \
+  -H "Authorization: Bearer sk-proxy-your-key-here" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-4o",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'
+```
+
+**Switch providers instantly** — just change the model name:
+
+```bash
+# Anthropic
+-d '{"model": "claude-sonnet-5", "messages": [...]}'
+
+# Google Gemini
+-d '{"model": "gemini-3.6-flash", "messages": [...]}'
 ```
 
 ---
 
-## 10. Bileşenlerin gerçeklik durumu
+## 🔒 Vault Server (Recommended for Production)
 
-Sistemin tamamı gerçek servislere bağlıdır; aşağıdaki tablo hangi verinin nereden
-geldiğini gösterir.
+For production deployments, provider API keys should be stored in a dedicated Vault server rather than environment variables. The gateway connects to the Vault over HTTPS and caches keys in Redis using a **Stale-While-Revalidate (SWR)** strategy:
 
-| Bileşen | Kaynak |
-|---|---|
-| Kimlik doğrulama | `client_keys` tablosu — anahtar SHA-256'lanıp karşılaştırılır |
-| Domain kontrolü | `clients.client_type` + `clients.allowed_domains` |
-| Hız limiti | Upstash Redis — `INCR` + `TTL` |
-| Model yetkilendirme | `clients.allowed_models` (biçim: `provider/model`) |
-| Model kataloğu | `model_pricing.json` |
-| Loglama + maliyet | `logs` tablosu — `cost` ve `error_message` dahil |
+- **Fresh window:** 5 minutes — keys served instantly from Redis
+- **Hard expiry:** 2 hours — Redis evicts the key entirely
+- **Background refresh:** When a cached key becomes stale, the gateway serves it immediately while refreshing from the Vault asynchronously (zero latency penalty)
 
-**Geçici çözümler** — B tarafındaki düzeltmeler beklendiği için fazladan iş yapılıyor,
-davranış doğru ancak sadeleştirilebilir:
-
-| Konu | Şu anki çözüm | Beklenen düzeltme |
-|---|---|---|
-| `verifyClient` yalnızca `(id, name, is_active)` seçiyor | `client_type`, `allowed_domains`, `allowed_models` için ek bir sorgu yapılıyor | Select genişletilirse istek başına bir veritabanı turu azalır |
-| `logRequestComplete` hata metni almıyor | `logs.error_message` ayrı bir `update` ile yazılıyor | İmzaya `errorMessage` parametresi eklenmesi |
-| Client bazlı hız limiti yok | Tüm client'lar için sabit 60 istek/dakika | `clients` tablosuna dakika/saat/gün limit kolonları |
-| Token limiti yok | Yalnızca istek sayısı sınırlanıyor | Harcanan token'ları biriktiren ikinci bir sayaç |
-
-**Henüz yapılmamış:** prompt kaydı (kolon yok, karar verilmedi) ve gerçek sağlayıcıya
-bağlantı (API anahtarı sağlanmadı; tüm testler sahte sağlayıcı üzerinden yapıldı).
-
-## 11. Seam yaklaşımı
-
-Proje iki geliştirici tarafından paralel yazıldığı için, karşı tarafın kodunu bekleyen
-noktalar **seam** olarak kuruldu: dışa verdikleri arayüz nihai haliyle aynı, içleri
-geçici. Birleşmede yalnızca ilgili dosyanın **içi** değişir; çağıran taraf hiç değişmez.
-
-Seam'ler: `logCapture.ts` (log servisi), `security.ts` (üç middleware),
-`modelAuthorization.ts` (yetki listesi kaynağı). Üçü de gerçek servislere bağlandı;
-bağlama işlemi çağıran tarafta (route'lar, `proxyForward.ts`) hiçbir değişiklik
-gerektirmedi — seam yaklaşımının amacı buydu.
-
-Uyumluluk merge beklenmeden doğrulandı: karşı tarafın imzaları `origin/main`'den
-çıkarılıp yerel bir vekil modüle yazıldı, çağrı noktaları ona bağlanıp derleme
-yapıldı — sıfır hata. Log servisi ayrıca gerçek veritabanına karşı uçtan uca test
-edildi (bkz. bölüm 7 ölçümleri).
-
----
-
-## 12. Rol dağılımı
-
-| Taraf | Sorumluluk | Dosyalar |
-|---|---|---|
-| **A** — Yönlendirme ve Akış | İsteklerin karşılanması, sağlayıcıya iletim, adaptörler, streaming, ölçüm | `app.ts`, `server.ts`, `api/`, `routes/`, `core/`, `mock-server/` |
-| **B** — Güvenlik, Veri, DevOps | Kimlik doğrulama, şemalar, maliyet hesabı, rate limiting, CI/CD | `middleware/`, `services/`, `utils/`, `model_pricing.json` |
-
----
-
-## 13. Canlı ortam doğrulaması
-
-Sistem gerçek Vercel altyapısında yayına alınıp test edildi. Gerçek sağlayıcı anahtarı
-bulunmadığı için, sahte sağlayıcı da ayrı bir Vercel projesi olarak yayınlandı; böylece
-zincirin tamamı canlı ortamda ölçüldü:
-
-```
-Client → proxy (Vercel) → sahte sağlayıcı (Vercel)
+```env
+VAULT_API_URL=https://your-vault-server.example.com
+VAULT_ACCESS_TOKEN=vault-secret-token
 ```
 
-**Ölçüm sonuçları:**
-
-| Test | Sonuç |
-|---|---|
-| `/health` | 200 |
-| Normal istek (3 sağlayıcı) | 200 — 0.50s / 0.67s / 1.42s |
-| Kimlik doğrulama (anahtar yok) | 401 |
-| Domain kontrolü (origin yok / yetkisiz domain) | 403 / 403 |
-| Model kontrolü (yetkisiz / eksik) | 400 / 400 |
-| **Anthropic streaming** | 10 parça, 1.04 s'ye yayılmış, ortalama 115 ms aralık |
-| **OpenAI streaming** | 9 parça, 1.04 s'ye yayılmış, ortalama 130 ms aralık |
-| **Gemini streaming** | 9 parça, 1.04 s'ye yayılmış, ortalama 130 ms aralık |
-| UTF-8 bütünlüğü (canlı zincir) | `şğü Türkçe` bozulmadan geçti |
-
-**Kritik bulgu:** Vercel serverless fonksiyonları SSE yanıtlarını **tamponlamıyor.**
-Parçaların 115-130 ms aralıklarla gelmesi, sahte sağlayıcının parçalar arasına koyduğu
-150 ms gecikmeyi yansıtıyor — yani akış uçtan uca gerçek zamanlı aktarılıyor. Bu, zincirde
-iki ayrı serverless fonksiyon bulunmasına rağmen geçerli.
-
-Bu doğrulama önemliydi çünkü `api/index.ts` içindeki desen (`app.server.emit('request', ...)`)
-handler'ın promise'ini yanıt tamamlanmadan çözüyor; Vercel'in fonksiyonu erken sonlandırıp
-akışı kesme riski vardı. Kesmiyor.
+> **No Vault? No problem.** If `VAULT_API_URL` is not set, the gateway falls back to reading `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and `GEMINI_API_KEY` directly from environment variables.
 
 ---
 
-## 14. Bilinen sınırlar
+## 🧠 Session Summarization
 
-- **Gerçek sağlayıcıya hiç bağlanılmadı.** Tüm testler mock sunucu üzerinden yapıldı.
-  Mock, sağlayıcıların gerçek yanıt şemalarına (usage alanlarının konumu dahil) uygun
-  yazıldı, ancak gerçek API'lerde farklılık çıkabilir.
-- **Birim test yok** (aşağıda ayrıca belirtilmiştir).
-- **Birim test yok.** Doğrulama, mock sunucu üzerinden uçtan uca HTTP testleriyle
-  yapıldı. CI ve birim testleri B tarafının kapsamında.
-- **Token sayıları `0` ile "bilinmiyor" ayrışmıyor.** Log servisinin imzası zorunlu
-  `number` beklediği için, sağlayıcı `usage` göndermediğinde `0` yazılıyor. Bu,
-  gerçekte harcanmış ama kaydedilmemiş kullanım anlamına gelebilir.
+The gateway can automatically group API interactions into sessions and generate AI-powered summaries.
+
+### How It Works
+
+1. **Session creation:** When a client sends a request with `X-Summarize: true` header (or has `summary_enabled` set in the database), a Redis session is created with a 15-minute sliding TTL.
+2. **Message accumulation:** Each request/response pair is buffered in Redis as the session progresses.
+3. **Summary generation:** When triggered (manually or on session expiry), all messages are summarized by `gpt-4o-mini` and permanently saved to PostgreSQL.
+
+### Session API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/v1/sessions/current` | Get the active session for the authenticated client |
+| `GET` | `/v1/sessions/:id/messages` | Retrieve all messages in a session |
+| `POST` | `/v1/sessions/:id/summarize` | Trigger AI summary generation |
+| `GET` | `/v1/sessions/history` | List all past summarized sessions |
+
+### Enable Summarization
+
+**Per-request** (header):
+```bash
+curl -X POST http://localhost:3000/v1/chat/completions \
+  -H "X-Summarize: true" \
+  -H "Authorization: Bearer sk-proxy-..." \
+  ...
+```
+
+**Per-client** (database): Set `summary_enabled = true` in the `clients` table.
+
+---
+
+## 📊 Admin Console & Customer Portal
+
+### Admin Console (`/admin`)
+
+A full-featured, zero-dependency web dashboard built into the gateway. No separate frontend build step required.
+
+- **Dashboard:** Real-time spending charts, request volume, error rates
+- **People:** Manage clients, issue API keys, set model permissions
+- **Models:** Configure supported models, manage pricing, toggle availability
+- **Requests:** Full audit log with prompt/response inspection
+- **Price Audit:** Automatic drift detection against OpenRouter & LiteLLM
+- **Administrators:** Multi-admin support with session-based authentication
+
+### Customer Portal (`/portal`)
+
+A self-service portal where clients can monitor their own usage:
+
+- View request history, token consumption, and costs
+- Check which models they have access to
+- Monitor budget status (daily/monthly limits)
+- Retrieve API keys via secure one-time links
+
+> Enable with `ENABLE_PORTAL=true` in your environment.
+
+---
+
+## ☁️ Deploy to Vercel
+
+The gateway is designed for one-click deployment to Vercel:
+
+### 1. Connect Repository
+
+Link your GitHub repository to Vercel. The included `vercel.json` handles all routing configuration automatically.
+
+### 2. Set Environment Variables
+
+Add all variables from `.env.example` to your Vercel project settings under **Settings → Environment Variables**.
+
+### 3. Deploy
+
+```bash
+vercel --prod
+```
+
+The gateway will be live at `https://your-project.vercel.app`.
+
+### Vercel Configuration
+
+The included `vercel.json` provides:
+
+```json
+{
+  "rewrites": [{ "source": "/(.*)", "destination": "/api/index" }],
+  "crons": [{ "path": "/admin/api/cron/prices", "schedule": "0 3 * * *" }]
+}
+```
+
+- **Universal rewrite:** All requests routed through the Hono application
+- **Daily cron job:** Automatic model price synchronization at 03:00 UTC
+
+---
+
+## ⚡ Performance Benchmarks
+
+Benchmarks performed with [autocannon](https://github.com/mcollina/autocannon) on a local development machine:
+
+| Test Scenario | Connections | Duration | Total Requests | Req/Sec | Avg Latency | Max Latency |
+|---------------|-------------|----------|----------------|---------|-------------|-------------|
+| Health Check (raw throughput) | 500 | 5s | **89,000** | **17,752** | 27 ms | 149 ms |
+| Auth + Rate Limit (DB bound) | 500 | 10s | 1,000 | 52 | 5,175 ms | 9,573 ms |
+| Auth + Real AI Call (50 conn) | 50 | 5s | 310 | 52 | — | — |
+
+> **Note:** The DB-bound test latency reflects cross-continent network distance (Turkey → Ireland). When deployed to the same region as your database (e.g., both on EU-West), expect 100x improvement in DB-bound throughput.
+
+### E2E Latency (Real AI Provider Calls)
+
+| Provider | Model | Cache Miss | Cache Hit | Speedup |
+|----------|-------|------------|-----------|---------|
+| OpenAI | `gpt-4o` | 2,618 ms | 1,474 ms | **1,144 ms** |
+| Anthropic | `claude-sonnet-5` | 3,484 ms | 2,176 ms | **1,308 ms** |
+| Gemini | `gemini-3.6-flash` | 2,588 ms | — | — |
+
+---
+
+## 🛡️ Security
+
+- **API Key Hashing:** Client keys are SHA-256 hashed before storage. Plaintext keys are never persisted.
+- **One-Time Key Delivery:** Generated keys are encrypted with AES-256-GCM and delivered via single-use links that self-destruct after viewing.
+- **Vault Isolation:** Real provider API keys live in a dedicated Vault server, never in application environment variables or client-side code.
+- **Rate Limiting:** Redis-based per-client throttling prevents abuse, brute-force attacks, and runaway costs.
+- **Fail-Open Design:** If Redis is temporarily unavailable, rate limiting degrades gracefully to keep the proxy operational.
+- **GitHub Push Protection:** The repository is configured with GitHub Secret Scanning to prevent accidental secret leaks.
+
+---
+
+## 🏭 Recommended Infrastructure
+
+### Development / Testing (Free Tier)
+
+| Service | Plan | Limits |
+|---------|------|--------|
+| [Vercel](https://vercel.com) | Hobby (Free) | 500K edge function invocations/month |
+| [Supabase](https://supabase.com) | Free | 500 MB storage, 2 GB bandwidth/month |
+| [Upstash Redis](https://upstash.com) | Free | 10,000 commands/day |
+
+> ⚠️ **Supabase Free Tier Note:** Projects with no activity for 7 days are automatically paused. Visit the dashboard to resume.
+
+### Production
+
+| Service | Recommended Plan | Why |
+|---------|-----------------|-----|
+| [Vercel](https://vercel.com) | Pro ($20/mo) | Unlimited edge invocations, team collaboration |
+| [Supabase](https://supabase.com) | Pro ($25/mo) | 8 GB storage, no auto-pause, 200 concurrent connections |
+| [Upstash Redis](https://upstash.com) | Pay-as-you-go | $0.2 per 100K commands, no daily limit |
+
+---
+
+## 📁 Project Structure
+
+```
+ai-proxy-gateway/
+├── api/
+│   └── index.ts              # Vercel serverless entry point
+├── src/
+│   ├── app.ts                # Main Hono application & routes
+│   ├── server.ts             # Local Node.js development server
+│   ├── model_pricing.json    # Static model pricing fallback
+│   ├── core/
+│   │   ├── anahtarTeslim.ts  # AES-256-GCM one-time key delivery
+│   │   ├── butce.ts          # Budget tracking & enforcement
+│   │   ├── modelCatalog.ts   # Dynamic model catalog with caching
+│   │   ├── priceSource.ts    # OpenRouter/LiteLLM price sync
+│   │   ├── providerConfig.ts # Provider URL & key configuration
+│   │   └── security.ts       # Security verification pipeline
+│   ├── db/
+│   │   ├── DrizzleAdapter.ts # Database repository (CRUD operations)
+│   │   ├── index.ts          # Lazy Proxy DB connection (serverless-safe)
+│   │   └── schema.ts         # Drizzle ORM table definitions
+│   ├── interfaces/
+│   │   └── IDatabase.ts      # Repository pattern interface
+│   ├── middleware/
+│   │   ├── authMiddleware.ts  # Bearer token validation
+│   │   ├── rateLimiter.ts     # Upstash Redis rate limiter
+│   │   └── rateLimitMiddleware.ts
+│   ├── routes/
+│   │   ├── admin.ts           # Admin console (SPA, ~5,200 LOC)
+│   │   └── portal.ts          # Customer portal (SPA, ~1,500 LOC)
+│   ├── services/
+│   │   └── databaseService.ts # Service binding layer
+│   ├── ui/
+│   │   └── stil.ts            # Shared CSS & theme constants
+│   └── utils/
+│       ├── auth.ts            # Key generation & hashing
+│       ├── sessionManager.ts  # Redis session tracking & AI summaries
+│       ├── supabaseClient.ts  # Supabase JS client
+│       └── vault.ts           # Vault client with SWR caching
+├── vercel.json                # Vercel deployment config & cron
+├── drizzle.config.ts          # Drizzle Kit migration config
+├── package.json
+└── tsconfig.json
+```
+
+---
+
+## 🔧 Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `DATABASE_URL` | ✅ | PostgreSQL connection string (Supabase transaction pooler) |
+| `SUPABASE_URL` | ✅ | Supabase project URL (for admin/portal) |
+| `SUPABASE_SERVICE_KEY` | ✅ | Supabase service role key |
+| `UPSTASH_REDIS_REST_URL` | ✅ | Upstash Redis REST endpoint |
+| `UPSTASH_REDIS_REST_TOKEN` | ✅ | Upstash Redis auth token |
+| `ADMIN_TOKEN` | ✅ | Secret token to access the admin console |
+| `SESSION_SECRET` | ✅ | Signing key for session cookies |
+| `VAULT_API_URL` | ❌ | Vault server URL (falls back to env keys if unset) |
+| `VAULT_ACCESS_TOKEN` | ❌ | Vault authentication token |
+| `OPENAI_API_KEY` | ❌ | Direct OpenAI key (used when Vault is not configured) |
+| `ANTHROPIC_API_KEY` | ❌ | Direct Anthropic key (used when Vault is not configured) |
+| `GEMINI_API_KEY` | ❌ | Direct Gemini key (used when Vault is not configured) |
+| `ENABLE_PORTAL` | ❌ | Set to `true` to enable the customer portal |
+| `CRON_SECRET` | ❌ | Auth token for Vercel Cron price sync |
+| `PORT` | ❌ | Local dev server port (default: `3000`) |
+
+---
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feat/amazing-feature`)
+3. Commit your changes (`git commit -m 'feat: add amazing feature'`)
+4. Push to the branch (`git push origin feat/amazing-feature`)
+5. Open a Pull Request
+
+---
+
+## 📄 License
+
+This project is licensed under the ISC License.
+
+---
+
+<p align="center">
+  Built with ⚡ by <strong>Iceberg</strong> — because your AI infrastructure deserves better than raw API keys in environment variables.
+</p>

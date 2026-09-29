@@ -476,7 +476,7 @@ ${YAZI_TIPI}
     if (ekle) satirlar = satirlar.concat(kayitlar); else satirlar = kayitlar.slice();
     const bas = ekle ? satirlar.length - kayitlar.length : 0;
     const g = kayitlar.map((k, i) =>
-      '<tr class="tiklanir" data-i="'+(bas+i)+'"><td class="sayi">'+tarih(k.created_at)+'</td>'+
+      '<tr class="tiklanir" tabindex="0" role="button" data-i="'+(bas+i)+'"><td class="sayi">'+tarih(k.created_at)+'</td>'+
       '<td>'+nokta(k.provider)+k.provider+'/'+k.model+'</td>'+
       '<td class="sayi">'+(k.input_tokens ?? 0)+'</td>'+
       '<td class="sayi">'+(k.output_tokens ?? 0)+'</td>'+

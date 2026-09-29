@@ -1086,7 +1086,7 @@ ${YAZI_TIPI}
     const g = kayitlar.map((k, i) => {
       const isFlagged = k.is_flagged ? ' style="background: rgba(255,0,0,0.1); border-left: 3px solid red;"' : '';
       const flagIcon = k.is_flagged ? ' <span title="' + k.flagged_reason + '">🚨</span>' : '';
-      return '<tr class="tiklanir" data-i="' + (bas + i) + '"' + isFlagged + '>' +
+      return '<tr class="tiklanir" tabindex="0" role="button" data-i="' + (bas + i) + '"' + isFlagged + '>' +
       '<td class="sayi">' + tarih(k.created_at) + '</td>' +
       '<td>' + (k.kisi
         ? kacir(k.kisi)
@@ -1628,7 +1628,7 @@ ${YAZI_TIPI}
               kacir(m.ad.split('/')[1]) + '</span>').join('')
           : '<span class="hap bek">nothing</span>';
 
-        return '<tr class="tiklanir" data-i="' + i + '">' +
+        return '<tr class="tiklanir" tabindex="0" role="button" data-i="' + i + '">' +
           '<td>' + kacir(k.email) +
             (k.role === 'owner' ? ' <span class="hap ok">owner</span>' : '') + '</td>' +
           '<td>' + modelYazi + '</td>' +

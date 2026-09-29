@@ -10,7 +10,7 @@ import type { Hono, Context } from 'hono';
 import { STIL, YAZI_TIPI } from '../ui/stil.js';
 import { supabase } from '../utils/supabaseClient.js';
 import { createNewClient } from '../services/db.js';
-import { teslimOlustur } from '../core/anahtarTeslim.js';
+
 import { generateProxyKey, hashApiKey } from '../utils/auth.js';
 import {
   hesapOlustur, sifreDegistir, sifreKusuru,
@@ -1202,61 +1202,7 @@ ${YAZI_TIPI}
   // alert() yerine gerçek bir kart: bağlantı uzun, seçilebilir olmalı ve
   // kopyalama düğmesi lazım. Ayrıca bunun bir ANAHTAR olmadığını yazmak
   // gerekiyor — yanlışlıkla "anahtar bu" diye saklanmasın.
-  function teslimBagiGoster(eposta, bag, sonKullanma, acikAnahtar) {
-    const kutu = document.createElement('div');
-    kutu.className = 'ortuKatman';
-    kutu.innerHTML =
-      '<div class="ortuKart" style="max-width: 500px;">' +
-      '<div class="baslikkucuk">Key created for ' + kacir(eposta) + '</div>' +
-      '<div class="yardim" style="margin:.4rem 0 1rem;line-height:1.6">' +
-      '<strong>Option A: Portal Link (Secure)</strong><br>' +
-      'Send this link to ' + kacir(eposta) + '. It opens once' +
-      (sonKullanma ? ' and expires on ' +
-        new Date(sonKullanma).toLocaleString('en-GB',
-          { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '') +
-      '.</div>' +
-      '<div class="anahtarKutu" style="margin-bottom:1rem;"><code id="teslimBag">' + kacir(bag) + '</code></div>' +
-      (acikAnahtar ? 
-        '<div class="yardim" style="margin:.4rem 0 1rem;line-height:1.6">' +
-        '<strong>Option B: Direct API Key</strong><br>' +
-        'If they do not use the Portal, copy the direct API Key below (Shown once!):</div>' +
-        '<div class="anahtarKutu" style="background:var(--bg-2); border-color:var(--line-2);"><code id="acikAnahtarKutu">' + kacir(acikAnahtar) + '</code></div>' 
-      : '') +
-      '<div style="display:flex;gap:.6rem;margin-top:1rem;align-items:center">' +
-      '<button class="dugme koyu" id="teslimKopyala">Copy Link</button>' +
-      (acikAnahtar ? '<button class="dugme cerceveli" id="anahtarKopyala">Copy Key</button>' : '') +
-      '<button class="dugme cerceveli" id="teslimKapat">Done</button>' +
-      '<span class="yardim" id="teslimNot"></span></div></div>';
-    document.body.appendChild(kutu);
-
-    kutu.querySelector('#teslimKopyala').onclick = async () => {
-      try {
-        await navigator.clipboard.writeText(bag);
-        kutu.querySelector('#teslimNot').textContent = 'Link Copied';
-      } catch {
-        const r = document.createRange();
-        r.selectNodeContents(kutu.querySelector('#teslimBag'));
-        window.getSelection().removeAllRanges();
-        window.getSelection().addRange(r);
-      }
-    };
-    
-    if (acikAnahtar) {
-      kutu.querySelector('#anahtarKopyala').onclick = async () => {
-        try {
-          await navigator.clipboard.writeText(acikAnahtar);
-          kutu.querySelector('#teslimNot').textContent = 'Key Copied';
-        } catch {
-          const r = document.createRange();
-          r.selectNodeContents(kutu.querySelector('#acikAnahtarKutu'));
-          window.getSelection().removeAllRanges();
-          window.getSelection().addRange(r);
-        }
-      };
-    }
-
-    kutu.querySelector('#teslimKapat').onclick = () => kutu.remove();
-  }
+  
 
   function detayAc(k) {
     const ad = k.provider + '/' + k.model;
@@ -1977,12 +1923,7 @@ ${YAZI_TIPI}
         // bağlantısı geliyor. Bağlantıyı iletiyoruz, anahtarı yalnızca sahibi
         // görüyor. Sahipsiz anahtarlarda teslim edilecek kişi olmadığı için
         // eski davranış sürüyor.
-        if (v.teslimJetonu) {
-          teslimBagiGoster(k.email, location.origin + '/portal/reveal/' + v.teslimJetonu, v.sonKullanma, v.anahtar);
-        } else {
-          alert('New key:\\n\\n' + v.anahtar + '\\n\\nShown once — copy it now.' +
-            (v.teslimHatasi ? '\\n\\n' + v.teslimHatasi : ''));
-        }
+        alert('New key:\n\n' + v.anahtar + '\n\nShown once - copy it now.');
         detayKapat();
       } catch (e) { $('ypHata').textContent = e.message; $('ypHata').classList.remove('gizli'); }
     };
@@ -3634,20 +3575,6 @@ export function adminRoutes(app: Hono) {
     //
     // Sahipsiz (ortak servis) anahtarlarında teslim edilecek bir kişi yok;
     // orada açık değer yöneticide kalıyor, başka yolu yok.
-    const kayit = data as { id: string } | null;
-    if (g.user_id && kayit) {
-      const teslim = await teslimOlustur(kayit.id, String(g.user_id), acik);
-      if (teslim.ok) {
-        return c.json({
-          anahtarKaydi: data,
-          teslimJetonu: teslim.jeton, sonKullanma: teslim.sonKullanma, anahtar: acik
-        });
-      }
-      // Teslim kaydı açılamadıysa anahtarı kaybetmemek için açık dönüyoruz;
-      // aksi halde üretilmiş ama kimsenin ulaşamayacağı bir anahtar kalırdı.
-      return c.json({ anahtarKaydi: data, anahtar: acik, teslimHatasi: teslim.hata });
-    }
-
     return c.json({ anahtarKaydi: data, anahtar: acik });
   });
 

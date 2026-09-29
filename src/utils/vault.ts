@@ -93,3 +93,13 @@ async function refreshKeyInVault(provider: string, cacheKey: string): Promise<st
 
   return realApiKey;
 }
+
+/**
+ * Bir saglayicidan 401 hatasi alininca onbellegi temizler,
+ * boylece bir sonraki istekte Vault'tan taze anahtar cekilir.
+ */
+export async function invalidateVaultKey(provider: string): Promise<void> {
+  const cacheKey = `vault_key:${provider}`;
+  await redis.del(cacheKey);
+  console.log(`[Vault] ${provider} onbellegi temizlendi.`);
+}

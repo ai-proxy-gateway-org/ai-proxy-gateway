@@ -1,9 +1,10 @@
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
+import { cors } from 'hono/cors';
 import { authMiddleware } from './middleware/authMiddleware.js';
 import { rateLimitMiddleware } from './middleware/rateLimitMiddleware.js';
 import { dbService } from './services/databaseService.js';
-import { getProviderKey } from './utils/vault.js';
+import { getProviderKey, invalidateVaultKey } from './utils/vault.js';
 import {
   getOrCreateSession, addMessageToSession, getActiveSession,
   getSessionMessages, generateSessionSummary
@@ -11,6 +12,16 @@ import {
 
 // Hono uygulamasını başlatıyoruz
 const app = new Hono();
+
+// CORS destegi
+app.use('*', cors({
+  origin: '*',
+  allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  exposeHeaders: ['Content-Length'],
+  maxAge: 600,
+}));
+
 
 // Hata yakalayıcı: Tüm yakalanmamış hataları konsola basar (Debug için)
 app.onError((err, c) => {

@@ -4892,7 +4892,64 @@ export function adminRoutes(app: Hono) {
   // Yönetici jetonu istemiyoruz — cron o jetonu bilmiyor. Onun yerine ayrı
   // bir gizli anahtar: adres tahmin edilse bile dışarıdan tetiklenemesin.
   // Vercel kendi cron çağrılarına da bir başlık ekliyor, onu da kabul ediyoruz.
-  app.get('/admin/api/cron/prices', async (c) => {
+  
+  app.get('/admin/api/cron/sessions', async (c) => {
+    // Vercel Cron yetkilendirmesi (iste�e ba�l� g�venlik, Vercel token yollar)
+    const auth = c.req.header('authorization');
+    if (process.env.VERCEL === '1' && auth !== `Bearer ${process.env.CRON_SECRET}`) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+    
+    try {
+      const { Redis } = await import('@upstash/redis');
+      const redis = new Redis({
+        url: process.env.UPSTASH_REDIS_REST_URL!,
+        token: process.env.UPSTASH_REDIS_REST_TOKEN!
+      });
+      
+      const { generateSessionSummary } = await import('../utils/sessionManager.js');
+      const dbService = (await import('../services/databaseService.js')).dbService;
+      
+      const sessions = await redis.smembers('sessions_to_summarize');
+      let summarized = 0;
+      
+      for (const s of sessions) {
+        const [clientId, sessionId, startedAt] = s.split(':');
+        const isActive = await redis.exists(`session:${clientId}`);
+        
+        // E�er session key'i silinmi�se (15 dk TTL dolmu�sa), art�k oturum kapanm��t�r, �zetle!
+        if (!isActive) {
+          try {
+            const result = await generateSessionSummary(sessionId);
+            
+            // Veritaban�na kaydet
+            await dbService.saveSession(
+              sessionId,
+              clientId,
+              startedAt,
+              0, // messageCount (opsiyonel, Redis'ten silindi�i i�in tam say�lamayabilir)
+              result.summary,
+              result.inputTokens + result.outputTokens,
+              0.0 // gpt-4o-mini cost hesaplanabilir
+            );
+            
+            // ��lem ba�ar�l�, listeden kald�r
+            await redis.srem('sessions_to_summarize', s);
+            // Mesajlar� da temizle (24 saat beklemeye gerek kalmad�)
+            await redis.del(`session_messages:${sessionId}`);
+            summarized++;
+          } catch(err) {
+            console.error('�zetleme hatas�', sessionId, err);
+          }
+        }
+      }
+      return c.json({ success: true, count: summarized });
+    } catch(e: any) {
+      return c.json({ error: e.message }, 500);
+    }
+  });
+
+app.get('/admin/api/cron/prices', async (c) => {
     const gizli = process.env.CRON_SECRET;
     const baslik = c.req.header('x-cron-secret');
     const vercelCron = String(c.req.header('user-agent') ?? '').includes('vercel-cron');

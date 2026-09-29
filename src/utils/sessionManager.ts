@@ -1,4 +1,4 @@
-import { Redis } from '@upstash/redis'
+﻿import { Redis } from '@upstash/redis'
 import { randomUUID } from 'crypto'
 import { getProviderKey } from './vault.js'
 
@@ -39,7 +39,7 @@ export async function getOrCreateSession(
   if (existing) {
     // Oturum hâlâ aktif — TTL'i sıfırla (15 dk daha uzat)
     await redis.expire(sessionKey, SESSION_TTL)
-    await redis.expire(`session_messages:${existing.sessionId}`, SESSION_TTL)
+    
     return existing
   }
 
@@ -52,6 +52,7 @@ export async function getOrCreateSession(
   }
 
   await redis.set(sessionKey, session, { ex: SESSION_TTL })
+  if (summaryEnabled) { await redis.sadd('sessions_to_summarize', `${clientId}:${session.sessionId}:${session.startedAt}`) }
   return session
 }
 
@@ -88,7 +89,7 @@ export async function addMessageToSession(
 
   // Redis listesine soru ve cevabı ekle
   await redis.rpush(messagesKey, JSON.stringify(userMsg), JSON.stringify(assistantMsg))
-  await redis.expire(messagesKey, SESSION_TTL)
+  await redis.expire(messagesKey, 86400)
 
   // Mesaj sayacını güncelle
   const session = await redis.get<SessionInfo>(sessionKey)

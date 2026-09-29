@@ -13,7 +13,7 @@
     },
     {
       "path": "/admin/api/cron/sessions",
-      "schedule": "*/15 * * * *"
+      "schedule": "0 4 * * *"
     }
   ]
 }

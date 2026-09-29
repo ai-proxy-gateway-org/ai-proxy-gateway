@@ -1882,7 +1882,7 @@ ${YAZI_TIPI}
         $('ypCalisanOk').classList.remove('gizli');
         $('ypCalisanEposta').value = '';
         await kisilerYukle();
-        kisiAc(kisiler.find(t => t.id === k.id) || k);
+        // Not refreshing the drawer immediately so the password remains visible
       } catch (e) {
         $('ypCalisanHata').textContent = e.message || 'Failed to add employee.';
         $('ypCalisanHata').classList.remove('gizli');

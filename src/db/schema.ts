@@ -59,3 +59,22 @@ export const sessions = pgTable('sessions', {
   summary_tokens: integer('summary_tokens'),
   summary_cost: doublePrecision('summary_cost'),
 });
+export const users = pgTable('users', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  client_id: uuid('client_id').references(() => clients.id),
+  email: varchar('email', { length: 255 }).notNull().unique(),
+  password_hash: text('password_hash'),
+  role: varchar('role', { length: 50 }).default('user'),
+  allowed_models: jsonb('allowed_models'),
+  budget_limit: doublePrecision('budget_limit'),
+  created_at: timestamp('created_at').defaultNow()
+});
+
+export const model_catalog = pgTable('model_catalog', {
+  id: varchar('id', { length: 255 }).primaryKey(),
+  provider: varchar('provider', { length: 50 }),
+  input_price: doublePrecision('input_price'),
+  output_price: doublePrecision('output_price'),
+  is_active: boolean('is_active').default(true),
+  created_at: timestamp('created_at').defaultNow()
+});

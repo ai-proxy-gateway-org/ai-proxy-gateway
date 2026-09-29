@@ -104,10 +104,10 @@ const SAYFA = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Admin Console</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%232563eb'/%3E%3Ctext x='16' y='22' font-family='system-ui,sans-serif' font-size='13' font-weight='700' fill='white' text-anchor='middle'%3EAD%3C/text%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23074683'/%3E%3Ctext x='16' y='22' font-family='system-ui,sans-serif' font-size='13' font-weight='700' fill='white' text-anchor='middle'%3EAD%3C/text%3E%3C/svg%3E">
 ${YAZI_TIPI}
 <style>${STIL}
-  .markaSimge.yon { background:var(--mavi); color:#fff; }
+  .markaSimge.yon { background:var(--dugme); color:#fff; }
   .formSatir { display:grid; grid-template-columns:repeat(auto-fit,minmax(11rem,1fr));
                gap:1rem; }
   .formSatir label { display:flex; flex-direction:column; gap:.4rem;
@@ -1086,7 +1086,7 @@ ${YAZI_TIPI}
     const g = kayitlar.map((k, i) => {
       const isFlagged = k.is_flagged ? ' style="background: rgba(255,0,0,0.1); border-left: 3px solid red;"' : '';
       const flagIcon = k.is_flagged ? ' <span title="' + k.flagged_reason + '">🚨</span>' : '';
-      return '<tr class="tiklanir" data-i="' + (bas + i) + '"' + isFlagged + '>' +
+      return '<tr class="tiklanir" tabindex="0" role="button" data-i="' + (bas + i) + '"' + isFlagged + '>' +
       '<td class="sayi">' + tarih(k.created_at) + '</td>' +
       '<td>' + (k.kisi
         ? kacir(k.kisi)
@@ -1628,7 +1628,7 @@ ${YAZI_TIPI}
               kacir(m.ad.split('/')[1]) + '</span>').join('')
           : '<span class="hap bek">nothing</span>';
 
-        return '<tr class="tiklanir" data-i="' + i + '">' +
+        return '<tr class="tiklanir" tabindex="0" role="button" data-i="' + i + '">' +
           '<td>' + kacir(k.email) +
             (k.role === 'owner' ? ' <span class="hap ok">owner</span>' : '') + '</td>' +
           '<td>' + modelYazi + '</td>' +
@@ -1823,7 +1823,7 @@ ${YAZI_TIPI}
 
       '<div class="bolumBaslik" style="margin-top:1.8rem">Employees</div>' +
       '<div class="yardim" style="margin-bottom:.7rem">' +
-      'People assigned to this team. They inherit the team\\'s model access and budget limits.</div>' +
+      'People assigned to this team. They inherit the team\'s model access and budget limits.</div>' +
       '<div id="ypCalisanlar">' +
       ((k.calisanlar || []).length
         ? '<table class="tablokart" style="margin-bottom:.7rem"><thead><tr><th>Email</th><th>Role</th><th>Joined</th></tr></thead><tbody>' +

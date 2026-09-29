@@ -370,7 +370,7 @@ ${YAZI_TIPI}
   // Anahtar adları veritabanından geliyor; HTML'e basmadan önce kaçırıyoruz.
   const kacir = (t) => String(t == null ? '' : t)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
   // Anahtarla girildiyse başlık ekleniyor; oturumla girildiyse çerez zaten
   // gidiyor ve anahtar elimizde yok.
@@ -477,7 +477,7 @@ ${YAZI_TIPI}
     const bas = ekle ? satirlar.length - kayitlar.length : 0;
     const g = kayitlar.map((k, i) =>
       '<tr class="tiklanir" data-i="'+(bas+i)+'"><td class="sayi">'+tarih(k.created_at)+'</td>'+
-      '<td>'+nokta(k.provider)+k.provider+'/'+k.model+'</td>'+
+      '<td>'+nokta(k.provider)+kacir(k.provider+'/'+k.model)+'</td>'+
       '<td class="sayi">'+(k.input_tokens ?? 0)+'</td>'+
       '<td class="sayi">'+(k.output_tokens ?? 0)+'</td>'+
       '<td class="sayi">'+(k.latency_ms ?? 0)+' ms</td>'+
@@ -528,7 +528,7 @@ ${YAZI_TIPI}
     const gi = k.input_tokens ?? 0, ci = k.output_tokens ?? 0;
     const kayitli = Number(k.cost ?? 0);
 
-    $('ypBaslik').innerHTML = nokta(k.provider) + anahtarAdi;
+    $('ypBaslik').innerHTML = nokta(k.provider) + kacir(anahtarAdi);
     $('ypZaman').textContent = new Date(k.created_at).toLocaleString('en-GB',
       { day:'numeric', month:'long', hour:'2-digit', minute:'2-digit', second:'2-digit' });
 

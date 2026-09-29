@@ -8,14 +8,20 @@ import {
   getOrCreateSession, addMessageToSession, getActiveSession,
   getSessionMessages, generateSessionSummary
 } from './utils/sessionManager.js';
+import { runSecurityChain } from './core/security.js';
 
 // Hono uygulamasını başlatıyoruz
 const app = new Hono();
 
+app.use('*', async (c, next) => {
+  c.header('Content-Security-Policy', "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; script-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'");
+  await next();
+});
+
 // Hata yakalayıcı: Tüm yakalanmamış hataları konsola basar (Debug için)
 app.onError((err, c) => {
   console.error('HONO ERROR:', err.message, err.stack);
-  return c.json({ success: false, error: 'Internal Edge Proxy Error', detail: err.message }, 500);
+  return c.json({ success: false, error: 'Internal server error' }, 500);
 });
 
 // Sağlık kontrolü rotası
@@ -36,6 +42,14 @@ app.get('/', (c) => {
 app.post('/v1/chat/completions', authMiddleware, rateLimitMiddleware, async (c) => {
   const client = c.get('client');
   const startTime = Date.now();
+
+  const apiKey = (c.req.header('Authorization') || '').replace('Bearer ', '');
+  const origin = c.req.header('Origin') ?? null;
+  const security = await runSecurityChain({ apiKey, origin });
+  
+  if (!security.ok) {
+    return c.json({ success: false, error: security.error }, 403);
+  }
 
   // try bloğunun dışında tanımlı: sağlayıcıya ulaşmadan önce bir şey
   // patlarsa (ör. kasa/vault erişilemezse) alttaki catch bloğu da bu
@@ -220,7 +234,14 @@ app.get('/v1/sessions/current', authMiddleware, async (c) => {
 
 // Belirli bir oturumun mesajlarını getir (aktif oturum — Redis'ten)
 app.get('/v1/sessions/:sessionId/messages', authMiddleware, async (c) => {
+  const client = c.get('client');
   const sessionId = c.req.param('sessionId');
+  const session = await getActiveSession(client.id);
+
+  if (!session || session.sessionId !== sessionId) {
+    return c.json({ error: 'Forbidden' }, 403);
+  }
+
   const messages = await getSessionMessages(sessionId);
   return c.json({ sessionId, messageCount: messages.length, messages });
 });

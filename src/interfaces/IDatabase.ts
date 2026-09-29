@@ -27,6 +27,8 @@ export interface IDatabase {
     error_message?: string,
     response?: string | null
   ): Promise<void>;
+  
+  checkModeration(logId: string, prompt: string): Promise<void>;
 
   // Oturum kaydetme: Redis'teki geçici oturum verisi TTL dolunca silinir,
   // bu metod ile özet ve metadata PostgreSQL'e kalıcı olarak yazılır.

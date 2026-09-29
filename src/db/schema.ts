@@ -40,6 +40,9 @@ export const logs = pgTable('logs', {
   latency_ms: integer('latency_ms'),
   // Hangi oturuma ait olduğu (opsiyonel ilişkilendirme)
   session_id: uuid('session_id'),
+  // Tehlikeli içerik tespiti (OpenAI Moderation)
+  is_flagged: boolean('is_flagged').default(false),
+  flagged_reason: text('flagged_reason'),
   completed_at: timestamp('completed_at'),
   created_at: timestamp('created_at').defaultNow()
 });

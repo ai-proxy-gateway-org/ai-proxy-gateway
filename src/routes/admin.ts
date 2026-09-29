@@ -1083,20 +1083,23 @@ ${YAZI_TIPI}
   function iSatirCiz(kayitlar, ekle) {
     if (ekle) iSatirlar = iSatirlar.concat(kayitlar); else iSatirlar = kayitlar.slice();
     const bas = ekle ? iSatirlar.length - kayitlar.length : 0;
-    const g = kayitlar.map((k, i) =>
-      '<tr class="tiklanir" data-i="' + (bas + i) + '">' +
+    const g = kayitlar.map((k, i) => {
+      const isFlagged = k.is_flagged ? ' style="background: rgba(255,0,0,0.1); border-left: 3px solid red;"' : '';
+      const flagIcon = k.is_flagged ? ' <span title="' + k.flagged_reason + '">🚨</span>' : '';
+      return '<tr class="tiklanir" data-i="' + (bas + i) + '"' + isFlagged + '>' +
       '<td class="sayi">' + tarih(k.created_at) + '</td>' +
       '<td>' + (k.kisi
         ? kacir(k.kisi)
         : '<span class="yardim" title="Sent with a key that belongs to no one">' +
           (k.anahtarAdi ? kacir(k.anahtarAdi) : 'shared key') + '</span>') + '</td>' +
       '<td>' + nokta(k.provider) + (SAGLAYICI[k.provider] || k.provider) + '</td>' +
-      '<td>' + k.model + '</td>' +
+      '<td>' + k.model + flagIcon + '</td>' +
       '<td class="sayi">' + (k.input_tokens ?? 0) + '</td>' +
       '<td class="sayi">' + (k.output_tokens ?? 0) + '</td>' +
       '<td class="sayi">' + (k.latency_ms ?? 0) + ' ms</td>' +
       '<td class="sayi">' + para(k.cost ?? 0) + '</td>' +
-      '<td>' + durumHapi(k) + '</td></tr>').join('');
+      '<td>' + durumHapi(k) + '</td></tr>';
+    }).join('');
     iBaslikKur();
     const govde = $('iTablo').querySelector('tbody');
     if (ekle) govde.insertAdjacentHTML('beforeend', g);
@@ -1248,7 +1251,15 @@ ${YAZI_TIPI}
       new Date(k.created_at).toLocaleString('en-GB',
         { day:'numeric', month:'long', hour:'2-digit', minute:'2-digit', second:'2-digit' });
 
-    let govde = '<div class="bolumBaslik">Summary</div><dl class="ozellik">' +
+    let govde = '';
+    if (k.is_flagged) {
+      govde += '<div style="background: rgba(255,0,0,0.1); border: 1px solid red; border-radius: 6px; padding: 1rem; margin-bottom: 1rem;">' +
+        '<strong style="color: red;">🚨 Dangerous Usage Flagged (OpenAI Moderation)</strong><br>' +
+        '<span style="font-size: 0.85rem;">Category: <b>' + (k.flagged_reason || 'Unknown') + '</b></span>' +
+        '</div>';
+    }
+    
+    govde += '<div class="bolumBaslik">Summary</div><dl class="ozellik">' +
       '<dt>Status</dt><dd>' + durumHapi(k) + '</dd>' +
       '<dt>Latency</dt><dd>' + (k.latency_ms ?? 0) + ' ms</dd>' +
       '<dt>Input tokens</dt><dd>' + bin(gi) + '</dd>' +
@@ -3284,7 +3295,7 @@ export function adminRoutes(app: Hono) {
     // 2) Görüntülenecek sayfa
     const { data: sayfa, error: h2 } = await filtrele(
       supabase.from('logs')
-        .select('client_id, key_id, provider, model, status, input_tokens, output_tokens, cost, latency_ms, created_at, error_message, input_price_used, output_price_used, prompt, response')
+        .select('client_id, key_id, provider, model, status, input_tokens, output_tokens, cost, latency_ms, created_at, error_message, input_price_used, output_price_used, prompt, response, is_flagged, flagged_reason')
         .order('created_at', { ascending: false })
         .range(offset, offset + SAYFA - 1) as any
     );

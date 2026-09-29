@@ -73,6 +73,17 @@ app.post('/v1/chat/completions', authMiddleware, rateLimitMiddleware, async (c) 
     const promptText = JSON.stringify(body.messages ?? body);
     logId = await dbService.logRequestStart(client.id, provider, model, promptText);
 
+    // Tehlike taraması (Arka planda çalışır, Edge function'ı bekletmez)
+    if (logId && promptText) {
+      try {
+        if (c.executionCtx?.waitUntil) {
+          c.executionCtx.waitUntil(dbService.checkModeration(logId, promptText));
+        } else {
+          dbService.checkModeration(logId, promptText).catch(console.error);
+        }
+      } catch(e) {}
+    }
+
     // 3. Vault (Kasa) üzerinden gerçek API anahtarını al (Önbellekli / SWR)
     const realApiKey = await getProviderKey(provider, c);
 

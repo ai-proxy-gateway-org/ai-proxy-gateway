@@ -117,6 +117,55 @@ export class DrizzleAdapter implements IDatabase {
     }
   }
 
+  async checkModeration(logId: string, prompt: string): Promise<void> {
+    try {
+      if (!prompt) return;
+      
+      // Kasa'dan OpenAI anahtarını alıyoruz (gizli!)
+      const { getProviderKey } = await import('../utils/vault.js');
+      const openaiKey = await getProviderKey('openai');
+      
+      const response = await fetch('https://api.openai.com/v1/moderations', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${openaiKey}`
+        },
+        body: JSON.stringify({ input: prompt })
+      });
+      
+      if (!response.ok) return;
+      
+      const result = await response.json();
+      const moderation = result.results?.[0];
+      
+      if (moderation?.flagged) {
+        // En yüksek skorlu tehlike kategorisini bul
+        let maxCategory = '';
+        let maxScore = 0;
+        
+        for (const [cat, score] of Object.entries(moderation.category_scores)) {
+          if ((score as number) > maxScore && moderation.categories[cat] === true) {
+            maxScore = score as number;
+            maxCategory = cat;
+          }
+        }
+        
+        // Log tablosuna tehlikeyi kaydet
+        await db.update(logs)
+          .set({
+            is_flagged: true,
+            flagged_reason: maxCategory || 'Unknown'
+          })
+          .where(eq(logs.id, logId));
+          
+        console.warn(`[Moderation] 🚨 Tehlikeli kullanım tespit edildi! Log ID: ${logId}, Kategori: ${maxCategory}`);
+      }
+    } catch (error) {
+      console.error('Error checking moderation:', error);
+    }
+  }
+
   async saveSession(
     sessionId: string,
     clientId: string,

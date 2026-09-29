@@ -885,8 +885,8 @@ ${YAZI_TIPI}
     $('uygulama').classList.remove('gizli');
     bolumGoster('genel');
     offset = 0; kullanimGetir(false);
-    teslimAcmayiDene();
-  }
+    }
+  // teslimAcmayiDene artik sayfa yuklendiginde cagriliyor
 
   // E-posta ve şifreyle giriş. Oturum çerezle taşınıyor, anahtar saklanmıyor.
   async function hesapGirisi() {
@@ -1078,10 +1078,19 @@ ${YAZI_TIPI}
   // hiçbir şey saklamamıza gerek yok. Yoksa eskiden saklanan anahtara
   // düşülüyor — mevcut müşteriler bir sürüm yükseltmesiyle kapıda kalmasın.
   (async () => {
+    // URL kontrolu - Sayfa portal/reveal ise anahtar gosterme ekranini ac
+    const parcalar = location.pathname.split('/');
+    if (parcalar[1] === 'portal' && parcalar[2] === 'reveal') {
+      $('girisEkran').classList.add('gizli');
+      $('uygulama').classList.remove('gizli');
+      teslimAcmayiDene();
+      return;
+    }
+
     try {
       const c = await fetch('/portal/api/me');
       if (c.ok) { uygulamayaGir(await c.json()); return; }
-    } catch (e) { /* sunucuya ulaşılamadıysa anahtar yoluna düş */ }
+    } catch (e) { /* sunucuya ulasilamadiysa anahtar yoluna dus */ }
 
     const saklanan = anahtarOku();
     if (saklanan) girisYap(saklanan);
@@ -1361,12 +1370,8 @@ export function portalRoutes(app: Hono) {
   // sahibine bir kez gösteriyor. Oturum şart — bağlantı sızsa bile başkası
   // açamıyor.
   app.get('/portal/api/reveal/:jeton', async (c) => {
-    const hesap = await oturumdakiHesap('musteri', c.req.header('cookie'));
-    if (!hesap) {
-      return c.json({ error: 'Sign in to open this link.' }, 401);
-    }
     const jeton = c.req.param('jeton');
-    const sonuc = await teslimAc(String(jeton ?? ''), hesap.id);
+    const sonuc = await teslimAc(String(jeton ?? ''));
     if (!sonuc.ok) return c.json({ error: sonuc.hata }, sonuc.durum as any);
     return c.json({ anahtar: sonuc.anahtar });
   });

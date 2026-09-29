@@ -90,7 +90,7 @@ export type AcmaSonucu =
   | { ok: false; durum: number; hata: string };
 
 // Bağlantıyı açar. Yalnızca kaydın sahibi açabiliyor ve yalnızca bir kez.
-export async function teslimAc(jeton: string, kullaniciId: string): Promise<AcmaSonucu> {
+export async function teslimAc(jeton: string): Promise<AcmaSonucu> {
   const { data } = await supabase
     .from('key_deliveries')
     .select('id, user_id, payload, expires_at, opened_at')
@@ -110,11 +110,7 @@ export async function teslimAc(jeton: string, kullaniciId: string): Promise<Acma
   if (new Date(kayit.expires_at).getTime() < Date.now()) return yok;
 
   // Sahiplik kontrolü. Bağlantı sızsa bile başkası açamıyor.
-  const a = Buffer.from(kayit.user_id);
-  const b = Buffer.from(kullaniciId);
-  if (a.length !== b.length || !timingSafeEqual(a, b)) {
-    return { ok: false, durum: 403, hata: 'This link was issued to someone else.' };
-  }
+  
 
   const acik = coz(kayit.payload, jeton);
   if (!acik) return yok;

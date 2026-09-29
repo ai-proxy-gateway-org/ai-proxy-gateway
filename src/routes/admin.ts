@@ -1824,7 +1824,7 @@ ${YAZI_TIPI}
 
       '<div class="bolumBaslik" style="margin-top:1.8rem">Employees</div>' +
       '<div class="yardim" style="margin-bottom:.7rem">' +
-      'People assigned to this team. They inherit the team\'s model access and budget limits.</div>' +
+      "People assigned to this team. They inherit the team's model access and budget limits.</div>" +
       '<div id="ypCalisanlar">' +
       ((k.calisanlar || []).length
         ? '<table class="tablokart" style="margin-bottom:.7rem"><thead><tr><th>Email</th><th>Role</th><th>Joined</th></tr></thead><tbody>' +

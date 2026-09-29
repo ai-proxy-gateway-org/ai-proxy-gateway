@@ -10,6 +10,10 @@
     {
       "path": "/admin/api/cron/prices",
       "schedule": "0 3 * * *"
+    },
+    {
+      "path": "/admin/api/cron/sessions",
+      "schedule": "*/15 * * * *"
     }
   ]
 }

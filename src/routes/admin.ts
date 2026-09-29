@@ -24,6 +24,7 @@ import {
 import { priceList, invalidateCatalog, catalogInfo } from '../core/modelCatalog.js';
 import { butceDurumu } from '../core/butce.js';
 import { govdeOku } from '../utils/honoYardim.js';
+import { checkRateLimit } from '../middleware/rateLimiter.js';
 
 // Ret mesajları müşteriye yol göstersin diye değiştirildi; eski kayıtlar
 // eski metinle duruyor. Süzgeçler ikisini de tanımak zorunda, yoksa

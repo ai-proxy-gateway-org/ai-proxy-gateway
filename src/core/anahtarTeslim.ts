@@ -117,11 +117,13 @@ export async function teslimAc(jeton: string): Promise<AcmaSonucu> {
 
   // Önce işaretle, sonra döndür: aynı anda iki istek gelirse ikincisi
   // açılmış kayda düşsün.
-  const { error } = await supabase
+  const { data: updated, error } = await supabase
     .from('key_deliveries')
     .update({ opened_at: new Date().toISOString(), payload: '' })
-    .eq('id', kayit.id).is('opened_at', null);
-  if (error) return yok;
+    .eq('id', kayit.id)
+    .is('opened_at', null)
+    .select('id');
+  if (error || !updated || updated.length === 0) return yok;
 
   return { ok: true, anahtar: acik };
 }

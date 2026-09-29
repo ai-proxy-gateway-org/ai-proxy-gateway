@@ -392,7 +392,8 @@ export const STIL = `
     .uygulama { flex-direction:column; }
     nav { flex-direction:row; overflow-x:auto; }
     nav button { white-space:nowrap; }
-    .yakinda, .menuAlt { display:none; }
+    .yakinda { display:none; }
+    .menuAlt { display:flex; flex-direction:row; padding:0; border:0; margin-left:auto; gap:0.5rem; }
     .ustCubuk, .govde { padding-left:1.25rem; padding-right:1.25rem; }
   }
 `;

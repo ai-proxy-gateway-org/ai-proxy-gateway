@@ -396,7 +396,7 @@ td { white-space:normal; word-break:break-all; }
     nav button { white-space:nowrap; }
     .yakinda { display:none; }
     .menuAlt { display:flex; flex-direction:row; padding:0; border:0; margin-left:auto; gap:0.5rem; }
-    .topBar, .mainBody { padding-left:1.25rem; padding-right:1.25rem; }
+    .topBar, .mainBody, .ustCubuk, .govde { padding-left:1.25rem; padding-right:1.25rem; }
   }
 
   .rowBtn {

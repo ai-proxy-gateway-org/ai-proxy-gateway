@@ -370,7 +370,7 @@ ${YAZI_TIPI}
   // Anahtar adları veritabanından geliyor; HTML'e basmadan önce kaçırıyoruz.
   const escapeHtml = (t) => String(t == null ? '' : t)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 
   // Anahtarla girildiyse başlık ekleniyor; oturumla girildiyse çerez zaten
   // gidiyor ve key elimizde yok.
@@ -476,8 +476,8 @@ ${YAZI_TIPI}
     if (ekle) satirlar = satirlar.concat(records); else satirlar = records.slice();
     const headers = ekle ? satirlar.length - records.length : 0;
     const g = records.map((k, i) =>
-      '<tr class="clickable" data-i="'+(headers+i)+'"><td class="sayi">'+date(k.created_at)+'</td>'+
-      '<td>'+dot(k.provider)+k.provider+'/'+k.model+'</td>'+
+      '<tr class="clickable" tabindex="0" role="button" data-i="'+(headers+i)+'"><td class="sayi">'+date(k.created_at)+'</td>'+
+      '<td>'+dot(k.provider)+escapeHtml(k.provider+'/'+k.model)+'</td>'+
       '<td class="sayi">'+(k.input_tokens ?? 0)+'</td>'+
       '<td class="sayi">'+(k.output_tokens ?? 0)+'</td>'+
       '<td class="sayi">'+(k.latency_ms ?? 0)+' ms</td>'+
@@ -528,7 +528,7 @@ ${YAZI_TIPI}
     const gi = k.input_tokens ?? 0, ci = k.output_tokens ?? 0;
     const kayitli = Number(k.cost ?? 0);
 
-    $('spTitle').innerHTML = dot(k.provider) + keyName;
+    $('spTitle').innerHTML = dot(k.provider) + escapeHtml(keyName);
     $('spTime').textContent = new Date(k.created_at).toLocaleString('en-GB',
       { day:'numeric', month:'long', hour:'2-digit', minute:'2-digit', second:'2-digit' });
 

@@ -24,6 +24,7 @@ import {
 import { priceList, invalidateCatalog, catalogInfo } from '../core/modelCatalog.js';
 import { getBudgetStatus } from '../core/budget.js';
 import { govdeOku } from '../utils/honoYardim.js';
+import { checkRateLimit } from '../middleware/rateLimiter.js';
 
 // Ret mesajları müşteriye yol göstersin diye değiştirildi; eski kayıtlar
 // eski metinle duruyor. Süzgeçler ikisini de tanımak zorunda, yoksa
@@ -708,7 +709,7 @@ ${YAZI_TIPI}
   temaUygula(temaSecimi);
 
   const SAGLAYICI = { openai:'OpenAI', anthropic:'Anthropic', gemini:'Google' };
-  const nokta = (p) => '<span class="nokta-s s-' + p + '"></span>';
+  const nokta = (p) => '<span class="nokta-s s-' + kacir(p) + '"></span>';
   const milyon = (v) => v === null || v === undefined ? '—' : '$' + (Number(v) * 1000).toFixed(2);
   const gunTarih = (s) => s ? new Date(s).toLocaleDateString('en-GB',
     { day:'numeric', month:'short', year:'numeric' }) : '—';
@@ -1038,7 +1039,7 @@ ${YAZI_TIPI}
   // Müşteri adları veritabanından geliyor; HTML'e basmadan önce kaçırıyoruz.
   const kacir = (t) => String(t == null ? '' : t)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   const tarih = (s) => new Date(s).toLocaleString('en-GB',
     { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
 
@@ -1132,14 +1133,14 @@ ${YAZI_TIPI}
     const g = kayitlar.map((k, i) => {
       const isFlagged = k.is_flagged ? ' style="background: rgba(255,0,0,0.1); border-left: 3px solid red;"' : '';
       const flagIcon = k.is_flagged ? ' <span title="' + k.flagged_reason + '">🚨</span>' : '';
-      return '<tr class="tiklanir" data-i="' + (bas + i) + '"' + isFlagged + '>' +
+      return '<tr class="tiklanir" tabindex="0" role="button" data-i="' + (bas + i) + '"' + isFlagged + '>' +
       '<td class="sayi">' + tarih(k.created_at) + '</td>' +
       '<td>' + (k.user
         ? kacir(k.user)
         : '<span class="helpText" title="Sent with a key that belongs to no one">' +
           (k.anahtarAdi ? kacir(k.anahtarAdi) : 'shared key') + '</span>') + '</td>' +
       '<td>' + nokta(k.provider) + (SAGLAYICI[k.provider] || k.provider) + '</td>' +
-      '<td>' + k.model + flagIcon + '</td>' +
+      '<td>' + kacir(k.model) + flagIcon + '</td>' +
       '<td class="sayi">' + (k.input_tokens ?? 0) + '</td>' +
       '<td class="sayi">' + (k.output_tokens ?? 0) + '</td>' +
       '<td class="sayi">' + (k.latency_ms ?? 0) + ' ms</td>' +
@@ -1312,7 +1313,7 @@ ${YAZI_TIPI}
     const gi = k.input_tokens ?? 0, ci = k.output_tokens ?? 0;
     const kayitli = Number(k.cost ?? 0);
 
-    $('ypBaslik').innerHTML = nokta(k.provider) + ad;
+    $('ypBaslik').innerHTML = nokta(kacir(k.provider)) + kacir(ad);
     $('ypZaman').textContent = (k.musteri ? k.musteri + ' · ' : '') +
       new Date(k.created_at).toLocaleString('en-GB',
         { day:'numeric', month:'long', hour:'2-digit', minute:'2-digit', second:'2-digit' });
@@ -1321,7 +1322,7 @@ ${YAZI_TIPI}
     if (k.is_flagged) {
       govde += '<div style="background: rgba(255,0,0,0.1); border: 1px solid red; border-radius: 6px; padding: 1rem; margin-bottom: 1rem;">' +
         '<strong style="color: red;">🚨 Dangerous Usage Flagged (OpenAI Moderation)</strong><br>' +
-        '<span style="font-size: 0.85rem;">Category: <b>' + (k.flagged_reason || 'Unknown') + '</b></span>' +
+        '<span style="font-size: 0.85rem;">Category: <b>' + (kacir(k.flagged_reason || 'Unknown')) + '</b></span>' +
         '</div>';
     }
     
@@ -1694,7 +1695,7 @@ ${YAZI_TIPI}
               kacir(m.ad.split('/')[1]) + '</span>').join('')
           : '<span class="hap bek">nothing</span>';
 
-        return '<tr class="tiklanir" data-i="' + i + '">' +
+        return '<tr class="tiklanir" tabindex="0" role="button" data-i="' + i + '">' +
           '<td>' + kacir(k.email) +
             '</td>' +
           '<td>' + modelYazi + '</td>' +
@@ -1925,6 +1926,34 @@ ${YAZI_TIPI}
     });
 
     // Çalışan ekleme butonu: POST /admin/api/customers/:teamId/users
+    $('ypCalisanEkle').onclick = async () => {
+      const eposta = $('ypCalisanEposta').value.trim();
+      $('ypCalisanHata').classList.add('hidden');
+      $('ypCalisanOk').classList.add('hidden');
+      if (!eposta || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(eposta)) {
+        $('ypCalisanHata').textContent = 'Enter a valid email address.';
+        $('ypCalisanHata').classList.remove('hidden');
+        return;
+      }
+      $('ypCalisanEkle').disabled = true;
+      try {
+        const sonuc = await api('/customers/' + k.id + '/users', {
+          method: 'POST',
+          body: JSON.stringify({ email: eposta })
+        });
+        const sifre = sonuc.sifre || '(generated)';
+        $('ypCalisanOk').innerHTML = 'Employee added! Temporary password: <code>' + kacir(sifre) + '</code> — share it securely.';
+        $('ypCalisanOk').classList.remove('hidden');
+        $('ypCalisanEposta').value = '';
+        await kisilerYukle();
+        // Not refreshing the drawer immediately so the password remains visible
+      } catch (e) {
+        $('ypCalisanHata').textContent = e.message || 'Failed to add employee.';
+        $('ypCalisanHata').classList.remove('hidden');
+      } finally {
+        $('ypCalisanEkle').disabled = false;
+      }
+    };
 
     // �al��an ekleme butonu: POST /admin/api/customers/:teamId/users
     if ($('ypCalisanlar')) {
@@ -4984,7 +5013,7 @@ export function adminRoutes(app: Hono) {
   app.get('/admin/api/cron/sessions', async (c) => {
     // Vercel Cron yetkilendirmesi (iste�e ba�l� g�venlik, Vercel token yollar)
     const auth = c.req.header('authorization');
-    if (process.env.VERCEL === '1' && auth !== `Bearer ${process.env.CRON_SECRET}`) {
+    if (!process.env.CRON_SECRET || auth !== `Bearer ${process.env.CRON_SECRET}`) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
     
@@ -5040,10 +5069,12 @@ export function adminRoutes(app: Hono) {
 app.get('/admin/api/cron/prices', async (c) => {
     const hidden = process.env.CRON_SECRET;
     const baslik = c.req.header('x-cron-secret');
+    // User-Agent check removed for security — spoofable, never a real auth signal.
+    // Still computed here (not for auth) so the manual-vs-cron label below works.
     const vercelCron = String(c.req.header('user-agent') ?? '').includes('vercel-cron');
     const admin = await yoneticiMi(c);
 
-    if (!admin && !vercelCron && (!hidden || baslik !== hidden)) {
+    if (!admin && (!hidden || baslik !== hidden)) {
       return c.json({ error: 'Unauthorized.' }, 401 as any);
     }
 
@@ -5207,6 +5238,12 @@ app.get('/admin/api/cron/prices', async (c) => {
   const URETIM = process.env.VERCEL === '1' || process.env.NODE_ENV === 'production';
 
   app.post('/admin/api/session', async (c) => {
+    // Brute-force korumas�: IP ba��na dakikada 5 deneme
+    const loginIp = c.req.header('x-forwarded-for')?.split(',')[0]?.trim() || 'unknown';
+    const loginHiz = await checkRateLimit(`admin-login:${loginIp}`, 5, 60);
+    if (!loginHiz.success) {
+      return c.json({ error: 'Too many login attempts. Please wait.' }, 429 as any);
+    }
     const g = (await govdeOku<{ email?: string; password?: string }>(c)) ?? {};
     const eposta = String(g?.email ?? '').trim();
     const sifre = String(g?.password ?? '');

@@ -5,7 +5,7 @@
 import { verifyClient } from '../middleware/authMiddleware.js';
 import { checkDomainWhitelist } from '../middleware/domainWhitelister.js';
 import { checkRateLimit } from '../middleware/rateLimiter.js';
-import { supabase } from '../services/db.js';
+import { supabase } from '../utils/supabaseClient.js';
 
 // GEÇİCİ: verifyClient şu an clients tablosundan yalnızca (id, name, is_active)
 // seçiyor; client_type, allowed_domains ve allowed_models kolonları sorguya dahil

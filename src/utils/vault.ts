@@ -1,6 +1,33 @@
 import { Redis } from '@upstash/redis'
 import type { Context } from 'hono'
 
+import * as crypto from 'crypto';
+
+function getEncryptionKey() {
+  const secret = process.env.SESSION_SECRET || process.env.ADMIN_TOKEN || 'default-unsafe-secret-please-change';
+  return crypto.createHash('sha256').update(secret).digest();
+}
+
+function encrypt(text: string): string {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', getEncryptionKey(), iv);
+  const encrypted = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `${iv.toString('hex')}:${encrypted.toString('hex')}:${tag.toString('hex')}`;
+}
+
+function decrypt(text: string): string {
+  const parts = text.split(':');
+  if (parts.length !== 3) return text; // Fallback for unencrypted legacy keys
+  const iv = Buffer.from(parts[0], 'hex');
+  const encrypted = Buffer.from(parts[1], 'hex');
+  const tag = Buffer.from(parts[2], 'hex');
+  const decipher = crypto.createDecipheriv('aes-256-gcm', getEncryptionKey(), iv);
+  decipher.setAuthTag(tag);
+  return decipher.update(encrypted) + decipher.final('utf8');
+}
+
+
 // Projedeki mevcut Upstash Redis bağlantımızı kullanıyoruz
 const redis = new Redis({
   url: process.env.UPSTASH_REDIS_REST_URL!,
@@ -40,6 +67,7 @@ export async function getProviderKey(provider: string, c?: Context): Promise<str
     }
 
     const { apiKey, staleAt } = cachedData;
+    const decryptedApiKey = decrypt(apiKey);
     
     // Eğer verinin süresi geçmişse ama hala Redis'te yaşıyorsa (Stale)
     // Kullanıcıyı hiç bekletmeden (0ms gecikme ile) arkada yenilemeyi tetikle.
@@ -57,7 +85,7 @@ export async function getProviderKey(provider: string, c?: Context): Promise<str
     }
 
     // Anahtar bellekte var, (eskimiş olsa bile) anında döndür!
-    return apiKey;
+    return decryptedApiKey;
   }
 
   // 2. ADIM: Redis'te HİÇ yoksa (İlk İstek), mecbur bekleyip Kasa'dan (Vault) çekeceğiz
@@ -85,11 +113,21 @@ async function refreshKeyInVault(provider: string, cacheKey: string): Promise<st
   // staleAt: 5 dakika (300,000 ms) sonra "eskimiş" kabul edilecek (Arka planda yenilenecek)
   // ex: Redis'ten tamamen silinmesi için 2 saat (7200 sn) veriyoruz ki aradaki 2 saatte gelen ilk müşteri beklemeyip stale veriyi alabilsin.
   const cacheObject: CachedKey = {
-    apiKey: realApiKey,
+    apiKey: encrypt(realApiKey),
     staleAt: Date.now() + 300 * 1000 // 5 dk sonra bayat
   }
 
   await redis.set(cacheKey, cacheObject, { ex: 7200 })
 
   return realApiKey;
+}
+
+/**
+ * Bir saglayicidan 401 hatasi alininca onbellegi temizler,
+ * boylece bir sonraki istekte Vault'tan taze anahtar cekilir.
+ */
+export async function invalidateVaultKey(provider: string): Promise<void> {
+  const cacheKey = `vault_key:${provider}`;
+  await redis.del(cacheKey);
+  console.log(`[Vault] ${provider} onbellegi temizlendi.`);
 }

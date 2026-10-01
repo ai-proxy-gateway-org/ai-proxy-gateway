@@ -1926,36 +1926,6 @@ ${YAZI_TIPI}
     });
 
     // Çalışan ekleme butonu: POST /admin/api/customers/:teamId/users
-    $('ypCalisanEkle').onclick = async () => {
-      const eposta = $('ypCalisanEposta').value.trim();
-      $('ypCalisanHata').classList.add('hidden');
-      $('ypCalisanOk').classList.add('hidden');
-      if (!eposta || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(eposta)) {
-        $('ypCalisanHata').textContent = 'Enter a valid email address.';
-        $('ypCalisanHata').classList.remove('hidden');
-        return;
-      }
-      $('ypCalisanEkle').disabled = true;
-      try {
-        const sonuc = await api('/customers/' + k.id + '/users', {
-          method: 'POST',
-          body: JSON.stringify({ email: eposta })
-        });
-        const sifre = sonuc.sifre || '(generated)';
-        $('ypCalisanOk').innerHTML = 'Employee added! Temporary password: <code>' + kacir(sifre) + '</code> — share it securely.';
-        $('ypCalisanOk').classList.remove('hidden');
-        $('ypCalisanEposta').value = '';
-        await kisilerYukle();
-        // Not refreshing the drawer immediately so the password remains visible
-      } catch (e) {
-        $('ypCalisanHata').textContent = e.message || 'Failed to add employee.';
-        $('ypCalisanHata').classList.remove('hidden');
-      } finally {
-        $('ypCalisanEkle').disabled = false;
-      }
-    };
-
-    // �al��an ekleme butonu: POST /admin/api/customers/:teamId/users
     if ($('ypCalisanlar')) {
       $('ypCalisanlar').onclick = async (e) => {
         const silBtn = e.target.closest('[data-sil-user]');

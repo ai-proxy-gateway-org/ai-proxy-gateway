@@ -471,8 +471,14 @@ ${YAZI_TIPI}
           into it. Use it for a model you have decided against.
         </div>
       </div>
-      <div class="satirbasi" style="margin-top:0">
-        <div class="smallTitle">Models</div>
+      <div class="satirbasi" style="margin-top:0;display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:.75rem">
+          <div class="smallTitle" style="margin:0">Models</div>
+          <div class="counter" id="mSayac"></div>
+        </div>
+        <div style="flex:1;max-width:360px">
+          <input type="text" id="modelArama" placeholder="Search models (e.g. gpt-4o, claude)..." style="width:100%;padding:.45rem .8rem;border-radius:8px;border:1px solid var(--line-2);background:var(--surface);color:var(--ink);font-size:.85rem;outline:none">
+        </div>
       </div>
       <div class="kart hidden" id="ekleKart" style="max-width:52rem;margin-bottom:1.25rem">
         <div class="smallTitle">Add a new model</div>
@@ -501,7 +507,14 @@ ${YAZI_TIPI}
         <div class="kaydir"><table id="tablo"></table></div>
         <div class="bosdurum hidden" id="bos"></div>
       </div>
-      <div class="helpText" style="margin-top:.8rem" id="altNot"></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:.8rem;flex-wrap:wrap;gap:.8rem">
+        <div class="helpText" id="altNot"></div>
+        <div id="mSayfalama" style="display:flex;align-items:center;gap:.5rem">
+          <button class="btn outlinedBtn" id="mOncekiSayfa" style="padding:.35rem .75rem;font-size:.8rem" disabled>&larr; Previous</button>
+          <span class="helpText" id="mSayfaBilgi" style="font-size:.85rem;font-weight:600;min-width:90px;text-align:center">Page 1 of 1</span>
+          <button class="btn outlinedBtn" id="mSonrakiSayfa" style="padding:.35rem .75rem;font-size:.8rem">Next &rarr;</button>
+        </div>
+      </div>
       </section>
 
       <section data-bolum="users" class="hidden">
@@ -803,7 +816,10 @@ ${YAZI_TIPI}
     });
 
     $('tablo').querySelectorAll('.sutunFiltrePopup input').forEach(inp =>
-      inp.addEventListener('input', drawTable));
+      inp.addEventListener('input', () => {
+        modelSayfasi = 1;
+        drawTable();
+      }));
 
     $('tablo').querySelectorAll('.temizle').forEach(btn => {
       btn.addEventListener('click', (e) => {
@@ -812,6 +828,7 @@ ${YAZI_TIPI}
         panel.querySelectorAll('input[type="checkbox"]').forEach(c => c.checked = true);
         panel.querySelectorAll('input[type="text"], input[type="number"]').forEach(i => i.value = '');
         panel.querySelectorAll('input[type="radio"]').forEach(r => r.checked = (r.value === ''));
+        modelSayfasi = 1;
         drawTable();
       });
     });
@@ -825,6 +842,9 @@ ${YAZI_TIPI}
     return 'elle';
   }
 
+  const MODELLER_SAYFA_BOYUTU = 56;
+  let modelSayfasi = 1;
+
   function drawTable() {
     if (!modeller.length) {
       $('tablo').innerHTML = '';
@@ -832,6 +852,9 @@ ${YAZI_TIPI}
         '<p>Add the first model to get started.</p>';
       $('bos').classList.remove('hidden');
       $('altNot').textContent = '';
+      if ($('mSayfaBilgi')) $('mSayfaBilgi').textContent = 'Page 1 of 1';
+      if ($('mOncekiSayfa')) $('mOncekiSayfa').disabled = true;
+      if ($('mSonrakiSayfa')) $('mSonrakiSayfa').disabled = true;
       return;
     }
     $('bos').classList.add('hidden');
@@ -840,7 +863,9 @@ ${YAZI_TIPI}
     // Her sütunun kendi paneli kendi süzgecini taşıyor. Bir onay kutusu
     // grubunda hepsi işaretliyse (varsayılan durum) o sütun hiç süzmüyor
     // demektir — kullanıcı en az birini kaldırınca gerçek süzgeç başlıyor.
-    const arama = ($('fArama') ? $('fArama').value : '').trim().toLowerCase();
+    const aramaGenel = ($('modelArama') ? $('modelArama').value : '').trim().toLowerCase();
+    const aramaSutun = ($('fArama') ? $('fArama').value : '').trim().toLowerCase();
+    const arama = aramaGenel || aramaSutun;
     const isaretli = (panel) => new Set(
       [...$('tablo').querySelectorAll('[data-panel="' + panel + '"] input:checked')]
         .map(c => c.value));
@@ -858,7 +883,12 @@ ${YAZI_TIPI}
     const simdi = Date.now();
 
     const suz = (l) => l.filter(m => {
-      if (arama && !(m.provider + '/' + m.model).toLowerCase().includes(arama)) return false;
+      if (arama) {
+        const tamAd = (m.provider + '/' + m.model).toLowerCase();
+        const modelAdi = (m.model || '').toLowerCase();
+        const saglayici = (m.provider || '').toLowerCase();
+        if (!tamAd.includes(arama) && !modelAdi.includes(arama) && !saglayici.includes(arama)) return false;
+      }
       if (saglayiciSecili.size < 3 && !saglayiciSecili.has(m.provider)) return false;
       if (girdiMin !== null && (m.input_price ?? -1) < girdiMin) return false;
       if (girdiMax !== null && (m.input_price ?? Infinity) > girdiMax) return false;
@@ -876,8 +906,29 @@ ${YAZI_TIPI}
     });
     const gosterilen = suz(modeller);
 
+    const toplamSayfa = Math.max(1, Math.ceil(gosterilen.length / MODELLER_SAYFA_BOYUTU));
+    if (modelSayfasi > toplamSayfa) modelSayfasi = toplamSayfa;
+    if (modelSayfasi < 1) modelSayfasi = 1;
+
+    const baslangic = (modelSayfasi - 1) * MODELLER_SAYFA_BOYUTU;
+    const bitis = Math.min(baslangic + MODELLER_SAYFA_BOYUTU, gosterilen.length);
+    const sayfadakiModeller = gosterilen.slice(baslangic, bitis);
+
+    if ($('mSayfaBilgi')) {
+      $('mSayfaBilgi').textContent = 'Page ' + modelSayfasi + ' of ' + toplamSayfa;
+    }
+    if ($('mOncekiSayfa')) {
+      $('mOncekiSayfa').disabled = modelSayfasi <= 1;
+    }
+    if ($('mSonrakiSayfa')) {
+      $('mSonrakiSayfa').disabled = modelSayfasi >= toplamSayfa;
+    }
+    if ($('mSayac')) {
+      $('mSayac').textContent = modeller.length + ' models';
+    }
+
     $('tablo').querySelector('tbody').innerHTML =
-      gosterilen.map(m =>
+      sayfadakiModeller.map(m =>
         '<tr data-id="' + m.id + '">' +
         '<td>' + nokta(m.provider) + m.model + '</td>' +
         '<td>' + (SAGLAYICI[m.provider] || m.provider) + '</td>' +
@@ -909,8 +960,10 @@ ${YAZI_TIPI}
     const pasifSayi = modeller.filter(m => !m.is_active).length;
     const fiyatsiz = modeller.filter(m => m.input_price === null || m.output_price === null).length;
     $('altNot').textContent =
-      gosterilen.length + ' of ' + modeller.length + ' shown · ' +
-      aktifSayisi + ' in service · ' + pasifSayi + ' taken out of service' +
+      (gosterilen.length > MODELLER_SAYFA_BOYUTU
+        ? 'Showing ' + (baslangic + 1) + '–' + bitis + ' of ' + gosterilen.length + ' models (' + modeller.length + ' total)'
+        : gosterilen.length + ' of ' + modeller.length + ' shown') +
+      ' · ' + aktifSayisi + ' in service · ' + pasifSayi + ' taken out of service' +
       (fiyatsiz ? ' · ' + fiyatsiz + ' without a price — these cannot be activated' : '');
   }
 
@@ -2937,6 +2990,27 @@ ${YAZI_TIPI}
   // Süzgeç kontrolleri (arama, sağlayıcı, fiyat, kaynak, durum) artık
   // tabloyla birlikte dinamik kuruluyor (mBaslikKur) — sayfa yüklenirken
   // DOM'da henüz yoklar, burada bağlamak hataya yol açardı.
+
+  if ($('modelArama')) {
+    $('modelArama').addEventListener('input', () => {
+      modelSayfasi = 1;
+      drawTable();
+    });
+  }
+  if ($('mOncekiSayfa')) {
+    $('mOncekiSayfa').addEventListener('click', () => {
+      if (modelSayfasi > 1) {
+        modelSayfasi--;
+        drawTable();
+      }
+    });
+  }
+  if ($('mSonrakiSayfa')) {
+    $('mSonrakiSayfa').addEventListener('click', () => {
+      modelSayfasi++;
+      drawTable();
+    });
+  }
 
   $('ekleAc').addEventListener('click', () => {
     $('ekleKart').classList.toggle('hidden');

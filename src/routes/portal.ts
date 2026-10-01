@@ -1,7 +1,7 @@
 // Müşteri portalı.
 //
-// Müşteri kendi proxy anahtarıyla giriş yapar ve yalnızca kendi kullanım
-// kayıtlarını görür. Ayrı bir kimlik sistemi kurulmadı: anahtar zaten
+// Müşteri kendi proxy keyıyla giriş yapar ve yalnızca kendi kullanım
+// kayıtlarını görür. Ayrı bir kimlik sistemi kurulmadı: key zaten
 // verifyClient tarafından doğrulanabiliyor, ikinci bir giriş mekanizması
 // kurmak gereksiz karmaşıklık olurdu.
 //
@@ -12,14 +12,14 @@
 import type { Hono, Context } from 'hono';
 import { STIL, YAZI_TIPI } from '../ui/stil.js';
 import { verifyClient } from '../middleware/authMiddleware.js';
-import { butceDurumu } from '../core/butce.js';
+import { getBudgetStatus } from '../core/budget.js';
 import {
   girisDogrula, oturumdakiHesap, sifreDegistir, CEREZ_ADI
 } from '../core/kimlik.js';
 import { cerezYaz, cerezSil } from '../utils/hesap.js';
 import { supabase } from '../utils/supabaseClient.js';
 import { hashApiKey } from '../utils/auth.js';
-import { teslimAc } from '../core/anahtarTeslim.js';
+import { openDelivery } from '../core/keyDelivery.js';
 import { checkRateLimit } from '../middleware/rateLimiter.js';
 import { priceList } from '../core/modelCatalog.js';
 import { govdeOku, istekIp } from '../utils/honoYardim.js';
@@ -30,16 +30,16 @@ const SAYFA = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Usage Portal</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23111214'/%3E%3Ctext x='16' y='22' font-family='system-ui,sans-serif' font-size='14' font-weight='700' fill='white' text-anchor='middle'%3EAP%3C/text%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23E6007E'/%3E%3Ctext x='16' y='22' font-family='system-ui,sans-serif' font-size='14' font-weight='700' fill='white' text-anchor='middle'%3EAP%3C/text%3E%3C/svg%3E">
 ${YAZI_TIPI}
 <style>${STIL}
-  /* Giriş yolu seçimi: hesap ya da anahtar. Anahtar yolu geçici — hesaplar
+  /* Giriş yolu seçimi: hesap ya da key. Anahtar yolu geçici — hesaplar
      yerleşince kaldırılacak, o yüzden ikincil duruyor. */
   .girisSekme { display:flex; gap:.3rem; background:var(--sunk); padding:.25rem;
     border-radius:9px; margin:.6rem 0 1.1rem; }
   .girisSekme button { flex:1; padding:.45rem .6rem; font:inherit; font-size:.86rem;
     border:0; border-radius:7px; background:none; color:var(--ink-3); cursor:pointer; }
-  .girisSekme button.secili { background:var(--surface); color:var(--ink); font-weight:500;
+  .girisSekme button.selected { background:var(--surface); color:var(--ink); font-weight:500;
     box-shadow:0 1px 2px rgba(0,0,0,.06); }
   .alanEtiket { display:block; font-size:.85rem; color:var(--ink-3); }
   .alanEtiket input { margin-top:.35rem; }
@@ -66,11 +66,11 @@ ${YAZI_TIPI}
       <div><div class="markaAd">AI Proxy</div></div>
     </div>
     <div class="kart">
-      <div class="baslikkucuk">Usage Portal</div>
+      <div class="smallTitle">Usage Portal</div>
 
       <div class="girisSekme" id="girisSekme">
-        <button data-yol="hesap" class="secili">Email</button>
-        <button data-yol="anahtar">API key</button>
+        <button data-path="hesap" class="selected">Email</button>
+        <button data-path="key">API key</button>
       </div>
 
       <div id="yolHesap">
@@ -80,33 +80,33 @@ ${YAZI_TIPI}
         <label class="alanEtiket" style="margin-top:.7rem">Password
           <input id="sifre" type="password" placeholder="••••••••••" autocomplete="current-password">
         </label>
-        <button class="dugme koyu" id="btnHesap" style="width:100%;margin-top:.9rem">Sign in</button>
-        <div class="yardim" style="margin-top:.7rem">
+        <button class="btn isDark " id="btnHesap" style="width:100%;margin-top:.9rem">Sign in</button>
+        <div class="helpText" style="margin-top:.7rem">
           Accounts are created by your provider. Forgot your password? Ask them to reset it.
         </div>
       </div>
 
-      <div id="yolAnahtar" class="gizli">
-        <div class="yardim" style="margin:.35rem 0 .9rem">
+      <div id="yolAnahtar" class="hidden">
+        <div class="helpText" style="margin:.35rem 0 .9rem">
           Sign in with the <code>sk-proxy-</code> key you were given.
         </div>
-        <input id="anahtar" type="password" placeholder="sk-proxy-..." autocomplete="off">
-        <button class="dugme koyu" id="btn" style="width:100%;margin-top:.7rem">Sign in</button>
-        <div class="yardim" style="margin-top:.7rem">
+        <input id="key" type="password" placeholder="sk-proxy-..." autocomplete="off">
+        <button class="btn isDark " id="btn" style="width:100%;margin-top:.7rem">Sign in</button>
+        <div class="helpText" style="margin-top:.7rem">
           Signing in with a key still works, but accounts are the way forward:
           changing your key no longer locks you out.
         </div>
       </div>
 
-      <div class="uyari gizli" id="hata"></div>
+      <div class="alert hidden" id="error"></div>
     </div>
   </div>
 </div>
 
 <!-- ================= UYGULAMA ================= -->
-<div class="uygulama gizli" id="uygulama">
+<div class="appWrap hidden" id="appWrap">
 
-  <aside class="yanmenu">
+  <aside class="sidebar">
     <div class="menuUst">
       <div class="marka" style="margin:0">
         <div class="markaSimge">AP</div>
@@ -119,19 +119,19 @@ ${YAZI_TIPI}
 
     <div class="menuBaslik">Portal</div>
     <nav id="menu">
-      <button data-bolum="genel" class="secili">
+      <button data-section="genel" class="selected">
         <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>
         Overview</button>
-      <button data-bolum="istekler">
+      <button data-section="requests">
         <svg viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
         Requests</button>
-      <button data-bolum="fiyat">
+      <button data-section="price">
         <svg viewBox="0 0 24 24"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
         Pricing</button>
-      <button data-bolum="anahtar">
+      <button data-section="key">
         <svg viewBox="0 0 24 24"><circle cx="8" cy="12" r="3.5"/><path d="M11.5 12H21l-2 2.5M17 12v3"/></svg>
         API Keys</button>
-      <button data-bolum="ayarlar">
+      <button data-section="settings">
         <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/></svg>
         Settings</button>
     </nav>
@@ -149,32 +149,32 @@ ${YAZI_TIPI}
     </div>
   </aside>
 
-  <div class="icerikAlan">
-    <div class="ustCubuk">
+  <div class="contentArea">
+    <div class="topBar">
       <div>
-        <h1 id="sayfaBaslik">Overview</h1>
-        <div class="altbilgi" id="sayfaAlt"></div>
+        <h1 id="pageTitle">Overview</h1>
+        <div class="altbilgi" id="pageSubtitle"></div>
       </div>
       <div style="display:flex;gap:.6rem;align-items:center">
-        <div class="segment gizli" id="filtre">
-          <button data-gun="7">7 days</button>
-          <button data-gun="30" class="secili">30 days</button>
-          <button data-gun="0">All time</button>
+        <div class="segment hidden" id="filter">
+          <button data-day="7">7 days</button>
+          <button data-day="30" class="selected">30 days</button>
+          <button data-day="0">All time</button>
         </div>
-        <button class="dugme cerceveli" id="yenile">Refresh</button>
+        <button class="btn outlinedBtn" id="refresh">Refresh</button>
       </div>
     </div>
 
-    <div class="govde">
-      <div class="uyari gizli" id="uyari"></div>
-      <div class="yukleniyor gizli" id="yukleniyor">Loading...</div>
+    <div class="mainBody">
+      <div class="alert hidden" id="alert"></div>
+      <div class="loading hidden" id="loading">Loading...</div>
 
       <div id="icerik">
         <!-- GENEL BAKIŞ -->
-        <section data-bolum="genel">
-          <div class="kart gizli" id="butceKart">
-            <div class="baslikkucuk">Budget</div>
-            <div class="yardim" style="margin:.3rem 0 .9rem">
+        <section data-section="genel">
+          <div class="kart hidden" id="butceKart">
+            <div class="smallTitle">Budget</div>
+            <div class="helpText" style="margin:.3rem 0 .9rem">
               Requests stop when a limit is used up. Daily resets at midnight,
               monthly on the first.
             </div>
@@ -183,38 +183,38 @@ ${YAZI_TIPI}
         </section>
 
         <!-- İSTEKLER -->
-        <section data-bolum="istekler" class="gizli">
-          <div class="suzgecCubugu">
-            <label class="suzgecAlan">Status
+        <section data-section="requests" class="hidden">
+          <div class="filterBar">
+            <label class="filterArea">Status
               <select id="durumSuzgec">
                 <option value="">All</option>
                 <option value="basarili">Successful</option>
-                <option value="hata">Failed</option>
+                <option value="error">Failed</option>
                 <option value="bekleyen">Pending</option>
               </select>
             </label>
-            <label class="suzgecAlan">Model
+            <label class="filterArea">Model
               <select id="modelSuzgec"><option value="">All models</option></select>
             </label>
             <button class="suzgecDugme" id="benimSuzgec">Only mine</button>
-            <button class="suzgecDugme gizli" id="suzgecSifirla">Clear</button>
-            <div class="sayac" id="sayac" style="margin-left:auto"></div>
+            <button class="suzgecDugme hidden" id="suzgecSifirla">Clear</button>
+            <div class="counter" id="counter" style="margin-left:auto"></div>
           </div>
-          <div class="tablokart">
-            <div class="kaydir"><table id="tablo"></table></div>
-            <div class="bosdurum gizli" id="bos"></div>
+          <div class="tableCard">
+            <div class="scrollWrap"><table id="tablo"></table></div>
+            <div class="emptyState hidden" id="bos"></div>
           </div>
-          <button class="dugme cerceveli gizli" id="dahafazla" style="width:100%;margin-top:.75rem">Load more</button>
+          <button class="btn outlinedBtn hidden" id="dahafazla" style="width:100%;margin-top:.75rem">Load more</button>
         </section>
 
         <!-- PRICING -->
-        <section data-bolum="fiyat" class="gizli">
-          <div class="satirbasi" style="margin-top:0">
-            <div class="baslikkucuk">Model pricing</div>
-            <div class="sayac" id="fiyatSayac"></div>
+        <section data-section="price" class="hidden">
+          <div class="rowHeader" style="margin-top:0">
+            <div class="smallTitle">Model pricing</div>
+            <div class="counter" id="fiyatSayac"></div>
           </div>
-          <div class="suzgecCubugu">
-            <label class="suzgecAlan">Provider
+          <div class="filterBar">
+            <label class="filterArea">Provider
               <select id="fSaglayici">
                 <option value="">All providers</option>
                 <option value="openai">OpenAI</option>
@@ -222,7 +222,7 @@ ${YAZI_TIPI}
                 <option value="gemini">Google</option>
               </select>
             </label>
-            <label class="suzgecAlan">Search
+            <label class="filterArea">Search
               <input id="fArama" placeholder="Model name"
                 style="font:inherit;font-size:.85rem;text-transform:none;letter-spacing:0;
                        padding:.35rem .6rem;border:1px solid var(--line-2);border-radius:8px;
@@ -230,14 +230,14 @@ ${YAZI_TIPI}
             </label>
             <button class="suzgecDugme" id="fSadeceAcik">Only what I can use</button>
           </div>
-          <div class="tablokart"><div class="kaydir"><table id="fiyatTablo"></table></div></div>
-          <div class="yardim" style="margin-top:.7rem">
+          <div class="tableCard"><div class="scrollWrap"><table id="fiyatTablo"></table></div></div>
+          <div class="helpText" style="margin-top:.7rem">
             Prices are set by your system administrator and shown per 1M tokens.
           </div>
 
-          <div class="satirbasi"><div class="baslikkucuk">Cost calculator</div></div>
+          <div class="rowHeader"><div class="smallTitle">Cost calculator</div></div>
           <div class="kart" style="max-width:44rem">
-            <div class="yardim" style="margin-bottom:1.2rem">
+            <div class="helpText" style="margin-bottom:1.2rem">
               Estimate what a request will cost before you send it.
             </div>
             <div class="hesapForm">
@@ -246,10 +246,10 @@ ${YAZI_TIPI}
               <label>Output tokens<input id="hesapCikti" type="number" min="0" value="2000"></label>
             </div>
 
-            <dl class="ozellik" id="modelDetay" style="margin-top:1.4rem"></dl>
+            <dl class="propertyList" id="modelDetay" style="margin-top:1.4rem"></dl>
             <div class="hesap" id="hesapSonuc" style="margin-top:1.3rem"></div>
 
-            <div class="yardim" style="margin-top:1rem">
+            <div class="helpText" style="margin-top:1rem">
               This is an estimate. To verify a real charge, open any record under
               <b>Requests</b> — the stored cost is recomputed and compared there.
             </div>
@@ -257,30 +257,30 @@ ${YAZI_TIPI}
         </section>
 
         <!-- AYARLAR -->
-        <section data-bolum="ayarlar" class="gizli">
-          <div class="kart gizli" id="hesapKart" style="max-width:44rem;margin-bottom:.85rem">
-            <div class="baslikkucuk">Your account</div>
-            <div class="yardim" style="margin-top:.35rem" id="hesapBilgi"></div>
+        <section data-section="settings" class="hidden">
+          <div class="kart hidden" id="hesapKart" style="max-width:44rem;margin-bottom:.85rem">
+            <div class="smallTitle">Your account</div>
+            <div class="helpText" style="margin-top:.35rem" id="hesapBilgi"></div>
 
-            <div class="formSatir" style="margin-top:1.2rem;grid-template-columns:1fr 1fr">
+            <div class="formRow" style="margin-top:1.2rem;grid-template-columns:1fr 1fr">
               <label>Current password
                 <input id="sifreEski" type="password" autocomplete="current-password"></label>
               <label>New password
                 <input id="sifreYeni" type="password" autocomplete="new-password"
                        placeholder="at least 10 characters"></label>
             </div>
-            <button class="dugme koyu" id="sifreDegistir" style="margin-top:1.1rem">
+            <button class="btn isDark " id="sifreDegistir" style="margin-top:1.1rem">
               Change password</button>
-            <div class="yardim" style="margin-top:.7rem">
+            <div class="helpText" style="margin-top:.7rem">
               Changing your password signs you out everywhere, including sessions you forgot
               about on other devices.
             </div>
-            <div class="uyari gizli" id="sifreNot"></div>
+            <div class="alert hidden" id="sifreNot"></div>
           </div>
 
           <div class="kart" style="max-width:44rem">
-            <div class="baslikkucuk">Key management</div>
-            <div class="yardim" style="margin-top:.35rem">
+            <div class="smallTitle">Key management</div>
+            <div class="helpText" style="margin-top:.35rem">
               Contact your system administrator to rotate or revoke your key.
               This is not yet available from the portal.
             </div>
@@ -288,27 +288,27 @@ ${YAZI_TIPI}
         </section>
 
         <!-- ANAHTARIM -->
-        <section data-bolum="anahtar" class="gizli">
+        <section data-section="key" class="hidden">
           <div class="kart" style="max-width:44rem">
-            <div class="baslikkucuk">Key details</div>
-            <dl class="ozellik" id="anahtarBilgi" style="margin-top:1rem"></dl>
+            <div class="smallTitle">Key details</div>
+            <dl class="propertyList" id="anahtarBilgi" style="margin-top:1rem"></dl>
           </div>
-          <div class="kart gizli" id="teslimKart" style="max-width:44rem;margin-bottom:.85rem">
-            <div class="baslikkucuk">Your new key</div>
+          <div class="kart hidden" id="teslimKart" style="max-width:44rem;margin-bottom:.85rem">
+            <div class="smallTitle">Your new key</div>
             <div class="anahtarKutu" id="teslimSonuc" style="margin-top:.8rem"></div>
           </div>
 
           <div class="kart" style="max-width:44rem;margin-top:.85rem">
-            <div class="baslikkucuk">Access permissions</div>
-            <div class="yardim" style="margin-top:.3rem">
+            <div class="smallTitle">Access permissions</div>
+            <div class="helpText" style="margin-top:.3rem">
               These are set by your system administrator and cannot be changed here.
             </div>
-            <dl class="ozellik" id="izinBilgi" style="margin-top:1rem"></dl>
+            <dl class="propertyList" id="izinBilgi" style="margin-top:1rem"></dl>
           </div>
 
           <div class="kart" style="max-width:44rem;margin-top:.85rem">
-            <div class="baslikkucuk">Request a model</div>
-            <div class="yardim" style="margin-top:.3rem">
+            <div class="smallTitle">Request a model</div>
+            <div class="helpText" style="margin-top:.3rem">
               Not on your list? Ask for it here instead of trying it blind —
               your administrator sees this in Access Requests.
             </div>
@@ -319,9 +319,9 @@ ${YAZI_TIPI}
                 <option value="gemini">gemini</option>
               </select>
               <input id="talepModel" placeholder="e.g. gpt-4o" style="width:auto;flex:1;min-width:10rem">
-              <button class="dugme koyu" id="talepGonder">Request access</button>
+              <button class="btn isDark " id="talepGonder">Request access</button>
             </div>
-            <div class="yardim gizli" id="talepNot" style="margin-top:.6rem"></div>
+            <div class="helpText hidden" id="talepNot" style="margin-top:.6rem"></div>
           </div>
         </section>
       </div>
@@ -329,24 +329,24 @@ ${YAZI_TIPI}
   </div>
 </div>
 
-<div class="perde gizli" id="perde"></div>
-<aside class="yanpanel gizli" id="yanpanel">
-  <div class="yanpanelUst">
-    <div><h3 id="ypBaslik"></h3><div class="zaman" id="ypZaman"></div></div>
+<div class="backdrop hidden" id="backdrop"></div>
+<aside class="sidePanel hidden" id="sidePanel">
+  <div class="sidePanel-top">
+    <div><h3 id="spTitle"></h3><div class="zaman" id="spTime"></div></div>
     <button class="kapat" id="ypKapat" aria-label="Close">&times;</button>
   </div>
-  <div class="yanpanelGovde" id="ypGovde"></div>
+  <div class="yanpanelGovde" id="spBody"></div>
 </aside>
 
 <script>
-  let anahtar = null, hesap = null, gun = 30, offset = 0, toplam = 0,
-      bolum = 'genel', sadeceBenim = false,
+  let key = null, hesap = null, day = 30, offset = 0, toplam = 0,
+      section = 'genel', sadeceBenim = false,
       durumSuzgec = '', modelSuzgec = '', fSadeceAcik = false;
-  let fiyatlar = {};        // model → { input, output }, 1000 token başına
-  let satirlar = [];        // ekranda duran istek kayıtları
+  let prices = {};        // model → { input, output }, 1000 token başına
+  let satirlar = [];        // ekranda duran request kayıtları
 
   // Anahtar tarayıcının kalıcı belleğinde ama SÜRE SINIRLI tutuluyor.
-  // Süresiz saklamak istemedik: anahtar aynı zamanda API anahtarı, tarayıcıda
+  // Süresiz saklamak istemedik: key aynı zamanda API keyı, tarayıcıda
   // sonsuza kadar durmamalı. 12 saat sonra kendiliğinden düşüyor.
   const DEPO = 'proxy-oturum';
   const SURE = 12 * 60 * 60 * 1000;
@@ -368,25 +368,25 @@ ${YAZI_TIPI}
   };
   const $ = (id) => document.getElementById(id);
   // Anahtar adları veritabanından geliyor; HTML'e basmadan önce kaçırıyoruz.
-  const kacir = (t) => String(t == null ? '' : t)
+  const escapeHtml = (t) => String(t == null ? '' : t)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 
   // Anahtarla girildiyse başlık ekleniyor; oturumla girildiyse çerez zaten
-  // gidiyor ve anahtar elimizde yok.
-  const basliklar = () => anahtar ? { authorization: 'Bearer ' + anahtar } : {};
+  // gidiyor ve key elimizde yok.
+  const basliklar = () => key ? { authorization: 'Bearer ' + key } : {};
 
   // --- Tema: sistem tercihini izler, elle değiştirilirse hatırlar ---
   const AY = '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>';
   const GUNES = '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/>';
 
-  let temaSecimi = null;
+  let themeChoice = null;
 
-  function temaUygula(secim) {
+  function applyTheme(secim) {
     const kok = document.documentElement;
     if (secim) kok.setAttribute('data-tema', secim); else kok.removeAttribute('data-tema');
     const koyuMu = secim
-      ? secim === 'koyu'
+      ? secim === 'isDark'
       : matchMedia('(prefers-color-scheme: dark)').matches;
     const simge = koyuMu ? GUNES : AY;
     const yazi = koyuMu ? 'Light mode' : 'Dark mode';
@@ -396,64 +396,64 @@ ${YAZI_TIPI}
     $('temaKoseYazi').textContent = yazi;
   }
 
-  function temaDegistir() {
+  function toggleTheme() {
     const kok = document.documentElement;
-    const suAnKoyu = kok.getAttribute('data-tema') === 'koyu' ||
+    const suAnKoyu = kok.getAttribute('data-tema') === 'isDark' ||
       (!kok.hasAttribute('data-tema') && matchMedia('(prefers-color-scheme: dark)').matches);
-    temaSecimi = suAnKoyu ? 'acik' : 'koyu';
-    try { localStorage.setItem('proxy-tema', temaSecimi); } catch (e) {}
-    temaUygula(temaSecimi);
+    themeChoice = suAnKoyu ? 'acik' : 'isDark';
+    try { localStorage.setItem('proxy-tema', themeChoice); } catch (e) {}
+    applyTheme(themeChoice);
   }
 
-  try { temaSecimi = localStorage.getItem('proxy-tema'); } catch (e) {}
-  temaUygula(temaSecimi);
+  try { themeChoice = localStorage.getItem('proxy-tema'); } catch (e) {}
+  applyTheme(themeChoice);
   // Para biçimi: küçük tutarlarda anlamlı basamak kalsın, büyükte sadeleşsin.
-  const para = (n) => { const v = Number(n);
+  const money = (n) => { const v = Number(n);
     return '$' + (v === 0 ? '0.00' : v < 0.001 ? v.toFixed(6) : v < 1 ? v.toFixed(4) : v.toFixed(2)); };
   // 1 doların altındaki tutarlar iki basamağa yuvarlanırsa yanıltıcı oluyor:
   // 0.058248 → "0.06". Küçük tutarlarda anlamlı basamak korunuyor.
   const paraKisa = (n) => { const v = Number(n);
     return '$' + (v === 0 ? '0.00' : v < 0.001 ? v.toFixed(6) : v < 1 ? v.toFixed(4)
       : v < 1000 ? v.toFixed(2) : (v/1000).toFixed(1) + 'K'); };
-  const bin = (n) => Number(n).toLocaleString('en-GB');
-  const tarih = (s) => new Date(s).toLocaleString('en-GB',
+  const thousand = (n) => Number(n).toLocaleString('en-GB');
+  const date = (s) => new Date(s).toLocaleString('en-GB',
     { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' });
-  const gunTarih = (s) => new Date(s).toLocaleDateString('en-GB',
+  const dayDate = (s) => new Date(s).toLocaleDateString('en-GB',
     { day:'numeric', month:'long', year:'numeric' });
 
   const BASLIK = {
     genel:    ['Overview',   'Usage summary for the selected period'],
-    kullanim: ['Usage',      'Breakdown by model'],
-    istekler: ['Requests',   'Individual request records'],
-    anahtar:  ['API Keys',   'Your key and access permissions'],
-    ayarlar:  ['Settings',   'Data export and account actions'],
-    fiyat:    ['Pricing',    'Model prices and cost calculator']
+    usage: ['Usage',      'Breakdown by model'],
+    requests: ['Requests',   'Individual request records'],
+    key:  ['API Keys',   'Your key and access permissions'],
+    settings:  ['Settings',   'Data export and account actions'],
+    price:    ['Pricing',    'Model prices and cost calculator']
   };
 
-  function bolumGoster(yeni) {
-    // Açığa çıkan anahtar yalnızca gösterildiği an için ekranda kalmalı.
+  function showSection(yeni) {
+    // Açığa çıkan key yalnızca gösterildiği an için ekranda kalmalı.
     // teslimAcmayiDene() bunu buradan hemen sonra kendi dolduruyor; başka
     // her geçişte (ki bu satır ondan önce çalışır) temizlenip gizleniyor —
-    // aksi halde sekme değişip "Anahtarım"a dönünce anahtar hâlâ görünüyordu.
-    $('teslimKart').classList.add('gizli');
+    // aksi halde tab değişip "Anahtarım"a dönünce key hâlâ görünüyordu.
+    $('teslimKart').classList.add('hidden');
     $('teslimSonuc').innerHTML = '';
 
-    bolum = yeni;
+    section = yeni;
     document.querySelectorAll('#menu button').forEach(b =>
-      b.classList.toggle('secili', b.dataset.bolum === yeni));
-    document.querySelectorAll('section[data-bolum]').forEach(s =>
-      s.classList.toggle('gizli', s.dataset.bolum !== yeni));
-    $('sayfaBaslik').textContent = BASLIK[yeni][0];
-    $('sayfaAlt').textContent = BASLIK[yeni][1];
-    $('filtre').classList.toggle('gizli',
-      yeni === 'anahtar' || yeni === 'ayarlar' || yeni === 'fiyat');
-    if (yeni === 'ayarlar') ayarlarTazele();
+      b.classList.toggle('selected', b.dataset.section === yeni));
+    document.querySelectorAll('section[data-section]').forEach(s =>
+      s.classList.toggle('hidden', s.dataset.section !== yeni));
+    $('pageTitle').textContent = BASLIK[yeni][0];
+    $('pageSubtitle').textContent = BASLIK[yeni][1];
+    $('filter').classList.toggle('hidden',
+      yeni === 'key' || yeni === 'settings' || yeni === 'price');
+    if (yeni === 'settings') ayarlarTazele();
 
-    // Kullanım ve istek sekmelerine her girişte veri tazeleniyor. Önce
-    // yalnızca girişte bir kez çekiliyordu: yeni bir istek attıktan sonra
+    // Kullanım ve request sekmelerine her girişte veri tazeleniyor. Önce
+    // yalnızca girişte bir kez çekiliyordu: yeni bir request attıktan sonra
     // sekmeye dönünce eski liste duruyordu ve sayfayı elle yenilemek
     // gerekiyordu.
-    if (yeni === 'istekler' || yeni === 'genel') {
+    if (yeni === 'requests' || yeni === 'genel') {
       offset = 0;
       kullanimGetir(false);
     }
@@ -461,84 +461,84 @@ ${YAZI_TIPI}
 
   const SAGLAYICI = { openai:'s-openai', anthropic:'s-anthropic', gemini:'s-gemini' };
   const saglayiciAdi = (m) => String(m).split('/')[0];
-  const nokta = (m) => '<span class="nokta-s ' + (SAGLAYICI[saglayiciAdi(m)] || '') + '"></span>';
+  const dot = (m) => '<span class="dotS ' + (SAGLAYICI[saglayiciAdi(m)] || '') + '"></span>';
 
 
-  // Üç durum var: success, error, pending. Önceden success dışındaki her şey
-  // hata sayılıyordu; pending hata değil, kaydı henüz tamamlanmamış istek.
-  function durumHapi(k) {
-    if (k.status === 'success') return '<span class="hap ok">success</span>';
-    if (k.status === 'pending') return '<span class="hap bek">pending</span>';
-    return '<span class="hap err">'+(k.error_message || 'error').slice(0,38)+'</span>';
+  // Üç status var: success, error, pending. Önceden success dışındaki her şey
+  // error sayılıyordu; pending error değil, kaydı henüz tamamlanmamış request.
+  function statusBadge(k) {
+    if (k.status === 'success') return '<span class="badge ok">success</span>';
+    if (k.status === 'pending') return '<span class="badge pending">pending</span>';
+    return '<span class="badge err">'+(k.error_message || 'error').slice(0,38)+'</span>';
   }
 
-  function satirlariCiz(kayitlar, ekle) {
-    if (ekle) satirlar = satirlar.concat(kayitlar); else satirlar = kayitlar.slice();
-    const bas = ekle ? satirlar.length - kayitlar.length : 0;
-    const g = kayitlar.map((k, i) =>
-      '<tr class="tiklanir" data-i="'+(bas+i)+'"><td class="sayi">'+tarih(k.created_at)+'</td>'+
-      '<td>'+nokta(k.provider)+k.provider+'/'+k.model+'</td>'+
+  function satirlariCiz(records, ekle) {
+    if (ekle) satirlar = satirlar.concat(records); else satirlar = records.slice();
+    const headers = ekle ? satirlar.length - records.length : 0;
+    const g = records.map((k, i) =>
+      '<tr class="clickable" data-i="'+(headers+i)+'"><td class="sayi">'+date(k.created_at)+'</td>'+
+      '<td>'+dot(k.provider)+k.provider+'/'+k.model+'</td>'+
       '<td class="sayi">'+(k.input_tokens ?? 0)+'</td>'+
       '<td class="sayi">'+(k.output_tokens ?? 0)+'</td>'+
       '<td class="sayi">'+(k.latency_ms ?? 0)+' ms</td>'+
-      '<td class="sayi">'+para(k.cost ?? 0)+'</td>'+
-      '<td>'+durumHapi(k)+'</td></tr>').join('');
+      '<td class="sayi">'+money(k.cost ?? 0)+'</td>'+
+      '<td>'+statusBadge(k)+'</td></tr>').join('');
     if (ekle) $('tablo').querySelector('tbody').insertAdjacentHTML('beforeend', g);
     else $('tablo').innerHTML = '<thead><tr><th>Time</th><th>Model</th><th>Input</th>'+
       '<th>Output</th><th>Latency</th><th>Cost</th><th>Status</th></tr></thead><tbody>'+g+'</tbody>';
   }
 
   function hesapCiz() {
-    const liste = hesap.anahtarlar || [];
+    const liste = hesap.keys || [];
 
     // Anahtarın açık hali hiçbir zaman saklanmıyor — yalnızca ilk on bir
     // karakteri. Ondan öncesinde üretilenlerde o da yok; "null••••null" yerine
     // durumu açıkça yazıyoruz.
     $('anahtarBilgi').innerHTML = liste.length
       ? liste.map(a =>
-          '<dt>' + (a.ad ? kacir(a.ad) : '<span class="yardim">unnamed</span>') +
-          (a.buOturum ? ' <span class="hap ok">this session</span>' : '') +
-          (a.benim ? ' <span class="hap ok">yours</span>'
-                   : a.ortak ? ' <span class="hap">shared</span>' : '') +
+          '<dt>' + (a.ad ? escapeHtml(a.ad) : '<span class="helpText">unnamed</span>') +
+          (a.buOturum ? ' <span class="badge ok">this session</span>' : '') +
+          (a.benim ? ' <span class="badge ok">yours</span>'
+                   : a.ortak ? ' <span class="badge">shared</span>' : '') +
           '</dt><dd>' +
           '<span class="mono">' +
-          (a.onEk ? kacir(a.onEk) + '••••••••' : '<span class="yardim">hidden</span>') +
+          (a.onEk ? escapeHtml(a.onEk) + '••••••••' : '<span class="helpText">hidden</span>') +
           '</span>' +
-          ' · ' + kacir(a.ortam) +
-          ' · ' + (a.aktif ? '<span class="hap ok">active</span>'
-                           : '<span class="hap">revoked</span>') +
-          ' · ' + (a.olusturma ? gunTarih(a.olusturma) : '—') +
+          ' · ' + escapeHtml(a.ortam) +
+          ' · ' + (a.aktif ? '<span class="badge ok">active</span>'
+                           : '<span class="badge">revoked</span>') +
+          ' · ' + (a.olusturma ? dayDate(a.olusturma) : '—') +
           '</dd>').join('')
-      : '<dt>Keys</dt><dd class="yardim">No keys yet.</dd>';
+      : '<dt>Keys</dt><dd class="helpText">No keys yet.</dd>';
     $('izinBilgi').innerHTML =
       '<dt>Client type</dt><dd>' + (hesap.clientType === 'browser-based'
         ? 'Browser-based' : 'Server-based') + '</dd>' +
       '<dt>Available models</dt><dd>' + ((hesap.allowedModels || []).length
         ? hesap.allowedModels.map(m => '<span class="rozet">'+m+'</span>').join('')
-        : '<span class="yardim">none defined</span>') + '</dd>' +
+        : '<span class="helpText">none defined</span>') + '</dd>' +
       '<dt>Allowed domains</dt><dd>' + ((hesap.allowedDomains || []).length
         ? hesap.allowedDomains.map(d => '<span class="rozet">'+d+'</span>').join('')
-        : '<span class="yardim">no restriction</span>') + '</dd>';
+        : '<span class="helpText">no restriction</span>') + '</dd>';
   }
 
-  // --- İstek detayı: maliyet yeniden hesaplanıp kayıtlı değerle karşılaştırılıyor ---
+  // --- İstek detayı: cost yeniden hesaplanıp kayıtlı değerle karşılaştırılıyor ---
   function detayAc(k) {
-    const anahtarAdi = k.provider + '/' + k.model;
-    const f = fiyatlar[anahtarAdi];
+    const keyName = k.provider + '/' + k.model;
+    const f = prices[keyName];
     const gi = k.input_tokens ?? 0, ci = k.output_tokens ?? 0;
     const kayitli = Number(k.cost ?? 0);
 
-    $('ypBaslik').innerHTML = nokta(k.provider) + anahtarAdi;
-    $('ypZaman').textContent = new Date(k.created_at).toLocaleString('en-GB',
+    $('spTitle').innerHTML = dot(k.provider) + keyName;
+    $('spTime').textContent = new Date(k.created_at).toLocaleString('en-GB',
       { day:'numeric', month:'long', hour:'2-digit', minute:'2-digit', second:'2-digit' });
 
-    let govde =
-      '<div class="bolumBaslik">Summary</div>' +
-      '<dl class="ozellik">' +
-        '<dt>Status</dt><dd>' + durumHapi(k) + '</dd>' +
+    let mainBody =
+      '<div class="sectionTitle">Summary</div>' +
+      '<dl class="propertyList">' +
+        '<dt>Status</dt><dd>' + statusBadge(k) + '</dd>' +
         '<dt>Latency</dt><dd>' + (k.latency_ms ?? 0) + ' ms</dd>' +
-        '<dt>Input tokens</dt><dd>' + bin(gi) + '</dd>' +
-        '<dt>Output tokens</dt><dd>' + bin(ci) + '</dd>' +
+        '<dt>Input tokens</dt><dd>' + thousand(gi) + '</dd>' +
+        '<dt>Output tokens</dt><dd>' + thousand(ci) + '</dd>' +
       '</dl>';
 
     // Kişi kendi isteğinin tam olarak ne sorup ne cevap aldığını görebilsin —
@@ -550,17 +550,17 @@ ${YAZI_TIPI}
     const promptGosterim = bicimle(k.prompt);
     const cevapGosterim = bicimle(k.response);
     if (promptGosterim || cevapGosterim) {
-      govde += '<div class="bolumBaslik">Prompt &amp; response</div>';
-      if (promptGosterim) govde += '<div class="yardim">Prompt</div><pre class="kodKutu">' + kacir(promptGosterim) + '</pre>';
-      if (cevapGosterim) govde += '<div class="yardim">Response</div><pre class="kodKutu">' + kacir(cevapGosterim) + '</pre>';
+      mainBody += '<div class="sectionTitle">Prompt &amp; response</div>';
+      if (promptGosterim) mainBody += '<div class="helpText">Prompt</div><pre class="kodKutu">' + escapeHtml(promptGosterim) + '</pre>';
+      if (cevapGosterim) mainBody += '<div class="helpText">Response</div><pre class="kodKutu">' + escapeHtml(cevapGosterim) + '</pre>';
     }
 
     if (k.status === 'pending') {
-      govde += '<div class="bolumBaslik">Cost</div>' +
-        '<div class="dogrula bek">This request was not fully recorded. ' +
+      mainBody += '<div class="sectionTitle">Cost</div>' +
+        '<div class="dogrula pending">This request was not fully recorded. ' +
         'Token counts and cost are missing.</div>';
     } else if (!f) {
-      govde += '<div class="bolumBaslik">Cost</div>' +
+      mainBody += '<div class="sectionTitle">Cost</div>' +
         '<div class="dogrula err">⚠ No price defined for this model, ' +
         'cost cannot be computed.</div>';
     } else {
@@ -569,14 +569,14 @@ ${YAZI_TIPI}
       const yeni = gm + cm;
       const uyusuyor = Math.abs(yeni - kayitli) < 0.0000005;
 
-      govde +=
-        '<div class="bolumBaslik">Cost breakdown</div>' +
+      mainBody +=
+        '<div class="sectionTitle">Cost breakdown</div>' +
         '<div class="hesap">' +
-          '<div class="sat"><span>input ' + bin(gi) + ' ÷ 1000 × $' + f.input + '</span><span>' + para(gm) + '</span></div>' +
-          '<div class="sat"><span>output ' + bin(ci) + ' ÷ 1000 × $' + f.output + '</span><span>' + para(cm) + '</span></div>' +
+          '<div class="sat"><span>input ' + thousand(gi) + ' ÷ 1000 × $' + f.input + '</span><span>' + money(gm) + '</span></div>' +
+          '<div class="sat"><span>output ' + thousand(ci) + ' ÷ 1000 × $' + f.output + '</span><span>' + money(cm) + '</span></div>' +
           '<div class="cizgi"></div>' +
-          '<div class="sat toplam"><span>recomputed</span><span>' + para(yeni) + '</span></div>' +
-          '<div class="sat toplam"><span>stored value</span><span>' + para(kayitli) + '</span></div>' +
+          '<div class="sat toplam"><span>recomputed</span><span>' + money(yeni) + '</span></div>' +
+          '<div class="sat toplam"><span>stored value</span><span>' + money(kayitli) + '</span></div>' +
         '</div>' +
         (uyusuyor
           ? '<div class="dogrula ok">✓ Verified — stored value matches the current price.</div>'
@@ -584,34 +584,34 @@ ${YAZI_TIPI}
             'record was written, or there is a calculation problem.</div>');
     }
 
-    $('ypGovde').innerHTML = govde;
-    $('perde').classList.remove('gizli'); $('yanpanel').classList.remove('gizli');
+    $('spBody').innerHTML = mainBody;
+    $('backdrop').classList.remove('hidden'); $('sidePanel').classList.remove('hidden');
     requestAnimationFrame(() => {
-      $('perde').classList.add('acik'); $('yanpanel').classList.add('acik');
+      $('backdrop').classList.add('acik'); $('sidePanel').classList.add('acik');
     });
   }
 
   function detayKapat() {
-    $('perde').classList.remove('acik'); $('yanpanel').classList.remove('acik');
+    $('backdrop').classList.remove('acik'); $('sidePanel').classList.remove('acik');
     setTimeout(() => {
-      $('perde').classList.add('gizli'); $('yanpanel').classList.add('gizli');
+      $('backdrop').classList.add('hidden'); $('sidePanel').classList.add('hidden');
     }, 180);
   }
 
-  $('perde').addEventListener('click', detayKapat);
+  $('backdrop').addEventListener('click', detayKapat);
   $('ypKapat').addEventListener('click', detayKapat);
   document.addEventListener('keydown', e => { if (e.key === 'Escape') detayKapat(); });
   $('tablo').addEventListener('click', e => {
-    const tr = e.target.closest('tr.tiklanir'); if (!tr) return;
+    const tr = e.target.closest('tr.clickable'); if (!tr) return;
     const k = satirlar[Number(tr.dataset.i)]; if (k) detayAc(k);
   });
 
-  // --- Pricing: fiyatlar 1000 token başına saklanıyor, 1M üzerinden gösteriliyor ---
-  const milyonBasi = (bin) => Number(bin) * 1000;
+  // --- Pricing: prices 1000 token başına saklanıyor, 1M üzerinden gösteriliyor ---
+  const milyonBasi = (thousand) => Number(thousand) * 1000;
 
   function fiyatCiz() {
-    const anahtarlar = Object.keys(fiyatlar).sort();
-    if (!anahtarlar.length) {
+    const keys = Object.keys(prices).sort();
+    if (!keys.length) {
       $('fiyatTablo').innerHTML = '';
       $('hesapSonuc').innerHTML = '';
       return;
@@ -624,50 +624,50 @@ ${YAZI_TIPI}
 
     // Erişim üç durumlu.
     //
-    // Önce yalnızca "enabled / not enabled" vardı ve yanlıştı: fiyat tavanının
+    // Önce yalnızca "enabled / not enabled" vardı ve yanlıştı: price tavanının
     // altındaki bir model izin listesinde olmasa da çağrılabiliyor. "not
     // enabled" yazmak kullanıcıya kapalı olduğunu söylüyordu.
     const erisim = (a) => {
-      if (izinli.has(a)) return { hap: 'ok', yazi: 'yours' };
-      const f = fiyatlar[a];
+      if (izinli.has(a)) return { badge: 'ok', yazi: 'yours' };
+      const f = prices[a];
       if (tavan != null && f && f.output <= tavan)
-        return { hap: 'ok', yazi: 'open — just use it' };
-      return { hap: 'bek', yazi: 'needs approval' };
+        return { badge: 'ok', yazi: 'open — just use it' };
+      return { badge: 'pending', yazi: 'needs approval' };
     };
 
     const sg = ($('fSaglayici') || {}).value || '';
     const ara = (($('fArama') || {}).value || '').trim().toLowerCase();
-    const gorunen = anahtarlar.filter(a => {
+    const gorunen = keys.filter(a => {
       if (sg && saglayiciAdi(a) !== sg) return false;
       if (ara && !a.toLowerCase().includes(ara)) return false;
-      if (fSadeceAcik && erisim(a).hap !== 'ok') return false;
+      if (fSadeceAcik && erisim(a).badge !== 'ok') return false;
       return true;
     });
 
-    $('fiyatSayac').textContent = gorunen.length === anahtarlar.length
-      ? anahtarlar.length + ' models'
-      : gorunen.length + ' of ' + anahtarlar.length + ' models';
+    $('fiyatSayac').textContent = gorunen.length === keys.length
+      ? keys.length + ' models'
+      : gorunen.length + ' of ' + keys.length + ' models';
 
     $('fiyatTablo').innerHTML = gorunen.length
       ? '<thead><tr><th>Model</th><th>Provider</th><th>Input</th><th>Output</th><th>Access</th></tr></thead><tbody>' +
         gorunen.map(a => {
-          const f = fiyatlar[a];
+          const f = prices[a];
           const s2 = saglayiciAdi(a);
           const e = erisim(a);
-          return '<tr><td>' + nokta(a) + a.split('/')[1] + '</td>' +
+          return '<tr><td>' + dot(a) + a.split('/')[1] + '</td>' +
             '<td>' + (SAGLAYICI_ADI[s2] || s2) + '</td>' +
             '<td class="sayi">$' + milyonBasi(f.input).toFixed(2) + ' / 1M</td>' +
             '<td class="sayi">$' + milyonBasi(f.output).toFixed(2) + ' / 1M</td>' +
-            '<td><span class="hap ' + e.hap + '">' + e.yazi + '</span></td></tr>';
+            '<td><span class="badge ' + e.badge + '">' + e.yazi + '</span></td></tr>';
         }).join('') + '</tbody>'
-      : '<tbody><tr><td style="padding:1.2rem" class="yardim">' +
+      : '<tbody><tr><td style="padding:1.2rem" class="helpText">' +
         'No models match these filters.</td></tr></tbody>';
 
     // Hesaplayıcıda yalnızca kullanabildiği modeller — kullanamayacağı bir
     // modelin maliyetini hesaplamak yanıltıcı olur.
-    const secilebilir = anahtarlar.filter(a => izinli.has(a));
+    const secilebilir = keys.filter(a => izinli.has(a));
     const oncekiSecim = $('hesapModel').value;
-    $('hesapModel').innerHTML = (secilebilir.length ? secilebilir : anahtarlar)
+    $('hesapModel').innerHTML = (secilebilir.length ? secilebilir : keys)
       .map(a => '<option value="' + a + '">' + a + '</option>').join('');
     if (oncekiSecim && [...$('hesapModel').options].some(o => o.value === oncekiSecim)) {
       $('hesapModel').value = oncekiSecim;
@@ -677,13 +677,13 @@ ${YAZI_TIPI}
 
   function hesapla() {
     const a = $('hesapModel').value;
-    const f = fiyatlar[a];
+    const f = prices[a];
     if (!f) { $('hesapSonuc').innerHTML = ''; $('modelDetay').innerHTML = ''; return; }
 
     const SG = { openai:'OpenAI', anthropic:'Anthropic', gemini:'Google' };
     const sg = saglayiciAdi(a);
     $('modelDetay').innerHTML =
-      '<dt>Provider</dt><dd>' + nokta(a) + (SG[sg] || sg) + '</dd>' +
+      '<dt>Provider</dt><dd>' + dot(a) + (SG[sg] || sg) + '</dd>' +
       '<dt>Model ID</dt><dd class="mono">' + a.split('/')[1] + '</dd>' +
       '<dt>Input price</dt><dd class="mono">$' + milyonBasi(f.input).toFixed(2) + ' / 1M tokens</dd>' +
       '<dt>Output price</dt><dd class="mono">$' + milyonBasi(f.output).toFixed(2) + ' / 1M tokens</dd>';
@@ -694,12 +694,12 @@ ${YAZI_TIPI}
     const cm = (ci / 1000) * f.output;
 
     $('hesapSonuc').innerHTML =
-      '<div class="sat"><span>input ' + bin(gi) + ' ÷ 1M × $' +
-        milyonBasi(f.input).toFixed(2) + '</span><span>' + para(gm) + '</span></div>' +
-      '<div class="sat"><span>output ' + bin(ci) + ' ÷ 1M × $' +
-        milyonBasi(f.output).toFixed(2) + '</span><span>' + para(cm) + '</span></div>' +
+      '<div class="sat"><span>input ' + thousand(gi) + ' ÷ 1M × $' +
+        milyonBasi(f.input).toFixed(2) + '</span><span>' + money(gm) + '</span></div>' +
+      '<div class="sat"><span>output ' + thousand(ci) + ' ÷ 1M × $' +
+        milyonBasi(f.output).toFixed(2) + '</span><span>' + money(cm) + '</span></div>' +
       '<div class="cizgi"></div>' +
-      '<div class="sat toplam"><span>estimated cost</span><span>' + para(gm + cm) + '</span></div>';
+      '<div class="sat toplam"><span>estimated cost</span><span>' + money(gm + cm) + '</span></div>';
   }
 
   ['hesapModel', 'hesapGirdi', 'hesapCikti'].forEach(id =>
@@ -712,7 +712,7 @@ ${YAZI_TIPI}
     try {
       const c = await fetch('/portal/api/login', { method:'POST',
         headers:{ 'content-type':'application/json' },
-        body: JSON.stringify({ apiKey: anahtar }) });
+        body: JSON.stringify({ apiKey: key }) });
       if (!c.ok) return;
       hesap = await c.json();
       $('menuMusteri').textContent = hesap.name;
@@ -722,28 +722,28 @@ ${YAZI_TIPI}
   }
 
   async function kullanimGetir(ekle) {
-    $('uyari').classList.add('gizli');
+    $('alert').classList.add('hidden');
     if (!ekle) {
-      if (!satirlar.length) $('yukleniyor').classList.remove('gizli');
+      if (!satirlar.length) $('loading').classList.remove('hidden');
       $('icerik').classList.add('mesgul');
     }
     try {
-      const c = await fetch('/portal/api/usage?gun='+gun+'&offset='+offset+
-        (durumSuzgec ? '&durum='+durumSuzgec : '')+
+      const c = await fetch('/portal/api/usage?day='+day+'&offset='+offset+
+        (durumSuzgec ? '&status='+durumSuzgec : '')+
         (modelSuzgec ? '&model='+encodeURIComponent(modelSuzgec) : '')+
         (sadeceBenim ? '&kapsam=benim' : ''), { headers: basliklar() });
       if (!c.ok) throw new Error('sunucu');
       const v = await c.json();
       toplam = v.toplam;
-      if (v.fiyatlar) { fiyatlar = v.fiyatlar; fiyatCiz(); }
+      if (v.prices) { prices = v.prices; fiyatCiz(); }
       if (!ekle) {
         modelSuzgecDoldur(v.donemModelleri);
         // Süzgeç açıksa temizleme düğmesi görünsün.
-        $('suzgecSifirla').classList.toggle('gizli',
+        $('suzgecSifirla').classList.toggle('hidden',
           !durumSuzgec && !modelSuzgec && !sadeceBenim);
         butceCiz(v);
       }
-      if (!v.kayitlar.length && !ekle) {
+      if (!v.records.length && !ekle) {
         $('tablo').innerHTML = '';
         $('bos').innerHTML = '<div class="simge">◷</div><h3>'+
           (durumSuzgec || modelSuzgec || sadeceBenim
@@ -751,52 +751,52 @@ ${YAZI_TIPI}
           (durumSuzgec || modelSuzgec || sadeceBenim
             ? 'Clear a filter or widen the period.'
             : 'Try selecting a different period.')+'</p>';
-        $('bos').classList.remove('gizli');
-        $('sayac').textContent = ''; $('dahafazla').classList.add('gizli');
+        $('bos').classList.remove('hidden');
+        $('counter').textContent = ''; $('dahafazla').classList.add('hidden');
       } else {
-        $('bos').classList.add('gizli');
-        satirlariCiz(v.kayitlar, ekle);
-        const g = offset + v.kayitlar.length;
-        $('sayac').textContent = g + ' / ' + toplam;
-        $('dahafazla').classList.toggle('gizli', g >= toplam);
+        $('bos').classList.add('hidden');
+        satirlariCiz(v.records, ekle);
+        const g = offset + v.records.length;
+        $('counter').textContent = g + ' / ' + toplam;
+        $('dahafazla').classList.toggle('hidden', g >= toplam);
       }
     } catch (e) {
-      $('uyari').textContent = 'Could not load usage data. Check your connection and try again.';
-      $('uyari').classList.remove('gizli');
+      $('alert').textContent = 'Could not load usage data. Check your connection and try again.';
+      $('alert').classList.remove('hidden');
     } finally {
-      $('yukleniyor').classList.add('gizli'); $('icerik').classList.remove('mesgul');
+      $('loading').classList.add('hidden'); $('icerik').classList.remove('mesgul');
     }
   }
 
   async function girisYap(hazirAnahtar) {
     const saklı = typeof hazirAnahtar === 'string' ? hazirAnahtar : null;
-    const d = saklı || $('anahtar').value.trim(); if (!d) return;
-    $('btn').disabled = true; $('hata').classList.add('gizli');
+    const d = saklı || $('key').value.trim(); if (!d) return;
+    $('btn').disabled = true; $('error').classList.add('hidden');
     try {
       const c = await fetch('/portal/api/login', { method:'POST',
         headers:{ 'content-type':'application/json' }, body: JSON.stringify({ apiKey: d }) });
       const v = await c.json();
       if (!c.ok) {
-        anahtarYaz(null);   // saklanan anahtar artık geçersizse temizle
+        anahtarYaz(null);   // saklanan key artık geçersizse clearBtn
         if (!saklı) {
-          $('hata').textContent = v.error || 'Sign-in failed.';
-          $('hata').classList.remove('gizli');
+          $('error').textContent = v.error || 'Sign-in failed.';
+          $('error').classList.remove('hidden');
         }
         return;
       }
-      anahtar = d; anahtarYaz(d);
+      key = d; anahtarYaz(d);
       uygulamayaGir(v);
     } catch (e) {
-      $('hata').textContent = 'Could not reach the server.'; $('hata').classList.remove('gizli');
+      $('error').textContent = 'Could not reach the server.'; $('error').classList.remove('hidden');
     } finally { $('btn').disabled = false; }
   }
 
   // Bütçe çubuğu. Sayı tek başına "ne kadar kaldı"yı hissettirmiyor;
   // dolan kısmı görmek daha hızlı okunuyor.
 
-  // Kalan tutar, sınırdan ayırt edilebilecek kadar hassas yazılıyor.
+  // Kalan amount, sınırdan monthırt edilebilecek kadar hassas yazılıyor.
   //
-  // para() basamak sayısını değerin kendi büyüklüğüne göre seçiyor: 4.999836
+  // money() basamak sayısını değerin kendi büyüklüğüne göre seçiyor: 4.999836
   // bir doların üstünde olduğu için "$5.00" oluyordu ve "$0.000164 of $5 ·
   // $5.00 left" satırı hiç harcama yapılmamış gibi okunuyordu. Harcama varsa
   // kalan sınıra eşit görünmemeli.
@@ -814,18 +814,18 @@ ${YAZI_TIPI}
     const oran = sinir > 0 ? Math.min(100, (harcama / sinir) * 100) : 0;
     const kalan = Math.max(0, sinir - harcama);
     // %80 uyarı eşiği: dolmadan önce fark edilsin.
-    const renk = oran >= 100 ? 'var(--kirmizi)' : oran >= 80 ? 'var(--sari)' : 'var(--yesil)';
+    const renk = oran >= 100 ? 'var(--red)' : oran >= 80 ? 'var(--sari)' : 'var(--yesil)';
     return '<div style="margin-bottom:1rem">' +
       '<div class="oran" style="justify-content:space-between;margin-bottom:.35rem">' +
-      '<span class="yardim">' + etiket + '</span>' +
-      '<span class="yardim">' + para(harcama) + ' of $' + sinir +
+      '<span class="helpText">' + etiket + '</span>' +
+      '<span class="helpText">' + money(harcama) + ' of $' + sinir +
       ' · <b>' + paraKalan(kalan, sinir) + ' left</b></span></div>' +
       '<div class="oranCubuk"><i style="width:' + oran.toFixed(1) + '%;background:' + renk + '"></i></div>' +
       (oran >= 100
-        ? '<div class="yardim" style="margin-top:.35rem;color:var(--kirmizi)">' +
+        ? '<div class="helpText" style="margin-top:.35rem;color:var(--red)">' +
           'Used up — requests are being rejected.</div>'
         : oran >= 80
-          ? '<div class="yardim" style="margin-top:.35rem;color:var(--sari)">' +
+          ? '<div class="helpText" style="margin-top:.35rem;color:var(--sari)">' +
             'Almost used up.</div>'
           : '') +
       '</div>';
@@ -839,11 +839,11 @@ ${YAZI_TIPI}
       (s ? butceCubuk('Company — today', s.gunlukHarcama, s.gunlukSinir) +
            butceCubuk('Company — this month', s.aylikHarcama, s.aylikSinir) : '');
 
-    $('butceKart').classList.toggle('gizli', !parca);
+    $('butceKart').classList.toggle('hidden', !parca);
     if (parca) $('butceSatir').innerHTML = parca;
   }
 
-  // Teslim bağlantısı. Adres /portal/reveal/<jeton> ise anahtar bir kez
+  // Teslim bağlantısı. Adres /portal/reveal/<token> ise key bir kez
   // gösteriliyor. Giriş yapılmadan açılamıyor; giriş sonrası kaldığı yerden
   // devam etsin diye uygulamaya girer girmez çalışıyor.
   async function teslimAcmayiDene() {
@@ -851,24 +851,24 @@ ${YAZI_TIPI}
     // kaçışları çıktıda eriyor ve ifadeyi bozuyor.
     const parcalar = location.pathname.split('/');
     if (parcalar[1] !== 'portal' || parcalar[2] !== 'reveal' || !parcalar[3]) return;
-    const jeton = parcalar[3];
+    const token = parcalar[3];
     try {
-      const c = await fetch('/portal/api/reveal/' + encodeURIComponent(jeton),
+      const c = await fetch('/portal/api/reveal/' + encodeURIComponent(token),
         { headers: basliklar() });
       const v = await c.json();
       if (!c.ok) throw new Error(v.error || 'This link is no longer valid.');
 
-      bolumGoster('anahtar');
-      $('teslimKart').classList.remove('gizli');
+      showSection('key');
+      $('teslimKart').classList.remove('hidden');
       $('teslimSonuc').innerHTML =
-        '<div class="yardim" style="margin-bottom:.5rem">' +
+        '<div class="helpText" style="margin-bottom:.5rem">' +
         'Copy it now &mdash; this link has just been used up and the key ' +
-        'cannot be shown again.</div><code>' + kacir(v.anahtar) + '</code>';
+        'cannot be shown again.</div><code>' + escapeHtml(v.key) + '</code>';
     } catch (e) {
-      bolumGoster('anahtar');
-      $('teslimKart').classList.remove('gizli');
+      showSection('key');
+      $('teslimKart').classList.remove('hidden');
       $('teslimSonuc').innerHTML =
-        '<div class="uyari">' + kacir(e.message) + '</div>';
+        '<div class="alert">' + escapeHtml(e.message) + '</div>';
     } finally {
       // Adresi temizliyoruz: yenilemede tekrar denenmesin, geçmişte kalmasın.
       history.replaceState(null, '', '/portal');
@@ -881,18 +881,18 @@ ${YAZI_TIPI}
     document.title = v.name + ' · Usage Portal';
     $('menuMusteri').textContent = v.name;
     hesapCiz();
-    $('girisEkran').classList.add('gizli');
-    $('uygulama').classList.remove('gizli');
-    bolumGoster('genel');
+    $('girisEkran').classList.add('hidden');
+    $('appWrap').classList.remove('hidden');
+    showSection('genel');
     offset = 0; kullanimGetir(false);
     }
   // teslimAcmayiDene artik sayfa yuklendiginde cagriliyor
 
-  // E-posta ve şifreyle giriş. Oturum çerezle taşınıyor, anahtar saklanmıyor.
+  // E-posta ve şifreyle giriş. Oturum çerezle taşınıyor, key saklanmıyor.
   async function hesapGirisi() {
     const e = $('eposta').value.trim(), s = $('sifre').value;
     if (!e || !s) return;
-    $('btnHesap').disabled = true; $('hata').classList.add('gizli');
+    $('btnHesap').disabled = true; $('error').classList.add('hidden');
     try {
       const c = await fetch('/portal/api/session', {
         method: 'POST', headers: { 'content-type': 'application/json' },
@@ -900,31 +900,31 @@ ${YAZI_TIPI}
       });
       const v = await c.json();
       if (!c.ok) {
-        $('hata').textContent = v.error || 'Sign-in failed.';
-        $('hata').classList.remove('gizli');
+        $('error').textContent = v.error || 'Sign-in failed.';
+        $('error').classList.remove('hidden');
         return;
       }
-      anahtar = null; anahtarYaz(null);
+      key = null; anahtarYaz(null);
       $('sifre').value = '';
       uygulamayaGir(v);
     } catch (err) {
-      $('hata').textContent = 'Could not reach the server.';
-      $('hata').classList.remove('gizli');
+      $('error').textContent = 'Could not reach the server.';
+      $('error').classList.remove('hidden');
     } finally { $('btnHesap').disabled = false; }
   }
 
   $('girisSekme').addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
-    [...$('girisSekme').children].forEach(x => x.classList.toggle('secili', x === b));
-    $('yolHesap').classList.toggle('gizli', b.dataset.yol !== 'hesap');
-    $('yolAnahtar').classList.toggle('gizli', b.dataset.yol !== 'anahtar');
-    $('hata').classList.add('gizli');
+    [...$('girisSekme').children].forEach(x => x.classList.toggle('selected', x === b));
+    $('yolHesap').classList.toggle('hidden', b.dataset.path !== 'hesap');
+    $('yolAnahtar').classList.toggle('hidden', b.dataset.path !== 'key');
+    $('error').classList.add('hidden');
   });
 
   $('sifreDegistir').addEventListener('click', async () => {
     const eski = $('sifreEski').value, yeni = $('sifreYeni').value;
     const not = $('sifreNot');
-    not.classList.add('gizli');
+    not.classList.add('hidden');
     if (!eski || !yeni) return;
 
     $('sifreDegistir').disabled = true;
@@ -936,19 +936,19 @@ ${YAZI_TIPI}
       const v = await c.json();
       if (!c.ok) {
         not.textContent = v.error || 'Could not change the password.';
-        not.classList.remove('gizli');
+        not.classList.remove('hidden');
         return;
       }
       // Sunucu şifre değişince oturumu düşürüyor: eski çerezlerin izi artık
       // tutmuyor. Kullanıcıyı giriş ekranına alıyoruz.
       $('sifreEski').value = ''; $('sifreYeni').value = '';
       alert('Password changed. Please sign in again.');
-      anahtar = null; hesap = null; anahtarYaz(null);
-      $('uygulama').classList.add('gizli');
-      $('girisEkran').classList.remove('gizli');
+      key = null; hesap = null; anahtarYaz(null);
+      $('appWrap').classList.add('hidden');
+      $('girisEkran').classList.remove('hidden');
     } catch (e) {
       not.textContent = 'Could not reach the server.';
-      not.classList.remove('gizli');
+      not.classList.remove('hidden');
     } finally { $('sifreDegistir').disabled = false; }
   });
 
@@ -956,7 +956,7 @@ ${YAZI_TIPI}
     const provider = $('talepSaglayici').value;
     const model = $('talepModel').value.trim();
     const not = $('talepNot');
-    not.classList.add('gizli');
+    not.classList.add('hidden');
     if (!model) return;
 
     $('talepGonder').disabled = true;
@@ -969,11 +969,11 @@ ${YAZI_TIPI}
       not.textContent = c.ok
         ? 'Sent — your administrator will see this in Access Requests.'
         : (v.error || 'Could not send the request.');
-      not.classList.remove('gizli');
+      not.classList.remove('hidden');
       if (c.ok) $('talepModel').value = '';
     } catch {
       not.textContent = 'Could not reach the server.';
-      not.classList.remove('gizli');
+      not.classList.remove('hidden');
     } finally { $('talepGonder').disabled = false; }
   });
 
@@ -985,42 +985,42 @@ ${YAZI_TIPI}
     // Hesap kartı yalnızca e-posta ile girildiğinde çıkıyor; anahtarla giren
     // için değiştirilecek bir şifre yok.
     const h = hesap && hesap.hesap;
-    $('hesapKart').classList.toggle('gizli', !h);
+    $('hesapKart').classList.toggle('hidden', !h);
     if (h) {
-      $('hesapBilgi').innerHTML = 'Signed in as <b>' + kacir(h.email) + '</b>';
+      $('hesapBilgi').innerHTML = 'Signed in as <b>' + escapeHtml(h.email) + '</b>';
     }
   }
 
   $('btn').addEventListener('click', () => girisYap());
-  $('anahtar').addEventListener('keydown', e => { if (e.key === 'Enter') girisYap(); });
+  $('key').addEventListener('keydown', e => { if (e.key === 'Enter') girisYap(); });
   $('menu').addEventListener('click', e => {
-    const b = e.target.closest('button'); if (!b || b.disabled || !b.dataset.bolum) return;
-    bolumGoster(b.dataset.bolum);
+    const b = e.target.closest('button'); if (!b || b.disabled || !b.dataset.section) return;
+    showSection(b.dataset.section);
   });
-  $('tema').addEventListener('click', temaDegistir);
-  $('temaKose').addEventListener('click', temaDegistir);
+  $('tema').addEventListener('click', toggleTheme);
+  $('temaKose').addEventListener('click', toggleTheme);
 
   $('cikis').addEventListener('click', async () => {
     // Çerez sunucu tarafında siliniyor; yalnızca yerelde temizlemek oturumu
     // kapatmazdı, çerez bir sonraki açılışta yine geçerli olurdu.
     try { await fetch('/portal/api/session', { method: 'DELETE' }); } catch (e) {}
-    anahtar = null; hesap = null; anahtarYaz(null);
-    $('anahtar').value = ''; $('sifre').value = ''; $('icerik').innerHTML = '';
-    $('uygulama').classList.add('gizli'); $('girisEkran').classList.remove('gizli');
+    key = null; hesap = null; anahtarYaz(null);
+    $('key').value = ''; $('sifre').value = ''; $('icerik').innerHTML = '';
+    $('appWrap').classList.add('hidden'); $('girisEkran').classList.remove('hidden');
   });
-  $('filtre').addEventListener('click', e => {
+  $('filter').addEventListener('click', e => {
     const d = e.target.closest('button'); if (!d) return;
-    [...$('filtre').children].forEach(b => b.classList.remove('secili'));
-    d.classList.add('secili'); gun = Number(d.dataset.gun); offset = 0;
+    [...$('filter').children].forEach(b => b.classList.remove('selected'));
+    d.classList.add('selected'); day = Number(d.dataset.day); offset = 0;
     kullanimGetir(false);
   });
   // Kapsam süzgeci. Varsayılan şirketin tamamı; tek düğmeyle kendi
-  // isteklerine iniyorsun. İki sekme olarak durduğunda liste ikiye
+  // isteklerine iniyorsun. İki tab olarak durduğunda liste ikiye
   // bölünmüş gibi okunuyordu — burada asıl görünüm bir tane, süzgeç isteğe
   // bağlı.
   $('benimSuzgec').addEventListener('click', () => {
     sadeceBenim = !sadeceBenim;
-    $('benimSuzgec').classList.toggle('secili', sadeceBenim);
+    $('benimSuzgec').classList.toggle('selected', sadeceBenim);
     offset = 0; kullanimGetir(false);
   });
   // Fiyat listesi süzgeçleri. Katalog 100'ü aştığı için liste tek başına
@@ -1029,7 +1029,7 @@ ${YAZI_TIPI}
   $('fArama').addEventListener('input', fiyatCiz);
   $('fSadeceAcik').addEventListener('click', () => {
     fSadeceAcik = !fSadeceAcik;
-    $('fSadeceAcik').classList.toggle('secili', fSadeceAcik);
+    $('fSadeceAcik').classList.toggle('selected', fSadeceAcik);
     fiyatCiz();
   });
 
@@ -1042,7 +1042,7 @@ ${YAZI_TIPI}
   $('suzgecSifirla').addEventListener('click', () => {
     durumSuzgec = ''; modelSuzgec = ''; sadeceBenim = false;
     $('durumSuzgec').value = ''; $('modelSuzgec').value = '';
-    $('benimSuzgec').classList.remove('secili');
+    $('benimSuzgec').classList.remove('selected');
     offset = 0; kullanimGetir(false);
   });
 
@@ -1051,11 +1051,11 @@ ${YAZI_TIPI}
   function modelSuzgecDoldur(liste) {
     const kutu = $('modelSuzgec');
     if (!liste) return;
-    const secili = kutu.value;
+    const selected = kutu.value;
     kutu.innerHTML = '<option value="">All models</option>' +
-      liste.map(m => '<option value="' + kacir(m.model) + '">' +
-        kacir(m.model.split('/')[1]) + ' (' + m.istek + ')</option>').join('');
-    if ([...kutu.options].some(o => o.value === secili)) kutu.value = secili;
+      liste.map(m => '<option value="' + escapeHtml(m.model) + '">' +
+        escapeHtml(m.model.split('/')[1]) + ' (' + m.request + ')</option>').join('');
+    if ([...kutu.options].some(o => o.value === selected)) kutu.value = selected;
   }
 
 
@@ -1064,12 +1064,12 @@ ${YAZI_TIPI}
     offset += 50; await kullanimGetir(true);
     $('dahafazla').disabled = false; $('dahafazla').textContent = 'Load more';
   });
-  $('yenile').addEventListener('click', async () => {
-    $('yenile').disabled = true; $('yenile').textContent = 'Refreshing...';
+  $('refresh').addEventListener('click', async () => {
+    $('refresh').disabled = true; $('refresh').textContent = 'Refreshing...';
     offset = 0;
     await hesapTazele();
     await kullanimGetir(false);
-    $('yenile').disabled = false; $('yenile').textContent = 'Refresh';
+    $('refresh').disabled = false; $('refresh').textContent = 'Refresh';
   });
 
   // Sayfa açılışında oturum var mı diye bakılıyor.
@@ -1078,11 +1078,11 @@ ${YAZI_TIPI}
   // hiçbir şey saklamamıza gerek yok. Yoksa eskiden saklanan anahtara
   // düşülüyor — mevcut müşteriler bir sürüm yükseltmesiyle kapıda kalmasın.
   (async () => {
-    // URL kontrolu - Sayfa portal/reveal ise anahtar gosterme ekranini ac
+    // URL kontrolu - Sayfa portal/reveal ise key gosterme ekranini ac
     const parcalar = location.pathname.split('/');
     if (parcalar[1] === 'portal' && parcalar[2] === 'reveal') {
-      $('girisEkran').classList.add('gizli');
-      $('uygulama').classList.remove('gizli');
+      $('girisEkran').classList.add('hidden');
+      $('appWrap').classList.remove('hidden');
       teslimAcmayiDene();
       return;
     }
@@ -1090,7 +1090,7 @@ ${YAZI_TIPI}
     try {
       const c = await fetch('/portal/api/me');
       if (c.ok) { uygulamayaGir(await c.json()); return; }
-    } catch (e) { /* sunucuya ulasilamadiysa anahtar yoluna dus */ }
+    } catch (e) { /* sunucuya ulasilamadiysa key yoluna dus */ }
 
     const saklanan = anahtarOku();
     if (saklanan) girisYap(saklanan);
@@ -1107,15 +1107,15 @@ export function portalRoutes(app: Hono) {
   // Teslim bağlantısı aynı sayfayı sunuyor; jetonu istemci taraf adresten
   // okuyup açıyor. Ayrı bir sayfa yazmak yerine böyle: kişi giriş yapmamışsa
   // zaten giriş ekranını görüyor, girince bağlantı kaldığı yerden işliyor.
-  app.get('/portal/reveal/:jeton', async (c) => {
+  app.get('/portal/reveal/:token', async (c) => {
     return c.html(SAYFA);
   });
 
   // Anahtarı doğrular ve müşterinin kendi bilgisini döner.
   // Anahtarın kendisi geri gönderilmiyor; yalnızca ad ve izinli modeller.
   app.post('/portal/api/login', async (c) => {
-    const govde = await govdeOku<{ apiKey?: string }>(c);
-    const apiKey = govde?.apiKey?.trim();
+    const bodyEl = await govdeOku<{ apiKey?: string }>(c);
+    const apiKey = bodyEl?.apiKey?.trim();
 
     if (!apiKey) {
       return c.json({ error: 'Key required.' }, 400);
@@ -1124,8 +1124,8 @@ export function portalRoutes(app: Hono) {
     const sonuc = await verifyClient(apiKey);
 
     // Hız limiti YALNIZCA başarısız denemeleri sayıyor. Sayaç doğrulamadan
-    // önce çalışsaydı, aynı IP'den (örneğin aynı ofisten) yanlış anahtar
-    // deneyen biri, doğru anahtarı olan kişiyi de kilitlerdi.
+    // önce çalışsaydı, aynı IP'den (örneğin aynı ofisten) yanlış key
+    // deneyen biri, doğru keyı olan kişiyi de kilitlerdi.
     //
     // Sıra security.ts ile aynı: önce kimlik, sonra hız limiti.
     if (!sonuc.success || !sonuc.client) {
@@ -1141,37 +1141,37 @@ export function portalRoutes(app: Hono) {
     }
 
     // Anahtarın kendisi değil, hakkındaki bilgiler dönüyor.
-    // Oturumla girişle aynı yapı: arayüz ikisini ayırt etmek zorunda kalmasın.
-    const ozet = await musteriOzeti(String(sonuc.client.id), apiKey);
-    return c.json(ozet);
+    // Oturumla girişle aynı yapı: arayüz ikisini monthırt etmek zorunda kalmasın.
+    const summary = await musteriOzeti(String(sonuc.client.id), apiKey);
+    return c.json(summary);
   });
 
-  // İsteği kimin yaptığını çözüyor. İki yol da kabul ediliyor:
+  // İsteği kimin yaptığını çözüyor. İki path da kabul ediliyor:
   //
   //   1. Oturum çerezi — e-posta/şifre ile giriş yapmış kullanıcı
-  //   2. Bearer anahtarı — eski yöntem
+  //   2. Bearer keyı — eski yöntem
   //
-  // İkisi bir süre yan yana duracak: mevcut müşteriler anahtarla giriyor ve
+  // İuser bir süre yan yana duracak: mevcut müşteriler anahtarla giriyor ve
   // bir sürüm yükseltmesiyle kapıda kalmaları kabul edilemez. Hesaplar
-  // yerleşince anahtarla giriş kaldırılacak, anahtar yalnızca ağ geçidi
+  // yerleşince anahtarla giriş kaldırılacak, key yalnızca ağ geçidi
   // isteklerinde kullanılacak.
   async function portalKimligi(c: Context): Promise<{ clientId: string; kullaniciId: string | null } | null> {
     const hesap = await oturumdakiHesap('musteri', c.req.header('cookie'));
     if (hesap?.clientId) return { clientId: hesap.clientId, kullaniciId: hesap.id };
 
-    const baslik = c.req.header('authorization');
-    const apiKey = baslik?.startsWith('Bearer ') ? baslik.slice(7).trim() : undefined;
+    const title = c.req.header('authorization');
+    const apiKey = title?.startsWith('Bearer ') ? title.slice(7).trim() : undefined;
     if (!apiKey) return null;
 
     const sonuc = await verifyClient(apiKey);
     if (!sonuc.success || !sonuc.client) return null;
-    // Anahtarla girişte "senin kullanımın" diye bir şey yok: anahtar kişiye
+    // Anahtarla girişte "senin kullanımın" diye bir şey yok: key kişiye
     // değil şirkete ait.
     return { clientId: String(sonuc.client.id), kullaniciId: null };
   }
 
   // Müşterinin görünen bilgileri. Hem anahtarla hem oturumla giriş sonrası
-  // aynı yapı dönüyor ki arayüz ikisini ayırt etmek zorunda kalmasın.
+  // aynı yapı dönüyor ki arayüz ikisini monthırt etmek zorunda kalmasın.
   async function musteriOzeti(clientId: string, apiKey?: string, kullaniciId?: string | null) {
     const { data: musteri } = await supabase
       .from('clients')
@@ -1186,13 +1186,13 @@ export function portalRoutes(app: Hono) {
       client_type: string | null;
     };
 
-    // Portalda kişi YALNIZCA kendi anahtarlarını ve sahipsiz ortak
-    // anahtarları görüyor.
+    // Portalda kişi YALNIZCA kendi keysını ve sahipsiz ortak
+    // keysı görüyor.
     //
-    // Önce şirketin bütün anahtarları listeleniyordu. Değerler maskeliydi ama
-    // yine de yanlıştı: çalışan, meslektaşının anahtar adını, ortamını ve
-    // durumunu görmek zorunda değil — kendi hesabına girdiğinde kendi
-    // anahtarlarını bekliyor. Ortak anahtarlar listede kalıyor çünkü onların
+    // Önce şirketin bütün keysı listeleniyordu. Değerler maskeliydi ama
+    // yine de yanlıştı: çalışan, meslektaşının key adını, ortamını ve
+    // durumunu görmek zorunda değil — kendi hesabına inputğinde kendi
+    // keysını bekliyor. Ortak keys listede kalıyor çünkü onların
     // harcaması şirket toplamına giriyor ve kimseye ait değiller.
     //
     // Şirketin tamamını görmek yöneticinin işi; o görünüm panelde duruyor.
@@ -1202,13 +1202,13 @@ export function portalRoutes(app: Hono) {
       .eq('client_id', clientId)
       .order('created_at', { ascending: false });
 
-    const anahtarlar = ((anahtarSatirlari ?? []) as Array<{
+    const keys = ((anahtarSatirlari ?? []) as Array<{
       id: string; label: string | null; environment: string; is_active: boolean;
       created_at: string; key_prefix: string | null; user_id: string | null;
     }>).map((a) => ({
       id: a.id,
       ad: a.label,
-      // Açık anahtar hiçbir zaman saklanmıyor; yalnızca önek var. Göçten önce
+      // Açık key hiçbir zaman saklanmıyor; yalnızca önek var. Göçten önce
       // üretilenlerde o da yok — arayüz bunu "hidden" olarak gösteriyor.
       onEk: a.key_prefix,
       ortam: a.environment,
@@ -1219,14 +1219,14 @@ export function portalRoutes(app: Hono) {
       // Anahtarla girildiyse hangi anahtarla girildiği işaretleniyor.
       buOturum: !!(apiKey && a.key_prefix && apiKey.startsWith(a.key_prefix))
     })).filter((a) => {
-      // Kişi girişinde: kendi anahtarları + ortaklar.
+      // Kişi girişinde: kendi keysı + ortaklar.
       if (kullaniciId) return a.benim || a.ortak;
-      // Anahtarla girişte kişi bilinmiyor; yalnızca o oturumun anahtarı ve
+      // Anahtarla girişte kişi bilinmiyor; yalnızca o oturumun keyı ve
       // ortaklar gösteriliyor.
       return a.buOturum || a.ortak;
     });
 
-    // Kişinin kendi izin listesi ve etkin fiyat tavanı.
+    // Kişinin kendi izin listesi ve etkin price tavanı.
     //
     // Fiyat sayfasındaki "Access" sütunu bunları kullanıyor: tavanın
     // altındaki model listede olmasa da çağrılabiliyor, "not enabled"
@@ -1260,7 +1260,7 @@ export function portalRoutes(app: Hono) {
       maxOutputPrice: etkinTavan,
       allowedDomains: m.allowed_domains ?? [],
       clientType: m.client_type ?? 'server-based',
-      anahtarlar
+      keys
     };
   }
 
@@ -1291,8 +1291,8 @@ export function portalRoutes(app: Hono) {
     }
 
     c.header('set-cookie', cerezYaz(CEREZ_ADI.musteri, sonuc.cerez, URETIM));
-    const ozet = await musteriOzeti(sonuc.hesap.clientId!, undefined, sonuc.hesap.id);
-    return c.json({ ...ozet, hesap: { id: sonuc.hesap.id, email: sonuc.hesap.email } });
+    const summary = await musteriOzeti(sonuc.hesap.clientId!, undefined, sonuc.hesap.id);
+    return c.json({ ...summary, hesap: { id: sonuc.hesap.id, email: sonuc.hesap.email } });
   });
 
   app.delete('/portal/api/session', async (c) => {
@@ -1305,9 +1305,9 @@ export function portalRoutes(app: Hono) {
     const hesap = await oturumdakiHesap('musteri', c.req.header('cookie'));
     if (!hesap?.clientId) return c.json({ error: 'No active session.' }, 401);
 
-    const ozet = await musteriOzeti(hesap.clientId, undefined, hesap.id);
-    if (!ozet) return c.json({ error: 'No active session.' }, 401);
-    return c.json({ ...ozet, hesap: { id: hesap.id, email: hesap.email } });
+    const summary = await musteriOzeti(hesap.clientId, undefined, hesap.id);
+    if (!summary) return c.json({ error: 'No active session.' }, 401);
+    return c.json({ ...summary, hesap: { id: hesap.id, email: hesap.email } });
   });
 
   app.post('/portal/api/password', async (c) => {
@@ -1318,7 +1318,7 @@ export function portalRoutes(app: Hono) {
     const sonuc = await sifreDegistir(
       'musteri', hesap.id, String(g?.current ?? ''), String(g?.next ?? '')
     );
-    if (!sonuc.ok) return c.json({ error: sonuc.hata }, 400);
+    if (!sonuc.ok) return c.json({ error: sonuc.error }, 400);
 
     // Şifre değişince eski çerezlerin izi tutmuyor; kullanıcının kendi
     // oturumu da düşüyor, bu yüzden çerezi temizliyoruz.
@@ -1326,12 +1326,12 @@ export function portalRoutes(app: Hono) {
     return c.json({ degisti: true });
   });
 
-  // Kişi, gerçek bir AI isteği atmadan doğrudan izin talep edebilsin diye.
+  // Kişi, gerçek bir AI isteği atmadan doğrudan izin accessRequest edebilsin diye.
   //
-  // Gerçek anahtar gerektirmiyor — kişi zaten oturumuyla giriş yapmış, kimliği
-  // belli. Ayrı bir "talepler" tablosu açmıyoruz: mevcut Access Requests ekranı
+  // Gerçek key gerektirmiyor — kişi zaten oturumuyla giriş yapmış, kimliği
+  // belli. Ayrı bir "accessRequests" tablosu açmıyoruz: mevcut Access Requests ekranı
   // reddedilen logs satırlarını tarıyor, biz de aynı kalıba uyan bir satır
-  // yazıyoruz. Admin tarafında hiçbir kod değişmiyor, talep kendiliğinden
+  // yazıyoruz. Admin tarafında hiçbir kod değişmiyor, accessRequest kendiliğinden
   // People > Access Requests'te beliriyor.
   app.post('/portal/api/request-access', async (c) => {
     const hesap = await oturumdakiHesap('musteri', c.req.header('cookie'));
@@ -1344,21 +1344,21 @@ export function portalRoutes(app: Hono) {
       return c.json({ error: 'Provider and model are required.' }, 400);
     }
 
-    // Talebi kişiye bağlamak için onun bir anahtarı lazım; yoksa şirket
-    // adına düşer (ortak anahtar reddi ile aynı davranış).
-    const { data: anahtarlar } = await supabase
+    // Talebi kişiye bağlamak için onun bir keyı lazım; yoksa şirket
+    // adına düşer (ortak key reddi ile aynı davranış).
+    const { data: keys } = await supabase
       .from('client_keys').select('id').eq('user_id', hesap.id).limit(1);
-    const keyId = (anahtarlar ?? [])[0]?.id ?? null;
+    const keyId = (keys ?? [])[0]?.id ?? null;
 
-    const simdi = new Date().toISOString();
+    const now = new Date().toISOString();
     const { error } = await supabase.from('logs').insert([{
       client_id: hesap.clientId,
       key_id: keyId,
       provider, model,
       status: 'error',
       error_message: `Model '${model}' is not enabled for your account. Requested directly from the portal.`,
-      created_at: simdi,
-      completed_at: simdi
+      created_at: now,
+      completed_at: now
     }]);
     if (error) return c.json({ error: 'Could not submit the request.' }, 500);
     return c.json({ ok: true });
@@ -1366,26 +1366,26 @@ export function portalRoutes(app: Hono) {
 
   // Anahtar teslim bağlantısını açar.
   //
-  // Yönetici anahtarı üretiyor ama açık değeri görmüyor; bu uç, anahtarı
+  // Yönetici keyı üretiyor ama açık değeri görmüyor; bu uç, keyı
   // sahibine bir kez gösteriyor. Oturum şart — bağlantı sızsa bile başkası
   // açamıyor.
-  app.get('/portal/api/reveal/:jeton', async (c) => {
-    const jeton = c.req.param('jeton');
-    const sonuc = await teslimAc(String(jeton ?? ''));
-    if (!sonuc.ok) return c.json({ error: sonuc.hata }, sonuc.durum as any);
-    return c.json({ anahtar: sonuc.anahtar });
+  app.get('/portal/api/reveal/:token', async (c) => {
+    const token = c.req.param('token');
+    const sonuc = await openDelivery(String(token ?? ''));
+    if (!sonuc.ok) return c.json({ error: sonuc.error }, sonuc.status as any);
+    return c.json({ key: sonuc.key });
   });
 
   // Anahtar üretimi bilerek YALNIZCA yönetici panelinde.
   //
-  // Portala "kendi anahtarını üret" düğmesi eklenmişti ve geri alındı. Gerekçe:
-  // şu an bir portal hesabı ele geçirilse saldırgan anahtarı göremiyor, yalnızca
-  // önekini görüyor — istek atamıyor. Üretim düğmesi olsaydı çalınan bir şifre
+  // Portala "kendi keyını üret" düğmesi eklenmişti ve geri alındı. Gerekçe:
+  // şu an bir portal hesabı ele geçirilse saldırgan keyı göremiyor, yalnızca
+  // önekini görüyor — request atamıyor. Üretim düğmesi olsaydı çalınan bir şifre
   // doğrudan çalışan bir anahtara dönüşürdü. Şifrenin yeniden sorulması bunu
   // zorlaştırır ama şifre zaten çalınmışsa engellemez.
   //
   // Anahtarı kaybeden kişi yöneticiden yenisini istiyor. Küçük bir ekipte bu
-  // maliyet, hesap ele geçirmesinin doğrudan API erişimine dönüşmesi riskinden
+  // cost, hesap ele geçirmesinin doğrudan API erişimine dönüşmesi riskinden
   // ucuz.
 
   // Müşterinin kendi kullanım kayıtları.
@@ -1396,41 +1396,41 @@ export function portalRoutes(app: Hono) {
   // İki ayrı sorgu var ve bu bilinçli:
   //   1. Özet ve model kırılımı SEÇİLİ DÖNEMİN TAMAMINDAN hesaplanıyor.
   //   2. Tablo satırları sayfa sayfa geliyor.
-  // Tek sorgu olsaydı "daha fazla yükle" bastıkça toplam maliyet değişirdi.
+  // Tek sorgu olsaydı "daha fazla yükle" bastıkça toplam cost değişirdi.
   app.get('/portal/api/usage', async (c) => {
-    // Oturum çerezi ya da anahtar — ikisi de kabul.
+    // Oturum çerezi ya da key — ikisi de kabul.
     const kimlik = await portalKimligi(c);
     if (!kimlik) return c.json({ error: 'Sign in to continue.' }, 401);
     const clientId = kimlik.clientId;
 
     const sorgu = c.req.query();
-    // Durum süzgeci artık üç değer alıyor. Eskiden yalnızca "hata" vardı;
-    // başarılı ya da bekleyen istekleri ayıklamak mümkün değildi.
-    const durumSuzgec = ['hata', 'basarili', 'bekleyen'].includes(String(sorgu.durum ?? ''))
-      ? String(sorgu.durum) : null;
+    // Durum süzgeci artık üç değer alıyor. Eskiden yalnızca "error" vardı;
+    // başarılı ya da bekleyen istekleri monthıklamak mümkün değildi.
+    const durumSuzgec = ['error', 'basarili', 'bekleyen'].includes(String(sorgu.status ?? ''))
+      ? String(sorgu.status) : null;
     const durumKarsiligi: Record<string, string> = {
-      hata: 'error', basarili: 'success', bekleyen: 'pending'
+      error: 'error', basarili: 'success', bekleyen: 'pending'
     };
     const modelSuzgec = String(sorgu.model ?? '').trim() || null;
-    const sadeceHata = durumSuzgec === 'hata';
-    // İstek listesi ya kişinin kendi anahtarlarıyla süzülüyor ya da şirketin
+    const sadeceHata = durumSuzgec === 'error';
+    // İstek listesi ya kişinin kendi keysıyla süzülüyor ya da şirketin
     // tamamını gösteriyor. Özet, grafik ve bütçe her iki durumda da şirket
     // ölçeğinde kalıyor — orada kıyas için şirket toplamı gerekiyor.
     const sadeceBenim = sorgu.kapsam === 'benim';
-    const gun = Number(sorgu.gun ?? 30);
+    const day = Number(sorgu.day ?? 30);
     const offset = Math.max(0, Number(sorgu.offset ?? 0));
     const SAYFA = 50;
 
-    // Dönem başlangıcı. gun = 0 ise sınır yok.
-    const baslangic = gun > 0
-      ? new Date(Date.now() - gun * 24 * 60 * 60 * 1000).toISOString()
+    // Dönem başlangıcı. day = 0 ise sınır yok.
+    const baslangic = day > 0
+      ? new Date(Date.now() - day * 24 * 60 * 60 * 1000).toISOString()
       : null;
 
     const donemFiltresi = <T extends { gte: (k: string, v: string) => T }>(q: T): T =>
       baslangic ? q.gte('created_at', baslangic) : q;
 
     // 1. Dönemin tamamı — yalnızca özet için gereken kolonlar.
-    const { data: tumu, error: hata1 } = await donemFiltresi(
+    const { data: all, error: hata1 } = await donemFiltresi(
       supabase
         .from('logs')
         .select('provider, model, status, input_tokens, output_tokens, cost, created_at, latency_ms, key_id')
@@ -1439,7 +1439,7 @@ export function portalRoutes(app: Hono) {
     );
     if (hata1) return c.json({ error: 'Could not read records.' }, 500);
 
-    const donem = (tumu ?? []) as Array<{
+    const donem = (all ?? []) as Array<{
       provider: string; model: string; status: string; created_at: string;
       input_tokens: number | null; output_tokens: number | null;
       cost: number | null; latency_ms: number | null; key_id: string | null;
@@ -1448,20 +1448,20 @@ export function portalRoutes(app: Hono) {
     // Model kırılımı, süzgeç kutusunu doldurmak için (donemModelleri).
     // Şirket geneli kırılım tablosu ve kişisel kırılım kaldırıldı — admin
     // panelindeki analitikle birebir tekrar ediyorlardı.
-    function modelKirilimi(kayitlar: typeof donem) {
+    function modelKirilimi(records: typeof donem) {
       const grup = new Map<string, {
-        model: string; istek: number; girdiToken: number; ciktiToken: number; maliyet: number;
+        model: string; request: number; girdiToken: number; ciktiToken: number; cost: number;
       }>();
-      for (const k of kayitlar) {
+      for (const k of records) {
         const ad = `${k.provider}/${k.model}`;
-        const mevcut = grup.get(ad) ?? { model: ad, istek: 0, girdiToken: 0, ciktiToken: 0, maliyet: 0 };
-        mevcut.istek += 1;
+        const mevcut = grup.get(ad) ?? { model: ad, request: 0, girdiToken: 0, ciktiToken: 0, cost: 0 };
+        mevcut.request += 1;
         mevcut.girdiToken += k.input_tokens ?? 0;
         mevcut.ciktiToken += k.output_tokens ?? 0;
-        mevcut.maliyet += Number(k.cost ?? 0);
+        mevcut.cost += Number(k.cost ?? 0);
         grup.set(ad, mevcut);
       }
-      return [...grup.values()].sort((a, b) => b.maliyet - a.maliyet);
+      return [...grup.values()].sort((a, b) => b.cost - a.cost);
     }
 
     const modeller = modelKirilimi(donem);
@@ -1477,7 +1477,7 @@ export function portalRoutes(app: Hono) {
       sayfaSorgu = sayfaSorgu.eq('provider', sag).eq('model', kalan.join('/'));
     }
 
-    // "Sadece benim" seçiliyse kişinin sahip olduğu anahtarların kayıtları.
+    // "Sadece benim" seçiliyse kişinin sahip olduğu keysın kayıtları.
     // Anahtarı olmayan biri için boş liste doğru sonuç.
     let benimAnahtarKimlikleri: string[] = [];
     if (sadeceBenim && kimlik.kullaniciId) {
@@ -1510,24 +1510,24 @@ export function portalRoutes(app: Hono) {
       { monthly_budget: number | null; daily_budget: number | null } | undefined;
 
     const benimButce = kimlik.kullaniciId
-      ? await butceDurumu(kimlik.kullaniciId, {
+      ? await getBudgetStatus(kimlik.kullaniciId, {
           aylik: kisiLimit?.monthly_budget ?? null,
           gunluk: kisiLimit?.daily_budget ?? null
         })
       : null;
 
-    const sirketButce = await butceDurumu(clientId, {
+    const sirketButce = await getBudgetStatus(clientId, {
       aylik: sirketLimit?.monthly_budget ?? null,
       gunluk: sirketLimit?.daily_budget ?? null
-    }, 'sirket');
+    }, 'client');
 
     return c.json({
       benimButce,
       sirketButce,
-      // Fiyat listesi arayüze gönderiliyor: istek detayında maliyet hesabı
+      // Fiyat listesi arayüze gönderiliyor: request detayında cost hesabı
       // yeniden yapılıp kayıtlı değerle karşılaştırılabilsin.
-      fiyatlar: await priceList(),
-      kayitlar: sayfa ?? [],
+      prices: await priceList(),
+      records: sayfa ?? [],
       // Sayaç uygulanan süzgeçlerin hepsini yansıtıyor; dönem verisi zaten
       // elimizde, ek sorgu gerekmiyor.
       toplam: donem.filter((k) => {
@@ -1537,7 +1537,7 @@ export function portalRoutes(app: Hono) {
         return true;
       }).length,
       // Süzgeç kutusunu doldurmak için dönemde geçen modeller.
-      donemModelleri: modeller.map((m) => ({ model: m.model, istek: m.istek })),
+      donemModelleri: modeller.map((m) => ({ model: m.model, request: m.request })),
       offset
     });
   });

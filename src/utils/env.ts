@@ -6,7 +6,7 @@
 // değişken de "tanımlı" sayılıp dosyadaki değeri eziyor.
 //
 // Bu, akşam boyunca üç kez farklı şekilde karşımıza çıktı: bir keresinde
-// istekler sahte sağlayıcı yerine gerçek OpenAI'ye gitti, iki kere oturum
+// requests sahte sağlayıcı yerine gerçek OpenAI'ye gitti, iki kere oturum
 // imzalanamadı. Hepsinin kökü aynıydı ve hiçbiri kodda görünmüyordu.
 //
 // Bu yükleyici yalnızca yerel geliştirme için: Vercel'de .env dosyası yok,
@@ -16,10 +16,10 @@ import fs from 'fs';
 import path from 'path';
 
 export function yukleEnv(dosya = '.env'): void {
-  const yol = path.resolve(process.cwd(), dosya);
-  if (!fs.existsSync(yol)) return;
+  const path = path.resolve(process.cwd(), dosya);
+  if (!fs.existsSync(path)) return;
 
-  for (const satir of fs.readFileSync(yol, 'utf8').split('\n')) {
+  for (const satir of fs.readFileSync(path, 'utf8').split('\n')) {
     const t = satir.trim();
     if (!t || t.startsWith('#')) continue;
 

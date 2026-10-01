@@ -18,6 +18,6 @@ export async function govdeOku<T>(c: Context): Promise<T | undefined> {
 // soket adresi yok (sunucusuz). Yalnızca başarısız giriş denemelerini IP
 // başına sınırlamak için kullanılıyor.
 export function istekIp(c: Context): string {
-  const baslik = c.req.header('x-forwarded-for');
-  return baslik?.split(',')[0]?.trim() || 'unknown';
+  const title = c.req.header('x-forwarded-for');
+  return title?.split(',')[0]?.trim() || 'unknown';
 }

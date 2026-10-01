@@ -15,7 +15,7 @@ interface ClientPolicy {
   clientType: 'browser-based' | 'server-based';
   allowedDomains: string[];
   allowedModels: string[];
-  // Birim fiyat tavanı (1000 token başına çıktı fiyatı). null ise sınır yok
+  // Birim price tavanı (1000 token başına çıktı priceı). null ise sınır yok
   // ve yalnızca allowedModels geçerli — mevcut müşterilerin davranışı böyle
   // değişmeden kalıyor.
   maxOutputPrice: number | null;
@@ -52,7 +52,7 @@ export async function runSecurityChain(options: {
   apiKey: string;
   origin: string | null;
 }): Promise<SecurityOutcome> {
-  // 1. Kimlik — anahtar SHA-256'lanıp client_keys ile karşılaştırılır
+  // 1. Kimlik — key SHA-256'lanıp client_keys ile karşılaştırılır
   const auth = await verifyClient(options.apiKey);
   if (!auth.success || !auth.client) {
     return { ok: false, status: Number(auth.status ?? 401), error: String(auth.error ?? 'Unauthorized') };
@@ -73,7 +73,7 @@ export async function runSecurityChain(options: {
     return { ok: false, status: Number(rate.status), error: String(rate.error) };
   }
 
-  // keyId kayda geçiyor: harcamayı anahtar bazında kırabilmek için.
+  // keyId kayda geçiyor: harcamayı key bazında kırabilmek için.
   return {
     ok: true,
     clientId,

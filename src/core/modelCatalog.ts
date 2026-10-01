@@ -1,4 +1,4 @@
-// Sistemin tanıdığı model kataloğu ve fiyatları.
+// Sistemin tanıdığı model kataloğu ve pricesı.
 //
 // Kaynak: Supabase'deki `model_catalog` tablosu. Önceden `model_pricing.json`
 // dosyasıydı; dosya dağıtım paketine gömülü olduğu için yeni model eklemek
@@ -8,9 +8,9 @@
 // Üç koruma var:
 //   1. Katalog bellekte 10 dakika tutuluyor — her istekte veritabanına gidilmiyor.
 //   2. Veritabanı okunamazsa eldeki liste kullanılmaya devam ediyor; katalog
-//      okunamadı diye istek reddedilmiyor.
+//      okunamadı diye request reddedilmiyor.
 //   3. Hiç okunamamışsa `model_pricing.json` yedek olarak devreye giriyor.
-//      Dosya silinmedi: ilk açılış tohumu ve acil durum yedeği.
+//      Dosya silinmedi: ilk açılış tohumu ve acil status yedeği.
 
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -23,8 +23,8 @@ export interface PricingEntry {
 }
 
 interface Katalog {
-  anahtarlar: Set<string>;
-  fiyatlar: Record<string, PricingEntry>;
+  keys: Set<string>;
+  prices: Record<string, PricingEntry>;
   kaynak: 'model_catalog' | 'model_pricing.json' | 'fallback';
   yuklenme: number;
 }
@@ -43,20 +43,20 @@ let yuklemeSurmekte: Promise<Katalog> | null = null;
 /** Dosyadan okur — yalnızca veritabanı hiç okunamadığında kullanılıyor. */
 function dosyadanOku(): Katalog {
   try {
-    const yol = join(dirname(fileURLToPath(import.meta.url)), '..', 'model_pricing.json');
-    const parsed = JSON.parse(readFileSync(yol, 'utf8')) as Record<string, PricingEntry>;
-    const anahtarlar = Object.keys(parsed);
-    if (anahtarlar.length === 0) throw new Error('Katalog boş');
+    const path = join(dirname(fileURLToPath(import.meta.url)), '..', 'model_pricing.json');
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as Record<string, PricingEntry>;
+    const keys = Object.keys(parsed);
+    if (keys.length === 0) throw new Error('Katalog boş');
     return {
-      anahtarlar: new Set(anahtarlar),
-      fiyatlar: parsed,
+      keys: new Set(keys),
+      prices: parsed,
       kaynak: 'model_pricing.json',
       yuklenme: Date.now()
     };
   } catch {
     return {
-      anahtarlar: new Set(YEDEK_ANAHTARLAR),
-      fiyatlar: {},
+      keys: new Set(YEDEK_ANAHTARLAR),
+      prices: {},
       kaynak: 'fallback',
       yuklenme: Date.now()
     };
@@ -77,19 +77,19 @@ async function veritabanindanOku(): Promise<Katalog> {
   }>;
   if (satirlar.length === 0) throw new Error('Katalog tablosu boş');
 
-  const fiyatlar: Record<string, PricingEntry> = {};
+  const prices: Record<string, PricingEntry> = {};
   for (const s of satirlar) {
     // Fiyatı tanımlanmamış model katalogda sayılır ama maliyeti hesaplanamaz.
     if (s.input_price === null || s.output_price === null) continue;
-    fiyatlar[`${s.provider}/${s.model}`] = {
+    prices[`${s.provider}/${s.model}`] = {
       input: Number(s.input_price),
       output: Number(s.output_price)
     };
   }
 
   return {
-    anahtarlar: new Set(satirlar.map((s) => `${s.provider}/${s.model}`)),
-    fiyatlar,
+    keys: new Set(satirlar.map((s) => `${s.provider}/${s.model}`)),
+    prices,
     kaynak: 'model_catalog',
     yuklenme: Date.now()
   };
@@ -123,7 +123,7 @@ export async function getCatalog(): Promise<Katalog> {
   return yuklemeSurmekte;
 }
 
-// Önbelleği düşürür. Yönetici panelinden model eklendiğinde ya da fiyatı
+// Önbelleği düşürür. Yönetici panelinden model eklendiğinde ya da priceı
 // değiştiğinde çağrılıyor: aksi halde değişiklik 10 dakikaya kadar geç etki eder
 // ve "yeni modeli aktive etme" akışı çalışmaz.
 //
@@ -139,28 +139,28 @@ export function modelKey(provider: string, model: string): string {
 
 export async function isKnownModel(provider: string, model: string): Promise<boolean> {
   const k = await getCatalog();
-  return k.anahtarlar.has(modelKey(provider, model));
+  return k.keys.has(modelKey(provider, model));
 }
 
-/** Maliyet hesabı için fiyat. Fiyatı tanımlanmamış modelde null döner. */
+/** Maliyet hesabı için price. Fiyatı tanımlanmamış modelde null döner. */
 export async function priceFor(provider: string, model: string): Promise<PricingEntry | null> {
   const k = await getCatalog();
-  return k.fiyatlar[modelKey(provider, model)] ?? null;
+  return k.prices[modelKey(provider, model)] ?? null;
 }
 
 export async function priceList(): Promise<Record<string, PricingEntry>> {
-  return (await getCatalog()).fiyatlar;
+  return (await getCatalog()).prices;
 }
 
 export async function knownModels(): Promise<string[]> {
-  return [...(await getCatalog()).anahtarlar];
+  return [...(await getCatalog()).keys];
 }
 
 export async function catalogInfo(): Promise<{ source: string; modelCount: number; ageSeconds: number }> {
   const k = await getCatalog();
   return {
     source: k.kaynak,
-    modelCount: k.anahtarlar.size,
+    modelCount: k.keys.size,
     ageSeconds: Math.round((Date.now() - k.yuklenme) / 1000)
   };
 }

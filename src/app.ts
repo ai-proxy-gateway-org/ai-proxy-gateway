@@ -41,7 +41,7 @@ app.post('/v1/chat/completions', authMiddleware, rateLimitMiddleware, async (c) 
   // patlarsa (ör. kasa/vault erişilemezse) alttaki catch bloğu da bu
   // kayda erişip "başarısız" diye kapatabilsin diye. Önceden bu durumda
   // kayıt sonsuza kadar "pending" kalıyordu — prompt kaydedilmiş oluyordu
-  // ama hiçbir zaman başarısız olarak işaretlenmiyordu, hata sebebi de
+  // ama hiçbir zaman başarısız olarak işaretlenmiyordu, error sebebi de
   // hiç yazılmıyordu.
   let logId: string | null = null;
   let provider = 'openai';
@@ -57,7 +57,7 @@ app.post('/v1/chat/completions', authMiddleware, rateLimitMiddleware, async (c) 
     if (model.includes('gemini')) provider = 'gemini';
 
     // Oturum (Session) Yönetimi:
-    // X-Summarize header'ı varsa onu kullan, yoksa müşterinin admin ayarına bak.
+    // X-Summarize header'ı varsa onu kullan, yoksa müşterinin admin settingına bak.
     const headerSummarize = c.req.header('X-Summarize');
     const summaryEnabled = headerSummarize !== undefined
       ? headerSummarize === 'true'
@@ -84,7 +84,7 @@ app.post('/v1/chat/completions', authMiddleware, rateLimitMiddleware, async (c) 
       } catch(e) {}
     }
 
-    // 3. Vault (Kasa) üzerinden gerçek API anahtarını al (Önbellekli / SWR)
+    // 3. Vault (Kasa) üzerinden gerçek API keyını al (Önbellekli / SWR)
     const realApiKey = await getProviderKey(provider, c);
 
     // 4. Sağlayıcıya Göre URL ve Header Ayarı
@@ -127,7 +127,7 @@ app.post('/v1/chat/completions', authMiddleware, rateLimitMiddleware, async (c) 
     const errorMessage = isSuccess ? undefined : data.error?.message;
 
     // Cevabın okunabilir metnini sağlayıcıya göre çıkar; hangi şekle
-    // denk geldiğini bilemiyorsak (ya da hata gövdesiyse) ham JSON'u
+    // denk geldiğini bilemiyorsak (ya da error gövdesiyse) ham JSON'u
     // saklıyoruz — hiçbir zaman boş kalmasın diye.
     const responseText =
       data.content?.[0]?.text ??      // anthropic
@@ -239,7 +239,7 @@ app.post('/v1/sessions/:sessionId/summarize', authMiddleware, async (c) => {
 
   // Özeti kalıcı olarak veritabanına kaydet
   const session = await getActiveSession(client.id);
-  const cost = ((inputTokens / 1000) * 0.00015) + ((outputTokens / 1000) * 0.0006); // gpt-4o-mini fiyatı
+  const cost = ((inputTokens / 1000) * 0.00015) + ((outputTokens / 1000) * 0.0006); // gpt-4o-mini priceı
   await dbService.saveSession(
     sessionId,
     client.id,
@@ -261,13 +261,17 @@ app.get('/v1/sessions/history', authMiddleware, async (c) => {
   return c.json({ sessions });
 });
 
-// Admin (yönetim paneli) her kurulumda gerekli — müşteri/fiyat/model
+// Admin (yönetim paneli) her kurulumda gerekli — müşteri/price/model
 // yönetimi başka yoldan yapılamıyor. Bu yüzden koşulsuz yükleniyor.
 const { adminRoutes } = await import('./routes/admin.js');
 adminRoutes(app);
 
+// Tek kullanımlık anahtar teslim rotası — portal kapalı olsa bile çalışır
+const { revealRoutes } = await import('./routes/reveal.js');
+revealRoutes(app);
+
 // Portal (müşteri paneli) her şirket için gerekli değil — bazı kurulumlarda
-// maliyet merkezi olarak takip ediliyor, kullanıcı kendi harcamasını
+// cost merkezi olarak takip ediliyor, kullanıcı kendi harcamasını
 // görmüyor. ENABLE_PORTAL kapalıyken dynamic import() kullanılıyor: statik
 // import olsaydı kod her zaman pakete girerdi, bayrak yalnızca route
 // kaydını atlardı. Böyle, kapalıyken o kod hiç çalışmıyor.
@@ -283,7 +287,7 @@ if (process.env.ENABLE_PORTAL === 'true') {
 // Yalnızca yerelde, Vercel dışında çalışırken başlasın.
 if (process.env.VERCEL !== '1') {
   const port = process.env.PORT ? parseInt(process.env.PORT) : 3000;
-  console.log(`Hono Sunucusu http://127.0.0.1:${port} adresinde başlatıldı`);
+  console.log(`Hono Server http://127.0.0.1:${port} started atı`);
 
   serve({
     fetch: app.fetch,

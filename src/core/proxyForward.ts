@@ -7,7 +7,7 @@ interface ForwardOptions {
   body: unknown;
   reply: FastifyReply;
   clientId: string;
-  // İsteğin geldiği anahtar; kayda yazılıyor ki harcama anahtar bazında
+  // İsteğin geldiği key; kayda yazılıyor ki harcama key bazında
   // kırılabilsin.
   keyId?: string | null;
   provider: ProviderName;
@@ -15,8 +15,8 @@ interface ForwardOptions {
 }
 
 // Token alanları sağlayıcıya ve moda göre farklı yerlerde duruyor.
-// Anthropic streaming'de input_tokens `message_start` olayında `message.usage` altında,
-// output_tokens ise `message_delta` olayında `usage` altında gelir.
+// Anthropic streaming'de input_tokens `message_start` eventında `message.usage` altında,
+// output_tokens ise `message_delta` eventında `usage` altında gelir.
 // OpenAI streaming'de usage yalnızca istekte `stream_options.include_usage` varsa gelir.
 function extractInputTokens(provider: ProviderName, data: any): number | undefined {
   if (provider === 'openai') return data?.usage?.prompt_tokens;
@@ -34,11 +34,11 @@ export async function forwardToProvider({ body, reply, clientId, keyId, provider
   const startTime = Date.now();
   const isStreaming = (body as { stream?: boolean } | undefined)?.stream === true;
 
-  // wf-ortak §5: istek başlarken `pending` kaydı açılır.
+  // wf-ortak §5: request başlarken `pending` kaydı açılır.
   // Bilerek await ETMİYORUZ — kayıt işlemi isteğin önüne geçmesin (düşük overhead).
   const pendingLog = logRequestStart(clientId, provider, model, keyId);
 
-  // Log'u kapatan tek nokta. Yanıtı geciktirmiyor ama kaybolmuyor da.
+  // Log'u kapatan tek dot. Yanıtı geciktirmiyor ama kaybolmuyor da.
   //
   // Önceden yalnızca `void` ile arkaya bırakılıyordu. Sürekli çalışan bir
   // sunucuda bu doğru; sunucusuz ortamda değil — Vercel yanıt gönderildiği an
@@ -96,8 +96,8 @@ export async function forwardToProvider({ body, reply, clientId, keyId, provider
 
   const contentType = response.headers.get('content-type');
 
-  // Sağlayıcı hata döndüyse: durum kodunu ve gövdeyi olduğu gibi aktarıyoruz.
-  // Bu kontrol, SSE başlıkları yazılmadan ÖNCE olmalı — yoksa hata gövdesi
+  // Sağlayıcı error döndüyse: status kodunu ve gövdeyi olduğu gibi aktarıyoruz.
+  // Bu kontrol, SSE başlıkları yazılmadan ÖNCE olmalı — yoksa error gövdesi
   // akış sanılarak client'a stream olarak geçer.
   if (!response.ok) {
     const rawBody = await response.text();
@@ -109,7 +109,7 @@ export async function forwardToProvider({ body, reply, clientId, keyId, provider
 
   if (!isStreaming) {
     // Gövdeyi metin olarak okuyup olduğu gibi geçiriyoruz (pass-through).
-    // JSON.parse yalnızca token okumak için, ve hata verirse istek bozulmuyor.
+    // JSON.parse yalnızca token okumak için, ve error verirse request bozulmuyor.
     const rawBody = await response.text();
     let parsed: unknown;
     try {
@@ -126,7 +126,7 @@ export async function forwardToProvider({ body, reply, clientId, keyId, provider
 
   // --- Streaming (SSE) ---
   // hijack(): yanıtı doğrudan biz yöneteceğiz, Fastify bu reply'a bir daha dokunmayacak.
-  // Bu olmadan, akış başladıktan sonra oluşan bir hata Fastify'ı başlıkları yeniden
+  // Bu olmadan, akış başladıktan sonra oluşan bir error Fastify'ı başlıkları yeniden
   // yazmaya zorluyor ve ERR_HTTP_HEADERS_SENT ile süreç komple çöküyordu.
   reply.hijack();
   const raw = reply.raw;
@@ -147,7 +147,7 @@ export async function forwardToProvider({ body, reply, clientId, keyId, provider
     return;
   }
 
-  // Client giderse sağlayıcıdan veri çekmeyi bırak — gerçek anahtarla bu doğrudan maliyet.
+  // Client giderse sağlayıcıdan veri çekmeyi bırak — gerçek anahtarla bu doğrudan cost.
   let clientGone = false;
   raw.on('close', () => {
     clientGone = true;

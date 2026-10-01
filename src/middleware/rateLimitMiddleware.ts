@@ -10,8 +10,16 @@ export async function rateLimitMiddleware(c: Context, next: Next) {
     return c.json({ error: 'Unauthorized: Client information missing' }, 401);
   }
 
-  // Örnek: Dakikada 60 istek sınırı (Bu değerleri dinamik olarak client veritabanından da çekebilirsin)
-  const result = await checkRateLimit(client.id, 60, 60);
+  // Örnek: Dakikada 60 request sınırı (Bu değerleri dinamik olarak client veritabanından da çekebilirsin)
+  const user = c.get('user');
+  
+  // Rate limit �nceli�i: User -> Team -> Default 60
+  const limit = user?.rate_limit ?? client.rate_limit ?? 60;
+  
+  // Hangi ID baz al�narak limitlenecek? User varsa user.id, yoksa team.id
+  const limitId = user ? user.id : client.id;
+  
+  const result = await checkRateLimit(limitId, limit, limit);
 
   if (!result.success) {
     // Limit aşıldıysa Hono üzerinden 429 hatası dönüyoruz

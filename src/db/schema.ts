@@ -11,7 +11,8 @@ export const clients = pgTable('clients', {
   is_active: boolean('is_active').default(true),
   // Oturum özetleme özelliği: Admin panelinden müşteri bazlı açılıp kapatılır.
   // Müşteri isterse X-Summarize header'ı ile de geçersiz kılabilir (override).
-  summary_enabled: boolean('summary_enabled').default(false)
+  summary_enabled: boolean('summary_enabled').default(false),
+  rate_limit: integer('rate_limit').default(60)
 });
 
 export const client_keys = pgTable('client_keys', {
@@ -30,7 +31,7 @@ export const logs = pgTable('logs', {
   status: varchar('status', { length: 50 }),
   error_message: text('error_message'),
   // İsteğin ve cevabın tam metni. Denetim amaçlı: şüpheli/tehlikeli bir
-  // istek olduğunda tam olarak ne sorulup ne cevap verildiğini görebilmek
+  // request olduğunda tam olarak ne sorulup ne cevap verildiğini görebilmek
   // için — mission brief'te "Prompt" loglanması zaten isteniyordu.
   prompt: text('prompt'),
   response: text('response'),

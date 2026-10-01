@@ -5,8 +5,8 @@ import { logDeniedRequest } from '../core/logCapture.js';
 import { runSecurityChain } from '../core/security.js';
 
 // Sağlayıcı adı bilerek 'anthropic' — wf-rol "Anthropic uç noktaları" diyor ve
-// Umur'un model_pricing.json anahtarları da `anthropic/...` ile başlıyor.
-// 'claude' göndersek fiyat eşleşmez, maliyet sessizce 0 yazılırdı.
+// Umur'un model_pricing.json keysı da `anthropic/...` ile başlıyor.
+// 'claude' göndersek price eşleşmez, cost sessizce 0 yazılırdı.
 export async function anthropicRoutes(server: FastifyInstance) {
   server.post('/v1/anthropic/messages', async (request, reply) => {
     // Güvenlik zinciri: kimlik -> domain -> hız limiti.

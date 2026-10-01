@@ -21,7 +21,7 @@ export async function geminiRoutes(server: FastifyInstance) {
     const allowedModels = security.allowedModels;
 
     // Gemini'nin kendi uç noktası `models/{model}:generateContent` biçiminde.
-    // Client orijinal formatı taklit ederse eylem ekini ayırıp saf model adını alıyoruz.
+    // Client orijinal formatı taklit ederse eylem ekini monthırıp saf model adını alıyoruz.
     const modelParam = (request.params as { model: string }).model;
     const requestedModel = modelParam.split(':')[0];
     if (!requestedModel) {

@@ -1,7 +1,7 @@
 // Model erişim kontrolü iki katmanlı çalışır:
 //
 //   1. KATALOG  — Model sistemde tanımlı mı? Kaynağı model_catalog tablosu.
-//                 Fiyatı olmayan model hiç geçmez; aksi halde maliyet sessizce 0 yazılır.
+//                 Fiyatı olmayan model hiç geçmez; aksi halde cost sessizce 0 yazılır.
 //   2. YETKİ    — BU client BU modeli kullanabilir mi? Kaynağı clients.allowed_models.
 //
 // İkisinin ayrı olması önemli: katalogdaki her modeli herkese açsaydık bu fiilen
@@ -9,7 +9,7 @@
 // kullanılmaz; böylece yeni ve pahalı modellere kontrolsüz erişim engellenir").
 //
 // allowed_models biçimi: "provider/model" (örn. "anthropic/claude-3-5-sonnet").
-// katalog anahtarlarıyla aynı düzen — aynı model adı iki sağlayıcıda
+// katalog keysıyla aynı düzen — aynı model adı iki sağlayıcıda
 // bulunabileceği için yalnız model adı belirsiz kalırdı.
 
 import { isKnownModel, modelKey, priceFor } from './modelCatalog.js';
@@ -27,12 +27,12 @@ export type AuthorizationResult = { ok: true } | { ok: false; status: number; er
 // bile yöneticinin kutucuğu işaretlemesini bekliyor. Yeni bir model
 // çıktığında da kimse izin vermeden kullanılamıyor.
 //
-// Fiyat tavanı bunu tersine çeviriyor: müşteriye birim fiyat sınırı konuyor,
+// Fiyat tavanı bunu tersine çeviriyor: müşteriye birim price sınırı konuyor,
 // o sınırın altındaki her model onaysız geçiyor, üstündekiler kapalı kalıyor.
 // Yeni model ucuzsa kendiliğinden kullanılabilir, pahalıysa kendiliğinden
 // kapalı — kimsenin bir şey yapması gerekmiyor.
 //
-// Çıktı fiyatı üzerinden ölçülüyor: modeller arasındaki fark orada
+// Çıktı priceı üzerinden ölçülüyor: modeller arasındaki fark orada
 // belirginleşiyor (gpt-4o $0.010 · claude-opus-4 $0.075 / 1K) ve fatura
 // ağırlığı da çıktıdan geliyor.
 //
@@ -47,7 +47,7 @@ export async function authorizeModel(
   // Ret mesajları müşteriye ne yapması gerektiğini söylüyor.
   //
   // Önceden yalnızca kapıyı kapatıyorlardı ("not authorized"). Oysa her ret
-  // yönetici panelinde talep olarak görünüyor: müşterinin bize ayrıca yazmasına
+  // yönetici panelinde accessRequest olarak görünüyor: müşterinin bize ayrıca yazmasına
   // gerek yok. Bunu söylemezsek ya vazgeçiyor ya da gereksiz yere mesaj atıyor.
   if (!(await isKnownModel(provider, model))) {
     return {
@@ -63,19 +63,19 @@ export async function authorizeModel(
 
   // İzin listesinde yok — tavanın altında mı?
   if (typeof maxOutputPrice === 'number' && maxOutputPrice > 0) {
-    const fiyat = await priceFor(provider, model);
+    const price = await priceFor(provider, model);
 
     // Fiyatı bilinmeyen model tavana göre değerlendirilemez; kapalı kalıyor.
-    // "Bilmiyorsak geçir" demek, pahalı bir modelin fiyatı girilmediği için
+    // "Bilmiyorsak geçir" demek, pahalı bir modelin priceı girilmediği için
     // açılması demekti.
-    if (fiyat && fiyat.output <= maxOutputPrice) return { ok: true };
+    if (price && price.output <= maxOutputPrice) return { ok: true };
 
-    if (fiyat) {
+    if (price) {
       return {
         ok: false,
         status: 403,
         error:
-          `Model '${model}' costs $${(fiyat.output * 1000).toFixed(2)} per 1M output tokens, ` +
+          `Model '${model}' costs $${(price.output * 1000).toFixed(2)} per 1M output tokens, ` +
           `above your limit of $${(maxOutputPrice * 1000).toFixed(2)}. ` +
           `Your request has been recorded and is awaiting review.`
       };

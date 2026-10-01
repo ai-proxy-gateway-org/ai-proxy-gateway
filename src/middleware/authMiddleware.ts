@@ -25,5 +25,6 @@ export async function authMiddleware(c: Context, next: Next) {
 
   // Müşteri bilgilerini Hono context'ine (c) ekleyip akışa devam et
   c.set('client', result.client);
+  c.set('user', result.user || null);
   await next();
 }

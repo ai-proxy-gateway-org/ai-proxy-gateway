@@ -4048,12 +4048,12 @@ export function adminRoutes(app: Hono) {
 
       // Hiç eşleştirilmemişse: aday listesi + fiyat sürekliliğiyle öneri.
       if (!orIds.length && !liteIds.length) {
-        const oneri = or ? fiyatlaYenidenEslestir(m.provider, m.model, bg, bc, or.fiyatlar) : null;
+        const oneri = or ? fiyatlaYenidenEslestir(m.provider, m.model, bg, bc, or.prices) : null;
         return {
           ...temel,
-          adaylar: or ? olasiKarsiliklar(m.provider, m.model, or.fiyatlar) : [],
+          adaylar: or ? olasiKarsiliklar(m.provider, m.model, or.prices) : [],
           onerilenEslesme: oneri?.secilen
-            ? { kimlik: oneri.secilen.kimlik, girdi: oneri.secilen.girdi, cikti: oneri.secilen.cikti }
+            ? { kimlik: oneri.secilen.kimlik, girdi: oneri.secilen.input, cikti: oneri.secilen.output }
             : null,
           durum: 'eslesmemis' as const
         };
@@ -4064,18 +4064,18 @@ export function adminRoutes(app: Hono) {
       // Eşleştirme var ama hiçbir kaynakta bulunamıyor: ad değişmiş olabilir.
       // Fiyat sürekliliğiyle yeni adı öneriyoruz, uygulamayı yöneticiye bırakarak.
       if (!okuma.okumalar.length) {
-        const oneri = or ? fiyatlaYenidenEslestir(m.provider, m.model, bg, bc, or.fiyatlar) : null;
+        const oneri = or ? fiyatlaYenidenEslestir(m.provider, m.model, bg, bc, or.prices) : null;
         return {
           ...temel,
-          adaylar: or ? olasiKarsiliklar(m.provider, m.model, or.fiyatlar) : [],
+          adaylar: or ? olasiKarsiliklar(m.provider, m.model, or.prices) : [],
           onerilenEslesme: oneri?.secilen
-            ? { kimlik: oneri.secilen.kimlik, girdi: oneri.secilen.girdi, cikti: oneri.secilen.cikti }
+            ? { kimlik: oneri.secilen.kimlik, girdi: oneri.secilen.input, cikti: oneri.secilen.output }
             : null,
           durum: 'kaynakta-yok' as const
         };
       }
 
-      const kg = okuma.girdi ?? 0, kc = okuma.cikti ?? 0;
+      const kg = okuma.input ?? 0, kc = okuma.output ?? 0;
       const ayni = Math.abs(bg - kg) < ESIK && Math.abs(bc - kc) < ESIK;
       const ucuz = (kg + kc) < (bg + bc);
 
@@ -4133,13 +4133,13 @@ export function adminRoutes(app: Hono) {
 
     const talepler = [...talepSayac.entries()]
       .map(([ad, o]) => {
-        const aday = or ? olasiKarsiliklar(o.provider, o.model, or.fiyatlar) : [];
-        const ilk = aday[0] ? or?.fiyatlar.get(aday[0]) : undefined;
+        const aday = or ? olasiKarsiliklar(o.provider, o.model, or.prices) : [];
+        const ilk = aday[0] ? or?.prices.get(aday[0]) : undefined;
         return {
           ad, provider: o.provider, model: o.model, adet: o.adet, son: o.son,
           onerilenKaynak: aday[0] ?? null,
-          onerilenGirdi: ilk?.girdi ?? null,
-          onerilenCikti: ilk?.cikti ?? null
+          onerilenGirdi: ilk?.input ?? null,
+          onerilenCikti: ilk?.output ?? null
         };
       })
       .sort((a, b) => b.adet - a.adet);
@@ -4224,9 +4224,9 @@ export function adminRoutes(app: Hono) {
       const eklenen: string[] = [];
 
       // --- OpenRouter ---
-      const orCalisiyor = or ? orMevcut.some((k) => or.fiyatlar.has(k)) : false;
+      const orCalisiyor = or ? orMevcut.some((k) => or.prices.has(k)) : false;
       if (or && !orCalisiyor) {
-        const sonuc = fiyatlaYenidenEslestir(m.provider, m.model, bg, bc, or.fiyatlar);
+        const sonuc = fiyatlaYenidenEslestir(m.provider, m.model, bg, bc, or.prices);
         if (sonuc.sonuc === 'baglandi' && sonuc.secilen) {
           guncelleme.source_ids = [...orMevcut, sonuc.secilen.kimlik];
           eklenen.push(sonuc.secilen.kimlik);
@@ -4239,9 +4239,9 @@ export function adminRoutes(app: Hono) {
       //
       // İkinci kaynağı da otomatik dolduruyoruz. Elle yazdırmak, otomatikleştirmeye
       // çalıştığımız işi yarım bırakmak olurdu.
-      const liteCalisiyor = lite ? liteMevcut.some((k) => lite.fiyatlar.has(k)) : false;
+      const liteCalisiyor = lite ? liteMevcut.some((k) => lite.prices.has(k)) : false;
       if (lite && !liteCalisiyor) {
-        const adaylar = liteAdaylari(m.model, lite.fiyatlar);
+        const adaylar = liteAdaylari(m.model, lite.prices);
         const toplam = bg + bc;
 
         // Aynı model birçok platform önekiyle listeleniyor: doğrudan sağlayıcı
@@ -4254,10 +4254,10 @@ export function adminRoutes(app: Hono) {
         // Eşitlikte önek sayısı az olan, yani doğrudan sağlayıcı kaydı kazanıyor.
         const puanli = adaylar
           .map((k) => {
-            const f = lite.fiyatlar.get(k);
+            const f = lite.prices.get(k);
             if (!f) return null;
             const sapma = toplam > 0
-              ? Math.abs((f.girdi + f.cikti) - toplam) / toplam
+              ? Math.abs((f.input + f.output) - toplam) / toplam
               : 0;
             return { k, sapma, dilim: k.split('/').length };
           })
@@ -4351,7 +4351,7 @@ export function adminRoutes(app: Hono) {
         continue;
       }
 
-      const kg = okuma.girdi ?? 0, kc = okuma.cikti ?? 0;
+      const kg = okuma.input ?? 0, kc = okuma.output ?? 0;
       const bg = Number(m.input_price ?? 0), bc = Number(m.output_price ?? 0);
       if (Math.abs(bg - kg) < 0.000001 && Math.abs(bc - kc) < 0.000001) {
         // Değişiklik yok ama doğrulama yapıldı; damgayı tazeliyoruz.
@@ -4640,8 +4640,8 @@ export function adminRoutes(app: Hono) {
       const bg = Number(m.input_price ?? 0), bc = Number(m.output_price ?? 0);
 
       // --- 1) kırık eşleştirmeyi onar ---
-      if (or && !orIds.some((k) => or.fiyatlar.has(k))) {
-        const sonuc = fiyatlaYenidenEslestir(m.provider, m.model, bg, bc, or.fiyatlar);
+      if (or && !orIds.some((k) => or.prices.has(k))) {
+        const sonuc = fiyatlaYenidenEslestir(m.provider, m.model, bg, bc, or.prices);
         if (sonuc.sonuc === 'baglandi' && sonuc.secilen) {
           orIds = [...orIds, sonuc.secilen.kimlik];
           await supabase.from('model_catalog')
@@ -4654,13 +4654,13 @@ export function adminRoutes(app: Hono) {
           });
         }
       }
-      if (lite && !liteIds.some((k) => lite.fiyatlar.has(k))) {
-        const adaylar = liteAdaylari(m.model, lite.fiyatlar);
+      if (lite && !liteIds.some((k) => lite.prices.has(k))) {
+        const adaylar = liteAdaylari(m.model, lite.prices);
         const toplam = bg + bc;
         const puanli = adaylar
           .map((k) => {
-            const f = lite.fiyatlar.get(k);
-            return f ? { k, sapma: toplam > 0 ? Math.abs((f.girdi + f.cikti) - toplam) / toplam : 0 } : null;
+            const f = lite.prices.get(k);
+            return f ? { k, sapma: toplam > 0 ? Math.abs((f.input + f.output) - toplam) / toplam : 0 } : null;
           })
           .filter((x): x is { k: string; sapma: number } => x !== null)
           .filter((x) => toplam <= 0 || x.sapma <= 0.25)
@@ -4689,7 +4689,7 @@ export function adminRoutes(app: Hono) {
         continue;
       }
 
-      const kg = okuma.girdi ?? 0, kc = okuma.cikti ?? 0;
+      const kg = okuma.input ?? 0, kc = okuma.output ?? 0;
 
       // Fiyat zaten doğruysa değiştirecek bir şey yok — ama doğrulandığını
       // kaydetmemiz gerekiyor. price_checked_at yalnızca fiyat değişince
@@ -4805,22 +4805,22 @@ export function adminRoutes(app: Hono) {
         let orId: string | null = null, liteId: string | null = null;
 
         if (or) {
-          const aday = olasiKarsiliklar(m.provider, m.model, or.fiyatlar)[0];
-          const f = aday ? or.fiyatlar.get(aday) : undefined;
+          const aday = olasiKarsiliklar(m.provider, m.model, or.prices)[0];
+          const f = aday ? or.prices.get(aday) : undefined;
           // Yalnızca adı birebir tutan adayı kabul ediyoruz. Benzer adlı
           // başka bir modelin fiyatını yazmak, yanlış fiyatı sessizce
           // kataloga sokmak olurdu.
           const sade = (t: string) => t.toLowerCase().replace(/[^a-z0-9]/g, '');
           if (aday && f && sade(aday.split('/').slice(1).join('/')) === sade(m.model)) {
-            girdi = f.girdi; cikti = f.cikti; orId = aday;
+            girdi = f.input; cikti = f.output; orId = aday;
           }
         }
         if (lite) {
-          const aday = liteAdaylari(m.model, lite.fiyatlar)[0];
-          const f = aday ? lite.fiyatlar.get(aday) : undefined;
+          const aday = liteAdaylari(m.model, lite.prices)[0];
+          const f = aday ? lite.prices.get(aday) : undefined;
           if (aday && f) {
             liteId = aday;
-            if (girdi === null) { girdi = f.girdi; cikti = f.cikti; }
+            if (girdi === null) { girdi = f.input; cikti = f.output; }
           }
         }
 
@@ -4911,7 +4911,7 @@ export function adminRoutes(app: Hono) {
       );
       for (const e of eklenenModeller) mevcutTum.add(e.model);
 
-      for (const [kaynakId, f] of or.fiyatlar) {
+      for (const [kaynakId, f] of or.prices) {
         const parca = kaynakId.split('/');
         if (parca.length !== 2) continue;
         if (kaynakId.includes(':') || kaynakId.startsWith('~')) continue;
@@ -4925,16 +4925,16 @@ export function adminRoutes(app: Hono) {
 
         const ad = `${provider}/${modelAdi}`;
         if (mevcutTum.has(ad)) continue;
-        if (!(f.girdi > 0 && f.cikti > 0)) continue;
+        if (!(f.input > 0 && f.output > 0)) continue;
 
         // İkinci kaynakta da varsa doğrulanmış sayılıyor.
-        const liteAday = lite ? liteAdaylari(modelAdi, lite.fiyatlar)[0] ?? null : null;
+        const liteAday = lite ? liteAdaylari(modelAdi, lite.prices)[0] ?? null : null;
 
         const { error: h } = await supabase.from('model_catalog').insert([{
           provider: provider,
           model: modelAdi,
-          input_price: f.girdi,
-          output_price: f.cikti,
+          input_price: f.input,
+          output_price: f.output,
           is_active: true,
           price_checked_at: simdi,
           price_source: liteAday ? 'verified' : 'openrouter',
@@ -4949,11 +4949,11 @@ export function adminRoutes(app: Hono) {
         mevcutTum.add(ad);
         eklenenModeller.push({
           model: ad,
-          fiyat: `$${(f.girdi * 1000).toFixed(2)} / $${(f.cikti * 1000).toFixed(2)}`
+          fiyat: `$${(f.input * 1000).toFixed(2)} / $${(f.output * 1000).toFixed(2)}`
         });
         olaylar.push({
           tur: 'model', tetikleyen, model: ad,
-          yeni_girdi: f.girdi, yeni_cikti: f.cikti,
+          yeni_girdi: f.input, yeni_cikti: f.output,
           kaynak: liteAday ? 'openrouter + litellm' : 'openrouter',
           aciklama: 'New at the source; added with its price. ' +
             'The price limit decides who may use it.'

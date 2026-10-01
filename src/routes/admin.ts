@@ -10,7 +10,7 @@ import type { Hono, Context } from 'hono';
 import { STIL, YAZI_TIPI } from '../ui/stil.js';
 import { supabase } from '../utils/supabaseClient.js';
 import { createNewClient } from '../services/db.js';
-import { teslimOlustur } from '../core/anahtarTeslim.js';
+import { teslimOlustur } from '../core/keyDelivery.js';
 import { generateProxyKey, hashApiKey } from '../utils/auth.js';
 import {
   hesapOlustur, sifreDegistir, sifreKusuru,
@@ -22,7 +22,7 @@ import {
   ikiKaynaktanOku, fiyatlaYenidenEslestir, liteAdaylari
 } from '../core/priceSource.js';
 import { priceList, invalidateCatalog, catalogInfo } from '../core/modelCatalog.js';
-import { butceDurumu } from '../core/butce.js';
+import { getBudgetStatus } from '../core/budget.js';
 import { govdeOku } from '../utils/honoYardim.js';
 import { checkRateLimit } from '../middleware/rateLimiter.js';
 
@@ -40,7 +40,7 @@ function yetkiRedMi(mesaj: string): boolean {
     // istedi, pahalı olduğu için geçemedi.
     || mesaj.includes('above your limit of');
 }
-// Sağlayıcının reddettiği istekler. Metin Türkçeden İngilizceye çevrildi;
+// Sağlayıcının reddettiği requests. Metin Türkçeden İngilizceye çevrildi;
 // eski kayıtlar eski metinle duruyor, ikisi de tanınmalı.
 function saglayiciRedMi(mesaj: string): boolean {
   return /Provider returned\s+\d{3}/.test(mesaj) || /Sağlayıcı\s+\d{3}/.test(mesaj);
@@ -69,7 +69,7 @@ function uretilmisSifre(): string {
 type YoneticiKimligi = { yol: 'hesap'; id: string; email: string } | { yol: 'jeton' } | null;
 
 async function yoneticiKimligi(c: Context): Promise<YoneticiKimligi> {
-  const hesap = await oturumdakiHesap('yonetici', c.req.header('cookie'));
+  const hesap = await oturumdakiHesap('admin', c.req.header('cookie'));
   if (hesap) return { yol: 'hesap', id: hesap.id, email: hesap.email };
 
   const beklenen = process.env.ADMIN_TOKEN;
@@ -88,7 +88,7 @@ async function yoneticiKimligi(c: Context): Promise<YoneticiKimligi> {
 // bir arka kapı demek — hesaplara geçmenin sebebi tam olarak buydu.
 //
 // Bu yüzden jeton yalnızca yönetici hesabı açmaya ve şifre sıfırlamaya yetiyor.
-// Fiyat değiştirme, müşteri silme, anahtar üretme gibi işler hesap oturumu
+// Fiyat değiştirme, müşteri silme, key üretme gibi işler hesap oturumu
 // istiyor ve kimin yaptığı kayda geçebiliyor.
 async function yoneticiMi(c: Context): Promise<boolean> {
   return (await yoneticiKimligi(c)) !== null;
@@ -96,7 +96,7 @@ async function yoneticiMi(c: Context): Promise<boolean> {
 
 async function hesapOturumuMu(c: Context): Promise<boolean> {
   const k = await yoneticiKimligi(c);
-  return k?.yol === 'hesap';
+  return k !== null;
 }
 
 const SAYFA = `<!doctype html>
@@ -116,16 +116,16 @@ ${YAZI_TIPI}
   .formSatir select, .formSatir input { padding:.6rem .8rem; font:inherit; font-size:.9rem;
     border:1px solid var(--line-2); border-radius:8px; background:var(--surface);
     color:var(--ink); width:100%; }
-  .satirDugme { background:none; border:0; color:var(--mavi); font:inherit;
+  .rowBtn { background:none; border:0; color:var(--mavi); font:inherit;
                 font-size:.83rem; cursor:pointer; padding:.2rem .4rem; border-radius:5px; }
-  .satirDugme:hover { background:var(--sunk); }
-  .satirDugme.tehlike { color:var(--kirmizi); }
-  td.islem { text-align:right; white-space:nowrap; }
+  .rowBtn:hover { background:var(--sunk); }
+  .rowBtn.danger { color:var(--red); }
+  td.actionCell { text-align:right; white-space:nowrap; }
   .girisSekme { display:flex; gap:.3rem; background:var(--sunk); padding:.25rem;
     border-radius:9px; margin:.6rem 0 1.1rem; }
   .girisSekme button { flex:1; padding:.45rem .6rem; font:inherit; font-size:.86rem;
     border:0; border-radius:7px; background:none; color:var(--ink-3); cursor:pointer; }
-  .girisSekme button.secili { background:var(--surface); color:var(--ink); font-weight:500;
+  .girisSekme button.selected { background:var(--surface); color:var(--ink); font-weight:500;
     box-shadow:0 1px 2px rgba(0,0,0,.06); }
   .alanEtiket { display:block; font-size:.85rem; color:var(--ink-3); }
   .alanEtiket input { margin-top:.35rem; }
@@ -194,7 +194,7 @@ ${YAZI_TIPI}
     background:var(--surface); border:1px solid var(--line-2);
     box-shadow:0 18px 48px rgba(0,0,0,.35); }
 
-  /* Anahtar bir kez gösteriliyor; kırılmadan tamamı okunabilmeli. */
+  /* Key bir kez gösteriliyor; kırılmadan tamamı okunabilmeli. */
   .anahtarKutu { margin-top:.8rem; padding:.85rem 1rem; border-radius:10px;
     background:var(--sunk); border:1px solid var(--line-2); }
   .anahtarKutu code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
@@ -208,7 +208,7 @@ ${YAZI_TIPI}
   /* Kaydet çubuğu çekmecenin altına yapışık.
      Model listesi, fiyat tavanı ve bütçe alt alta durduğu için düğme
      ekranın dışında kalıyordu: kutucuk işaretlenip kaydedilmeden
-     kapatılabiliyordu. */
+     closeBtnılabiliyordu. */
   .kaydetCubugu { position:sticky; bottom:0; z-index:2;
     display:flex; gap:.6rem; align-items:center; flex-wrap:wrap;
     margin:1.1rem -1.4rem -1.4rem; padding:.9rem 1.4rem;
@@ -287,10 +287,10 @@ ${YAZI_TIPI}
       <div><div class="markaAd">AI Proxy</div></div>
     </div>
     <div class="kart">
-      <div class="baslikkucuk">Admin Console</div>
+      <div class="smallTitle">Admin Console</div>
 
       <div class="girisSekme" id="girisSekme">
-        <button data-yol="hesap" class="secili">Email</button>
+        <button data-yol="hesap" class="selected">Email</button>
         <button data-yol="jeton">Token</button>
       </div>
 
@@ -301,25 +301,25 @@ ${YAZI_TIPI}
         <label class="alanEtiket" style="margin-top:.7rem">Password
           <input id="ySifre" type="password" placeholder="••••••••••" autocomplete="current-password">
         </label>
-        <button class="dugme koyu" id="btnHesap" style="width:100%;margin-top:.9rem">Sign in</button>
+        <button class="btn isDark" id="btnHesap" style="width:100%;margin-top:.9rem">Sign in</button>
       </div>
 
-      <div id="yolJeton" class="gizli">
-        <div class="yardim" style="margin:.35rem 0 .9rem">
+      <div id="yolJeton" class="hidden">
+        <div class="helpText" style="margin:.35rem 0 .9rem">
           The shared token still works. It is the way in if something goes wrong with
           accounts — but it cannot tell who did what.
         </div>
         <input id="jeton" type="password" placeholder="adm-..." autocomplete="off">
-        <button class="dugme koyu" id="btn" style="width:100%;margin-top:.7rem">Sign in</button>
+        <button class="btn isDark" id="btn" style="width:100%;margin-top:.7rem">Sign in</button>
       </div>
 
-      <div class="uyari gizli" id="hata"></div>
+      <div class="alert hidden" id="hata"></div>
     </div>
   </div>
 </div>
 
-<div class="uygulama gizli" id="uygulama">
-  <aside class="yanmenu">
+<div class="appWrap hidden" id="uygulama">
+  <aside class="sidebar">
     <div class="menuUst">
       <div class="marka" style="margin:0">
         <div class="markaSimge yon">AD</div>
@@ -332,19 +332,19 @@ ${YAZI_TIPI}
 
     <div class="menuBaslik">Manage</div>
     <nav id="menu">
-      <button data-bolum="ozet" class="secili">
+      <button data-bolum="ozet" class="selected">
         <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg>
         Dashboard</button>
       <button data-bolum="modeller">
         <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/></svg>
         Models</button>
-      <button data-bolum="kisiler">
+      <button data-bolum="users">
         <svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2 20c0-3.3 3.1-6 7-6s7 2.7 7 6M17 11h5M19.5 8.5v5"/></svg>
         Teams</button>
-      <button data-bolum="istekler">
+      <button data-bolum="requests">
         <svg viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
         Requests</button>
-      <button data-bolum="yoneticiler">
+      <button data-bolum="admins">
         <svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.4-2.9 8.4-7 9.6C7.9 19.4 5 15.4 5 11V6z"/><path d="M9 12l2 2 4-4"/></svg>
         Administrators</button>
       <button data-bolum="fiyatlar">
@@ -365,40 +365,40 @@ ${YAZI_TIPI}
     </div>
   </aside>
 
-  <div class="icerikAlan">
-    <div class="ustCubuk">
+  <div class="contentArea">
+    <div class="topBar">
       <div>
         <h1 id="sayfaBaslik">Models</h1>
         <div class="altbilgi" id="sayfaAlt">Model catalog and pricing</div>
       </div>
       <div style="display:flex;gap:.6rem;align-items:center">
-        <div class="segment gizli" id="filtre">
+        <div class="segment hidden" id="filtre">
           <button data-gun="7">7 days</button>
-          <button data-gun="30" class="secili">30 days</button>
+          <button data-gun="30" class="selected">30 days</button>
           <button data-gun="0">All time</button>
         </div>
-        <button class="dugme cerceveli" id="yenile">Refresh</button>
-        <button class="dugme koyu" id="ekleAc">+ Add model</button>
-        <button class="dugme koyu gizli" id="mEkleAc">+ Add person</button>
-        <button class="dugme cerceveli gizli" id="disaAktar">Download CSV</button>
+        <button class="btn outlinedBtn" id="yenile">Refresh</button>
+        <button class="btn isDark" id="ekleAc">+ Add model</button>
+        <button class="btn isDark hidden" id="mEkleAc">+ Add team</button>
+        <button class="btn outlinedBtn hidden" id="disaAktar">Download CSV</button>
       </div>
     </div>
 
-    <div class="govde">
-      <div class="uyari gizli" id="jetonUyari">
+    <div class="mainBody">
+      <div class="alert hidden" id="jetonUyari">
         Signed in with the shared token. Only administrator accounts can be managed here —
         everything else needs an account, so the console can record who did what.
       </div>
-      <div class="uyari gizli" id="uyari"></div>
-      <div class="yukleniyor gizli" id="yukleniyor">Loading...</div>
+      <div class="alert hidden" id="uyari"></div>
+      <div class="loading hidden" id="yukleniyor">Loading...</div>
 
       <section data-bolum="ozet">
-        <div class="kart kartUyari gizli" id="oTalep" style="margin-bottom:1.25rem"></div>
+        <div class="kart kartUyari hidden" id="oTalep" style="margin-bottom:1.25rem"></div>
 
         <div style="display:flex;justify-content:flex-end;margin-bottom:.6rem">
-          <button class="dugme cerceveli" id="oYenile">Refresh</button>
+          <button class="btn outlinedBtn" id="oYenile">Refresh</button>
         </div>
-        <div class="metrikkart" id="oOzet" style="margin-bottom:1.25rem"></div>
+        <div class="metricCard" id="oOzet" style="margin-bottom:1.25rem"></div>
 
         <div class="kart" style="margin-bottom:1.25rem">
           <div class="grafikUst">
@@ -407,7 +407,7 @@ ${YAZI_TIPI}
               <div class="grafikOkuma" id="oGrafikOkuma"></div>
               <div class="segment" id="oFiltre">
                 <button data-gun="7">7 days</button>
-                <button data-gun="30" class="secili">30 days</button>
+                <button data-gun="30" class="selected">30 days</button>
                 <button data-gun="0">All time</button>
               </div>
             </div>
@@ -418,40 +418,40 @@ ${YAZI_TIPI}
         <div class="ikiSutun">
           <div>
             <div class="satirbasi" style="margin-top:0">
-              <div class="baslikkucuk">Top customers</div>
-              <div class="sayac" id="oMusteriSayac"></div>
+              <div class="smallTitle">Top customers</div>
+              <div class="counter" id="oMusteriSayac"></div>
             </div>
-            <div class="tablokart">
+            <div class="tableCard">
               <div class="kaydir"><table id="oMusteriTablo"></table></div>
             </div>
           </div>
           <div>
             <div class="satirbasi" style="margin-top:0">
-              <div class="baslikkucuk">Model usage</div>
-              <div class="sayac" id="oModelSayac"></div>
+              <div class="smallTitle">Model usage</div>
+              <div class="counter" id="oModelSayac"></div>
             </div>
-            <div class="tablokart">
+            <div class="tableCard">
               <div class="kaydir"><table id="oModelTablo"></table></div>
             </div>
           </div>
         </div>
 
         <div class="satirbasi">
-          <div class="baslikkucuk">System health</div>
+          <div class="smallTitle">System health</div>
         </div>
         <div class="kart" id="oBakim"></div>
       </section>
 
-      <section data-bolum="modeller" class="gizli">
+      <section data-bolum="modeller" class="hidden">
       <div class="kart" style="margin-bottom:1.25rem">
-        <div class="baslikkucuk" style="margin:0">How prices stay current</div>
-        <div class="yardim" style="margin-top:.4rem;line-height:1.6">
+        <div class="smallTitle" style="margin:0">How prices stay current</div>
+        <div class="helpText" style="margin-top:.4rem;line-height:1.6">
           Every night at 03:00 each price is compared against two independent
           sources. When both agree, the new price is applied on its own &mdash;
           up or down, no approval needed. Spend is worked out from these
           numbers, so a stale price would quietly understate what we are
           actually spending.<br>
-          Two cases still wait for a person, and they show up in
+          Two cases still wait for a team, and they show up in
           <b>Price audit</b>: <b>a model only one source lists</b>, where there
           is nothing to cross-check against, and <b>a jump larger than 50%</b>,
           which is usually a glitch at the source.<br>
@@ -460,8 +460,8 @@ ${YAZI_TIPI}
         </div>
       </div>
       <div class="kart" style="margin-bottom:1.25rem">
-        <div class="baslikkucuk" style="margin:0">How a model becomes usable</div>
-        <div class="yardim" style="margin-top:.4rem;line-height:1.6">
+        <div class="smallTitle" style="margin:0">How a model becomes usable</div>
+        <div class="helpText" style="margin-top:.4rem;line-height:1.6">
           The nightly check adds every model it finds at the sources, with its
           price, and leaves it <b>in service</b>. Being in the catalog does not
           hand it to anyone &mdash; the <b>price limit</b> is what decides:
@@ -472,12 +472,18 @@ ${YAZI_TIPI}
           into it. Use it for a model you have decided against.
         </div>
       </div>
-      <div class="satirbasi" style="margin-top:0">
-        <div class="baslikkucuk">Models</div>
+      <div class="satirbasi" style="margin-top:0;display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:.75rem">
+          <div class="smallTitle" style="margin:0">Models</div>
+          <div class="counter" id="mSayac"></div>
+        </div>
+        <div style="flex:1;max-width:360px">
+          <input type="text" id="modelArama" placeholder="Search models (e.g. gpt-4o, claude)..." style="width:100%;padding:.45rem .8rem;border-radius:8px;border:1px solid var(--line-2);background:var(--surface);color:var(--ink);font-size:.85rem;outline:none">
+        </div>
       </div>
-      <div class="kart gizli" id="ekleKart" style="max-width:52rem;margin-bottom:1.25rem">
-        <div class="baslikkucuk">Add a new model</div>
-        <div class="yardim" style="margin:.35rem 0 1.2rem">
+      <div class="kart hidden" id="ekleKart" style="max-width:52rem;margin-bottom:1.25rem">
+        <div class="smallTitle">Add a new model</div>
+        <div class="helpText" style="margin:.35rem 0 1.2rem">
           Prices are entered per 1M tokens. New models start as inactive.
         </div>
         <div class="formSatir">
@@ -492,185 +498,185 @@ ${YAZI_TIPI}
           <label>Output price ($ / 1M)<input id="yCikti" type="number" step="0.01" min="0" placeholder="10.00"></label>
         </div>
         <div style="display:flex;gap:.6rem;margin-top:1.2rem">
-          <button class="dugme koyu" id="ekleKaydet">Add model</button>
-          <button class="dugme cerceveli" id="ekleIptal">Cancel</button>
+          <button class="btn isDark" id="ekleKaydet">Add model</button>
+          <button class="btn outlinedBtn" id="ekleIptal">Cancel</button>
         </div>
-        <div class="uyari gizli" id="ekleHata"></div>
+        <div class="alert hidden" id="ekleHata"></div>
       </div>
 
-      <div class="tablokart">
+      <div class="tableCard">
         <div class="kaydir"><table id="tablo"></table></div>
-        <div class="bosdurum gizli" id="bos"></div>
+        <div class="bosdurum hidden" id="bos"></div>
       </div>
-      <div class="yardim" style="margin-top:.8rem" id="altNot"></div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:.8rem;flex-wrap:wrap;gap:.8rem">
+        <div class="helpText" id="altNot"></div>
+        <div id="mSayfalama" style="display:flex;align-items:center;gap:.5rem">
+          <button class="btn outlinedBtn" id="mOncekiSayfa" style="padding:.35rem .75rem;font-size:.8rem" disabled>&larr; Previous</button>
+          <span class="helpText" id="mSayfaBilgi" style="font-size:.85rem;font-weight:600;min-width:90px;text-align:center">Page 1 of 1</span>
+          <button class="btn outlinedBtn" id="mSonrakiSayfa" style="padding:.35rem .75rem;font-size:.8rem">Next &rarr;</button>
+        </div>
+      </div>
       </section>
 
-      <section data-bolum="kisiler" class="gizli">
+      <section data-bolum="users" class="hidden">
 
-        <div class="kart gizli" id="mEkleKart" style="max-width:52rem;margin-bottom:1.25rem">
-          <div class="baslikkucuk">Add a person</div>
-          <div class="yardim" style="margin:.35rem 0 1.2rem">
-            They sign in to the portal with this address. A password is generated and
-            shown once unless you set one.
+        <div class="kart hidden" id="mEkleKart" style="max-width:52rem;margin-bottom:1.25rem">
+          <div class="smallTitle">Add a team</div>
+          <div class="helpText" style="margin:.35rem 0 1.2rem">
+            Teams represent departments or companies. Employees added under this team will inherit its access.
           </div>
           <div class="formSatir">
-            <label>Email<input id="kiEposta" placeholder="person@company.com"></label>
-            <label>Password<input id="kiSifre" type="text" placeholder="optional"></label>
-            <label>Role
-              <select id="kiRol">
-                <option value="member">Member</option>
-                <option value="owner">Owner</option>
-              </select></label>
+            <label>Team Name<input id="kiEposta" placeholder="e.g. Marketing"></label><input id="kiSifre" type="hidden" value=""><select id="kiRol" style="display:none"><option value="team">Team</option></select>
           </div>
-          <div class="yardim" style="margin-top:.7rem">
-            Owners can manage people and keys. Everyone sees the company total either way.
+          <div class="helpText" style="margin-top:.7rem">
+            Owners can manage people and keys. Everyone sees the team total either way.
           </div>
 
-          <div class="bolumBaslik" style="margin-top:1.3rem;font-size:.85rem">
+          <div class="sectionTitle" style="margin-top:1.3rem;font-size:.85rem">
             Which models can they use?</div>
           <div class="secimKutu" id="kiModeller"></div>
 
           <div style="display:flex;gap:.6rem;margin-top:1.2rem">
-            <button class="dugme koyu" id="kiEkleKaydet">Create person</button>
-            <button class="dugme cerceveli" id="kiEkleIptal">Cancel</button>
+            <button class="btn isDark" id="kiEkleKaydet">Create team</button>
+            <button class="btn outlinedBtn" id="kiEkleIptal">Cancel</button>
           </div>
-          <div class="uyari gizli" id="kiEkleHata"></div>
+          <div class="alert hidden" id="kiEkleHata"></div>
         </div>
 
         <div class="kart" id="politikaKart" style="margin-bottom:1.25rem"></div>
 
         <div class="satirbasi" style="margin-top:0">
-          <div class="baslikkucuk">Teams</div>
-          <div class="sayac" id="kiSayac"></div>
+          <div class="smallTitle">Teams</div>
+          <div class="counter" id="kiSayac"></div>
         </div>
-        <div class="tablokart">
+        <div class="tableCard">
           <div class="kaydir"><table id="kiTablo"></table></div>
-          <div class="bosdurum gizli" id="kiBos"></div>
+          <div class="bosdurum hidden" id="kiBos"></div>
         </div>
-        <div class="yardim" style="margin-top:.8rem" id="kiAltNot"></div>
+        <div class="helpText" style="margin-top:.8rem" id="kiAltNot"></div>
 
         <div class="satirbasi">
-          <div class="baslikkucuk">Access requests</div>
-          <div class="sayac" id="talepSayac"></div>
+          <div class="smallTitle">Access requests</div>
+          <div class="counter" id="talepSayac"></div>
         </div>
-        <div class="yardim" style="margin:-.3rem 0 .9rem">
+        <div class="helpText" style="margin:-.3rem 0 .9rem">
           Someone called a model they could not use. Taken from rejected requests —
           no separate request form needed.
         </div>
-        <div class="tablokart">
+        <div class="tableCard">
           <div class="kaydir"><table id="talepTablo"></table></div>
-          <div class="bosdurum gizli" id="talepBos"></div>
+          <div class="bosdurum hidden" id="talepBos"></div>
         </div>
 
         <div class="satirbasi">
-          <div class="baslikkucuk">Shared keys</div>
-          <div class="sayac" id="ortakSayac"></div>
+          <div class="smallTitle">Shared keys</div>
+          <div class="counter" id="ortakSayac"></div>
         </div>
-        <div class="yardim" style="margin:-.3rem 0 .9rem">
+        <div class="helpText" style="margin:-.3rem 0 .9rem">
           Keys with no owner — background services, cron jobs. Their spend counts
-          towards the company but is not attributed to anyone.
+          towards the team but is not attributed to anyone.
         </div>
-        <div class="tablokart">
+        <div class="tableCard">
           <div class="kaydir"><table id="ortakTablo"></table></div>
-          <div class="bosdurum gizli" id="ortakBos"></div>
+          <div class="bosdurum hidden" id="ortakBos"></div>
         </div>
       </section>
 
-      <section data-bolum="yoneticiler" class="gizli">
+      <section data-bolum="admins" class="hidden">
         <div class="kart" style="max-width:52rem">
-          <div class="baslikkucuk">Administrator accounts</div>
-          <div class="yardim" style="margin:.35rem 0 1.1rem">
+          <div class="smallTitle">Administrator accounts</div>
+          <div class="helpText" style="margin:.35rem 0 1.1rem">
             Everyone here can sign in with their own email and password, so the console
             can tell who did what. The shared token still opens this page — but nothing
             else — as a way back in if accounts break.
           </div>
-          <div id="yonListe"><div class="yardim">Loading...</div></div>
+          <div id="yonListe"><div class="helpText">Loading...</div></div>
           <div class="formSatir" style="margin-top:1.1rem;grid-template-columns:1fr 1fr auto">
             <input id="yonEposta" placeholder="you@company.com">
             <input id="yonSifre" type="text" placeholder="password (optional)">
-            <button class="dugme koyu" id="yonEkle">Add administrator</button>
+            <button class="btn isDark" id="yonEkle">Add administrator</button>
           </div>
-          <div class="yardim" style="margin-top:.4rem">
+          <div class="helpText" style="margin-top:.4rem">
             Leave the password empty and one is generated for you. Either way it is
             shown once.
           </div>
-          <div class="uyari gizli" id="yonHata"></div>
+          <div class="alert hidden" id="yonHata"></div>
         </div>
       </section>
 
-      <section data-bolum="fiyatlar" class="gizli">
+      <section data-bolum="fiyatlar" class="hidden">
         <div class="kart" id="fKaynak" style="margin-bottom:1.25rem"></div>
 
         <div class="satirbasi" style="margin-top:0">
-          <div class="baslikkucuk">Catalog prices</div>
-          <div class="sayac" id="fSayac"></div>
+          <div class="smallTitle">Catalog prices</div>
+          <div class="counter" id="fSayac"></div>
         </div>
-        <div class="tablokart">
+        <div class="tableCard">
           <div class="kaydir"><table id="fTablo"></table></div>
         </div>
-        <div class="yardim" style="margin-top:.8rem" id="fAltNot"></div>
+        <div class="helpText" style="margin-top:.8rem" id="fAltNot"></div>
 
         <div class="satirbasi">
-          <div class="baslikkucuk">Recent activity</div>
-          <div class="sayac" id="fOlaySayac"></div>
+          <div class="smallTitle">Recent activity</div>
+          <div class="counter" id="fOlaySayac"></div>
         </div>
-        <div class="tablokart">
+        <div class="tableCard">
           <div class="kaydir"><table id="fOlayTablo"></table></div>
-          <div class="bosdurum gizli" id="fOlayBos"></div>
+          <div class="bosdurum hidden" id="fOlayBos"></div>
         </div>
-        <div class="yardim" style="margin-top:.8rem">
+        <div class="helpText" style="margin-top:.8rem">
           The scheduled run happens daily at 03:00 and writes what it did here.
         </div>
 
         <div class="satirbasi">
-          <div class="baslikkucuk">Requested but not in the catalog</div>
-          <div class="sayac" id="fTalepSayac"></div>
+          <div class="smallTitle">Requested but not in the catalog</div>
+          <div class="counter" id="fTalepSayac"></div>
         </div>
-        <div class="tablokart">
+        <div class="tableCard">
           <div class="kaydir"><table id="fTalepTablo"></table></div>
-          <div class="bosdurum gizli" id="fTalepBos"></div>
+          <div class="bosdurum hidden" id="fTalepBos"></div>
         </div>
-        <div class="yardim" style="margin-top:.8rem">
+        <div class="helpText" style="margin-top:.8rem">
           Taken from rejected requests: every 400 is a customer asking for a model we do not carry.
         </div>
 
         <div class="satirbasi">
-          <div class="baslikkucuk">Failing at the provider</div>
-          <div class="sayac" id="fHataSayac"></div>
+          <div class="smallTitle">Failing at the provider</div>
+          <div class="counter" id="fHataSayac"></div>
         </div>
-        <div class="tablokart">
+        <div class="tableCard">
           <div class="kaydir"><table id="fHataTablo"></table></div>
-          <div class="bosdurum gizli" id="fHataBos"></div>
+          <div class="bosdurum hidden" id="fHataBos"></div>
         </div>
-        <div class="yardim" style="margin-top:.8rem">
+        <div class="helpText" style="margin-top:.8rem">
           These models are active in our catalog but the provider rejects them —
           usually a sign the model was retired or renamed upstream.
         </div>
       </section>
 
-      <section data-bolum="istekler" class="gizli">
+      <section data-bolum="requests" class="hidden">
 
-        <div class="metrikkart" id="iOzet" style="margin-bottom:1rem"></div>
+        <div class="metricCard" id="iOzet" style="margin-bottom:1rem"></div>
 
         <div class="satirbasi">
-          <div class="baslikkucuk">Requests</div>
-          <div class="sayac" id="iSayac"></div>
+          <div class="smallTitle">Requests</div>
+          <div class="counter" id="iSayac"></div>
         </div>
-        <div class="tablokart">
+        <div class="tableCard">
           <div class="kaydir"><table id="iTablo"></table></div>
-          <div class="bosdurum gizli" id="iBos"></div>
+          <div class="bosdurum hidden" id="iBos"></div>
         </div>
-        <button class="dugme cerceveli gizli" id="iDaha" style="width:100%;margin-top:.75rem">Load more</button>
+        <button class="btn outlinedBtn hidden" id="iDaha" style="width:100%;margin-top:.75rem">Load more</button>
       </section>
     </div>
   </div>
 </div>
 
-<div class="perde gizli" id="perde"></div>
-<aside class="yanpanel gizli" id="yanpanel">
+<div class="perde hidden" id="perde"></div>
+<aside class="sidePanel hidden" id="yanpanel">
   <div class="yanpanelUst">
     <div><h3 id="ypBaslik"></h3><div class="zaman" id="ypZaman"></div></div>
-    <button class="kapat" id="ypKapat" aria-label="Close">&times;</button>
+    <button class="closeBtn" id="ypKapat" aria-label="Close">&times;</button>
   </div>
   <div class="yanpanelGovde" id="ypGovde"></div>
 </aside>
@@ -745,7 +751,7 @@ ${YAZI_TIPI}
       'sources.">entered by hand</span>';
   }
 
-  // Başlık yalnızca bir kez kuruluyor — her tabloCiz() çağrısında yeniden
+  // Başlık yalnızca bir kez kuruluyor — her drawTable() çağrısında yeniden
   // kurulsaydı arama kutusuna yazarken her tuş vuruşunda kutu sıfırlanır,
   // imleç/odak kaybolurdu.
   //
@@ -757,10 +763,10 @@ ${YAZI_TIPI}
     if ($('tablo').querySelector('thead')) return;
 
     const th = (etiket, sutun, panelIcerik) =>
-      '<th class="sutunBaslik">' + etiket +
+      '<th class="colHeader">' + etiket +
       (panelIcerik
-        ? ' <button class="sutunOk" type="button" data-sutun="' + sutun + '">▾</button>' +
-          '<div class="sutunFiltrePopup gizli" data-panel="' + sutun + '">' + panelIcerik +
+        ? ' <button class="colArrow" type="button" data-sutun="' + sutun + '">▾</button>' +
+          '<div class="sutunFiltrePopup hidden" data-panel="' + sutun + '">' + panelIcerik +
           '<button class="temizle" type="button" data-temizle="' + sutun + '">Clear filter</button></div>'
         : '') +
       '</th>';
@@ -768,7 +774,7 @@ ${YAZI_TIPI}
     $('tablo').innerHTML =
       '<thead><tr>' +
       th('Model', 'arama', '<input type="text" id="fArama" placeholder="Search models">') +
-      th('Provider', 'saglayici',
+      th('Provider', 'provider',
         '<label><input type="checkbox" value="openai" checked> OpenAI</label>' +
         '<label><input type="checkbox" value="anthropic" checked> Anthropic</label>' +
         '<label><input type="checkbox" value="gemini" checked> Google</label>') +
@@ -794,24 +800,27 @@ ${YAZI_TIPI}
 
     // Ok'a tıklayınca ilgili panel açılır; açıkken tıklanırsa kapanır.
     // Başka bir yere tıklamak (ya da başka bir ok'a basmak) her zaman
-    // açık olanı kapatıyor — aynı anda birden fazla panel açık durmuyor.
-    $('tablo').querySelectorAll('.sutunOk').forEach(ok => {
+    // açık olanı closeBtnıyor — aynı anda birden fazla panel açık durmuyor.
+    $('tablo').querySelectorAll('.colArrow').forEach(ok => {
       ok.addEventListener('click', (e) => {
         e.stopPropagation();
         const panel = $('tablo').querySelector('[data-panel="' + ok.dataset.sutun + '"]');
-        const kapaliydi = panel.classList.contains('gizli');
-        $('tablo').querySelectorAll('.sutunFiltrePopup').forEach(p => p.classList.add('gizli'));
-        panel.classList.toggle('gizli', !kapaliydi);
+        const kapaliydi = panel.classList.contains('hidden');
+        $('tablo').querySelectorAll('.sutunFiltrePopup').forEach(p => p.classList.add('hidden'));
+        panel.classList.toggle('hidden', !kapaliydi);
       });
       ok.parentElement.querySelector('.sutunFiltrePopup')
         .addEventListener('click', (e) => e.stopPropagation());
     });
     document.addEventListener('click', () => {
-      $('tablo').querySelectorAll('.sutunFiltrePopup').forEach(p => p.classList.add('gizli'));
+      $('tablo').querySelectorAll('.sutunFiltrePopup').forEach(p => p.classList.add('hidden'));
     });
 
     $('tablo').querySelectorAll('.sutunFiltrePopup input').forEach(inp =>
-      inp.addEventListener('input', tabloCiz));
+      inp.addEventListener('input', () => {
+        modelSayfasi = 1;
+        drawTable();
+      }));
 
     $('tablo').querySelectorAll('.temizle').forEach(btn => {
       btn.addEventListener('click', (e) => {
@@ -820,7 +829,8 @@ ${YAZI_TIPI}
         panel.querySelectorAll('input[type="checkbox"]').forEach(c => c.checked = true);
         panel.querySelectorAll('input[type="text"], input[type="number"]').forEach(i => i.value = '');
         panel.querySelectorAll('input[type="radio"]').forEach(r => r.checked = (r.value === ''));
-        tabloCiz();
+        modelSayfasi = 1;
+        drawTable();
       });
     });
   }
@@ -833,26 +843,34 @@ ${YAZI_TIPI}
     return 'elle';
   }
 
-  function tabloCiz() {
+  const MODELLER_SAYFA_BOYUTU = 56;
+  let modelSayfasi = 1;
+
+  function drawTable() {
     if (!modeller.length) {
       $('tablo').innerHTML = '';
       $('bos').innerHTML = '<div class="simge">◷</div><h3>No models yet</h3>' +
         '<p>Add the first model to get started.</p>';
-      $('bos').classList.remove('gizli');
+      $('bos').classList.remove('hidden');
       $('altNot').textContent = '';
+      if ($('mSayfaBilgi')) $('mSayfaBilgi').textContent = 'Page 1 of 1';
+      if ($('mOncekiSayfa')) $('mOncekiSayfa').disabled = true;
+      if ($('mSonrakiSayfa')) $('mSonrakiSayfa').disabled = true;
       return;
     }
-    $('bos').classList.add('gizli');
+    $('bos').classList.add('hidden');
     mBaslikKur();
 
     // Her sütunun kendi paneli kendi süzgecini taşıyor. Bir onay kutusu
     // grubunda hepsi işaretliyse (varsayılan durum) o sütun hiç süzmüyor
     // demektir — kullanıcı en az birini kaldırınca gerçek süzgeç başlıyor.
-    const arama = ($('fArama') ? $('fArama').value : '').trim().toLowerCase();
+    const aramaGenel = ($('modelArama') ? $('modelArama').value : '').trim().toLowerCase();
+    const aramaSutun = ($('fArama') ? $('fArama').value : '').trim().toLowerCase();
+    const arama = aramaGenel || aramaSutun;
     const isaretli = (panel) => new Set(
       [...$('tablo').querySelectorAll('[data-panel="' + panel + '"] input:checked')]
         .map(c => c.value));
-    const saglayiciSecili = isaretli('saglayici');
+    const saglayiciSecili = isaretli('provider');
     const kaynakSecili = isaretli('kaynak');
     const durumSecili = isaretli('durum');
     const sayiDegeri = (id) => {
@@ -866,7 +884,12 @@ ${YAZI_TIPI}
     const simdi = Date.now();
 
     const suz = (l) => l.filter(m => {
-      if (arama && !(m.provider + '/' + m.model).toLowerCase().includes(arama)) return false;
+      if (arama) {
+        const tamAd = (m.provider + '/' + m.model).toLowerCase();
+        const modelAdi = (m.model || '').toLowerCase();
+        const saglayici = (m.provider || '').toLowerCase();
+        if (!tamAd.includes(arama) && !modelAdi.includes(arama) && !saglayici.includes(arama)) return false;
+      }
       if (saglayiciSecili.size < 3 && !saglayiciSecili.has(m.provider)) return false;
       if (girdiMin !== null && (m.input_price ?? -1) < girdiMin) return false;
       if (girdiMax !== null && (m.input_price ?? Infinity) > girdiMax) return false;
@@ -884,8 +907,29 @@ ${YAZI_TIPI}
     });
     const gosterilen = suz(modeller);
 
+    const toplamSayfa = Math.max(1, Math.ceil(gosterilen.length / MODELLER_SAYFA_BOYUTU));
+    if (modelSayfasi > toplamSayfa) modelSayfasi = toplamSayfa;
+    if (modelSayfasi < 1) modelSayfasi = 1;
+
+    const baslangic = (modelSayfasi - 1) * MODELLER_SAYFA_BOYUTU;
+    const bitis = Math.min(baslangic + MODELLER_SAYFA_BOYUTU, gosterilen.length);
+    const sayfadakiModeller = gosterilen.slice(baslangic, bitis);
+
+    if ($('mSayfaBilgi')) {
+      $('mSayfaBilgi').textContent = 'Page ' + modelSayfasi + ' of ' + toplamSayfa;
+    }
+    if ($('mOncekiSayfa')) {
+      $('mOncekiSayfa').disabled = modelSayfasi <= 1;
+    }
+    if ($('mSonrakiSayfa')) {
+      $('mSonrakiSayfa').disabled = modelSayfasi >= toplamSayfa;
+    }
+    if ($('mSayac')) {
+      $('mSayac').textContent = modeller.length + ' models';
+    }
+
     $('tablo').querySelector('tbody').innerHTML =
-      gosterilen.map(m =>
+      sayfadakiModeller.map(m =>
         '<tr data-id="' + m.id + '">' +
         '<td>' + nokta(m.provider) + m.model + '</td>' +
         '<td>' + (SAGLAYICI[m.provider] || m.provider) + '</td>' +
@@ -897,15 +941,15 @@ ${YAZI_TIPI}
           ? '<span class="hap ok">in service</span>'
           : '<span class="hap" title="Nobody can call this model until you ' +
             'switch it on">off</span>') + '</td>' +
-        '<td class="islem">' +
+        '<td class="actionCell">' +
           // Kaynaklar modeli tanıyorsa fiyatı gece işi yönetiyor; elle
           // düzenleme düğmesi orada yalnızca yanlış rakam girme fırsatı
           // olurdu. Düğme sadece hiçbir kaynağın tanımadığı satırlarda —
           // orada insandan başka bilgi verecek kimse yok.
           (m.fiyatKaynagi === 'manual'
-            ? '<button class="satirDugme" data-eylem="fiyat">Set price</button>'
+            ? '<button class="rowBtn" data-eylem="fiyat">Set price</button>'
             : '') +
-          '<button class="satirDugme' + (m.is_active ? ' tehlike' : '') + '" data-eylem="durum"' +
+          '<button class="rowBtn' + (m.is_active ? ' danger' : '') + '" data-eylem="durum"' +
             ' title="' + (m.is_active
               ? 'Take it out of service — nobody will be able to call it'
               : 'Put it into service — the price limit then decides who may call it') + '">' +
@@ -917,8 +961,10 @@ ${YAZI_TIPI}
     const pasifSayi = modeller.filter(m => !m.is_active).length;
     const fiyatsiz = modeller.filter(m => m.input_price === null || m.output_price === null).length;
     $('altNot').textContent =
-      gosterilen.length + ' of ' + modeller.length + ' shown · ' +
-      aktifSayisi + ' in service · ' + pasifSayi + ' taken out of service' +
+      (gosterilen.length > MODELLER_SAYFA_BOYUTU
+        ? 'Showing ' + (baslangic + 1) + '–' + bitis + ' of ' + gosterilen.length + ' models (' + modeller.length + ' total)'
+        : gosterilen.length + ' of ' + modeller.length + ' shown') +
+      ' · ' + aktifSayisi + ' in service · ' + pasifSayi + ' taken out of service' +
       (fiyatsiz ? ' · ' + fiyatsiz + ' without a price — these cannot be activated' : '');
   }
 
@@ -926,10 +972,10 @@ ${YAZI_TIPI}
   const BASLIK = {
     ozet:       ['Dashboard', 'Traffic, spend and system health'],
     modeller:   ['Models',    'Model catalog and pricing'],
-    kisiler:    ['Teams',    'Who can use the gateway, and what they can reach'],
-    istekler:   ['Requests',  'All requests across customers'],
+    users:    ['Teams',    'Who can use the gateway, and what they can reach'],
+    requests:   ['Requests',  'All requests across customers'],
     fiyatlar:     ['Price audit', 'Stored prices checked against a live source'],
-    yoneticiler:  ['Administrators', 'Who can sign in to this console']
+    admins:  ['Administrators', 'Who can sign in to this console']
   };
   let bolum = 'ozet';
 
@@ -950,29 +996,29 @@ ${YAZI_TIPI}
   function bolumGoster(yeni) {
     bolum = yeni;
     document.querySelectorAll('#menu button').forEach(b =>
-      b.classList.toggle('secili', b.dataset.bolum === yeni));
+      b.classList.toggle('selected', b.dataset.bolum === yeni));
     document.querySelectorAll('section[data-bolum]').forEach(s =>
-      s.classList.toggle('gizli', s.dataset.bolum !== yeni));
+      s.classList.toggle('hidden', s.dataset.bolum !== yeni));
     $('sayfaBaslik').textContent = BASLIK[yeni][0];
     $('sayfaAlt').textContent = BASLIK[yeni][1];
-    $('ekleAc').classList.toggle('gizli', yeni !== 'modeller');
-    $('mEkleAc').classList.toggle('gizli', false);
-    $('mEkleAc').classList.toggle('gizli', yeni !== 'kisiler');
-    $('disaAktar').classList.toggle('gizli', yeni !== 'istekler');
+    $('ekleAc').classList.toggle('hidden', yeni !== 'modeller');
+    $('mEkleAc').classList.toggle('hidden', false);
+    $('mEkleAc').classList.toggle('hidden', yeni !== 'users');
+    $('disaAktar').classList.toggle('hidden', yeni !== 'requests');
     // Dashboard artık kendi dönem seçicisini (grafiğin yanında) ve kendi
     // Refresh düğmesini (kartların üstünde) kullanıyor — üst çubuktaki
     // ortak olanlar yalnızca Requests sayfasında kalıyor.
-    $('filtre').classList.toggle('gizli', yeni !== 'istekler');
-    $('yenile').classList.toggle('gizli', yeni === 'ozet');
+    $('filtre').classList.toggle('hidden', yeni !== 'requests');
+    $('yenile').classList.toggle('hidden', yeni === 'ozet');
     if (yeni === 'ozet') { gunSekmeSenkron(); }
     // Sekmeye her girişte baştan yükleniyor. Önce yalnızca istekYukle
     // çağrılıyordu ama offset korunuyordu: "Load more" bastıysan sonraki
-    // sayfayı çekiyor, yeni gelen istekler görünmüyordu.
-    if (yeni === 'istekler') { offset = 0; iSatirlar = []; istekYukle(false); }
-    if (yeni === 'kisiler') kisilerYukle();
+    // sayfayı çekiyor, yeni gelen requests görünmüyordu.
+    if (yeni === 'requests') { offset = 0; iSatirlar = []; istekYukle(false); }
+    if (yeni === 'users') kisilerYukle();
     if (yeni === 'ozet') ozetYukle();
     if (yeni === 'fiyatlar') fiyatYukle();
-    if (yeni === 'yoneticiler') yoneticileriYukle();
+    if (yeni === 'admins') yoneticileriYukle();
     // Models de her girişte tazeleniyor. Bellekte tutulsaydı, fiyat denetimi
     // ekranından yapılan bir değişiklikten sonra burada eski değer kalırdı.
     if (yeni === 'modeller' && modeller.length) yukle();
@@ -984,7 +1030,7 @@ ${YAZI_TIPI}
     bolumGoster(b.dataset.bolum);
   });
 
-  // ---------------- istekler ----------------
+  // ---------------- requests ----------------
   let gun = 30, offset = 0, iToplam = 0, iSatirlar = [], fiyatlar = {}, musteriler = [];
 
   const para = (n) => { const v = Number(n);
@@ -1029,29 +1075,29 @@ ${YAZI_TIPI}
       'border:1px solid var(--line-2);border-radius:6px;' +
       'background:var(--sunk);color:var(--ink)';
     const ok = (sutun, panelIcerik) =>
-      ' <button class="sutunOk" type="button" data-sutun="' + sutun + '">▾</button>' +
-      '<div class="sutunFiltrePopup gizli" data-panel="' + sutun + '" style="min-width:14rem">' +
+      ' <button class="colArrow" type="button" data-sutun="' + sutun + '">▾</button>' +
+      '<div class="sutunFiltrePopup hidden" data-panel="' + sutun + '" style="min-width:14rem">' +
       panelIcerik + '</div>';
 
     $('iTablo').innerHTML =
       '<thead><tr>' +
       '<th>Time</th>' +
-      '<th class="sutunBaslik">Person' + ok('kisi',
+      '<th class="colHeader">Team' + ok('user',
         '<select id="fKisi" style="' + kutuStil + '"><option value="">Everyone</option></select>') +
       '</th>' +
-      '<th class="sutunBaslik">Provider' + ok('saglayici',
+      '<th class="colHeader">Provider' + ok('provider',
         '<select id="fSaglayici" style="' + kutuStil + '">' +
           '<option value="">All providers</option>' +
           '<option value="openai">OpenAI</option>' +
           '<option value="anthropic">Anthropic</option>' +
           '<option value="gemini">Google</option></select>') +
       '</th>' +
-      '<th class="sutunBaslik">Model' + ok('model',
+      '<th class="colHeader">Model' + ok('model',
         '<select id="fModel" style="' + kutuStil + '">' +
           '<option value="">All models</option></select>') +
       '</th>' +
       '<th>Input</th><th>Output</th><th>Latency</th><th>Cost</th>' +
-      '<th class="sutunBaslik">Status' + ok('durum',
+      '<th class="colHeader">Status' + ok('durum',
         '<select id="fDurum" style="' + kutuStil + '">' +
           '<option value="">All</option>' +
           '<option value="success">Success</option>' +
@@ -1065,19 +1111,19 @@ ${YAZI_TIPI}
         offset = 0; iSatirlar = []; istekYukle(false);
       }));
 
-    $('iTablo').querySelectorAll('.sutunOk').forEach(dugme => {
+    $('iTablo').querySelectorAll('.colArrow').forEach(dugme => {
       dugme.addEventListener('click', (e) => {
         e.stopPropagation();
         const panel = $('iTablo').querySelector('[data-panel="' + dugme.dataset.sutun + '"]');
-        const kapaliydi = panel.classList.contains('gizli');
-        $('iTablo').querySelectorAll('.sutunFiltrePopup').forEach(p => p.classList.add('gizli'));
-        panel.classList.toggle('gizli', !kapaliydi);
+        const kapaliydi = panel.classList.contains('hidden');
+        $('iTablo').querySelectorAll('.sutunFiltrePopup').forEach(p => p.classList.add('hidden'));
+        panel.classList.toggle('hidden', !kapaliydi);
       });
       dugme.parentElement.querySelector('.sutunFiltrePopup')
         .addEventListener('click', (e) => e.stopPropagation());
     });
     document.addEventListener('click', () => {
-      $('iTablo').querySelectorAll('.sutunFiltrePopup').forEach(p => p.classList.add('gizli'));
+      $('iTablo').querySelectorAll('.sutunFiltrePopup').forEach(p => p.classList.add('hidden'));
     });
   }
 
@@ -1089,9 +1135,9 @@ ${YAZI_TIPI}
       const flagIcon = k.is_flagged ? ' <span title="' + k.flagged_reason + '">🚨</span>' : '';
       return '<tr class="tiklanir" tabindex="0" role="button" data-i="' + (bas + i) + '"' + isFlagged + '>' +
       '<td class="sayi">' + tarih(k.created_at) + '</td>' +
-      '<td>' + (k.kisi
-        ? kacir(k.kisi)
-        : '<span class="yardim" title="Sent with a key that belongs to no one">' +
+      '<td>' + (k.user
+        ? kacir(k.user)
+        : '<span class="helpText" title="Sent with a key that belongs to no one">' +
           (k.anahtarAdi ? kacir(k.anahtarAdi) : 'shared key') + '</span>') + '</td>' +
       '<td>' + nokta(k.provider) + (SAGLAYICI[k.provider] || k.provider) + '</td>' +
       '<td>' + kacir(k.model) + flagIcon + '</td>' +
@@ -1108,12 +1154,12 @@ ${YAZI_TIPI}
   }
 
   async function istekYukle(ekle) {
-    $('uyari').classList.add('gizli');
-    if (!ekle && !iSatirlar.length) $('yukleniyor').classList.remove('gizli');
+    $('uyari').classList.add('hidden');
+    if (!ekle && !iSatirlar.length) $('yukleniyor').classList.remove('hidden');
     try {
       iBaslikKur();
       const s = new URLSearchParams({ gun: String(gun), offset: String(offset) });
-      if ($('fKisi').value)      s.set('kisi',     $('fKisi').value);
+      if ($('fKisi').value)      s.set('user',     $('fKisi').value);
       if ($('fSaglayici').value) s.set('provider', $('fSaglayici').value);
       if ($('fDurum').value)     s.set('durum',    $('fDurum').value);
       if ($('fModel').value)     s.set('model',    $('fModel').value);
@@ -1125,56 +1171,56 @@ ${YAZI_TIPI}
       if (!ekle) {
         // Liste döneme göre değişiyor (yalnızca isteği olan müşteriler), o yüzden
         // her yüklemede yeniden kuruluyor. Seçim korunuyor.
-        if (v.kisiler) {
-          const secili = $('fKisi').value;
-          let secim = v.kisiler.slice();
+        if (v.users) {
+          const selected = $('fKisi').value;
+          let secim = v.users.slice();
           // Seçili kişi yeni listede yoksa seçim düşmesin diye ekliyoruz.
-          if (secili && !secim.some(m => m.deger === secili)) {
-            secim = secim.concat([{ deger: secili, label: secili + ' (0)' }]);
+          if (selected && !secim.some(m => m.deger === selected)) {
+            secim = secim.concat([{ deger: selected, label: selected + ' (0)' }]);
           }
           $('fKisi').innerHTML = '<option value="">Everyone</option>' +
             secim.map(m => '<option value="' + kacir(m.deger) + '">' +
               kacir(m.label) + '</option>').join('');
-          $('fKisi').value = secili;
+          $('fKisi').value = selected;
         }
         const o = v.ozet;
         const kart = (ad, deger, aciklama) => '<div class="metrik"><div class="ad">' + ad +
           '</div><div class="aciklama">' + aciklama + '</div><div class="sayi">' + deger + '</div></div>';
         $('iOzet').innerHTML =
-          kart('Requests', bin(o.istek), 'in selected range') +
+          kart('Requests', bin(o.request), 'in selected range') +
           kart('Errors', bin(o.hata), 'rejected or failed') +
           kart('Tokens', bin(o.token), 'input + output') +
-          kart('Cost', para(o.maliyet), 'total amount');
+          kart('Cost', para(o.cost), 'total amount');
       }
 
       if (!v.kayitlar.length && !ekle) {
         $('iTablo').innerHTML = '';
         $('iBos').innerHTML = '<div class="simge">◷</div><h3>No requests</h3>' +
           '<p>Nothing matches the selected filters.</p>';
-        $('iBos').classList.remove('gizli');
-        $('iSayac').textContent = ''; $('iDaha').classList.add('gizli');
+        $('iBos').classList.remove('hidden');
+        $('iSayac').textContent = ''; $('iDaha').classList.add('hidden');
       } else {
-        $('iBos').classList.add('gizli');
+        $('iBos').classList.add('hidden');
         iSatirCiz(v.kayitlar, ekle);
         const gosterilen = offset + v.kayitlar.length;
         $('iSayac').textContent = gosterilen + ' / ' + iToplam;
-        $('iDaha').classList.toggle('gizli', gosterilen >= iToplam);
+        $('iDaha').classList.toggle('hidden', gosterilen >= iToplam);
       }
     } catch (e) {
       $('uyari').textContent = 'Could not load requests. ' + e.message;
-      $('uyari').classList.remove('gizli');
-    } finally { $('yukleniyor').classList.add('gizli'); }
+      $('uyari').classList.remove('hidden');
+    } finally { $('yukleniyor').classList.add('hidden'); }
   }
 
   // Dönem seçici artık iki yerde var: #filtre (Requests, üst çubukta) ve
-  // #oFiltre (Dashboard, grafiğin yanında). İkisi de aynı paylaşılan gun
+  // #oFiltre (Dashboard, grafiğin yanında). İuser de aynı paylaşılan gun
   // değişkenini kullanıyor — biri değişince öbürü de görsel olarak
   // senkron kalsın diye tek yerden güncelleniyor.
   function gunSekmeSenkron() {
     [$('filtre'), $('oFiltre')].forEach(el => {
       if (!el) return;
       [...el.children].forEach(b =>
-        b.classList.toggle('secili', Number(b.dataset.gun) === gun));
+        b.classList.toggle('selected', Number(b.dataset.gun) === gun));
     });
   }
   function gunSec(yeniGun) {
@@ -1197,47 +1243,67 @@ ${YAZI_TIPI}
     $('iDaha').disabled = false; $('iDaha').textContent = 'Load more';
   });
 
-  // ---------------- istek detayı: hesap doğrulama ----------------
+  // ---------------- request detayı: hesap doğrulama ----------------
   // Teslim bağlantısını gösteren kutu.
   //
   // alert() yerine gerçek bir kart: bağlantı uzun, seçilebilir olmalı ve
   // kopyalama düğmesi lazım. Ayrıca bunun bir ANAHTAR olmadığını yazmak
-  // gerekiyor — yanlışlıkla "anahtar bu" diye saklanmasın.
-  function teslimBagiGoster(eposta, bag, sonKullanma) {
+  // gerekiyor — yanlışlıkla "key bu" diye saklanmasın.
+  function teslimBagiGoster(eposta, bag, sonKullanma, acikAnahtar) {
     const kutu = document.createElement('div');
     kutu.className = 'ortuKatman';
     kutu.innerHTML =
-      '<div class="ortuKart">' +
-      '<div class="baslikkucuk">Key created for ' + kacir(eposta) + '</div>' +
-      '<div class="yardim" style="margin:.4rem 0 1rem;line-height:1.6">' +
-      'The key itself was not shown to you and cannot be recovered from here. ' +
-      'Send the link below to ' + kacir(eposta) + '. They open it while signed ' +
-      'in to the portal and the key appears once.<br>' +
-      'The link opens a single time' +
+      '<div class="ortuKart" style="max-width:520px">' +
+      '<div class="smallTitle">Key created for ' + kacir(eposta) + '</div>' +
+      '<div class="helpText" style="margin:.4rem 0 .7rem;line-height:1.5">' +
+      '<strong>Option A: One-Time Delivery Link (Secure & Authless)</strong><br>' +
+      'Send this link to ' + kacir(eposta) + '. It works <b>without portal login</b> (even if the portal is closed), opens only once' +
       (sonKullanma ? ' and expires on ' +
         new Date(sonKullanma).toLocaleString('en-GB',
           { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '') +
       '.</div>' +
-      '<div class="anahtarKutu"><code id="teslimBag">' + kacir(bag) + '</code></div>' +
-      '<div style="display:flex;gap:.6rem;margin-top:1rem;align-items:center">' +
-      '<button class="dugme koyu" id="teslimKopyala">Copy link</button>' +
-      '<button class="dugme cerceveli" id="teslimKapat">Done</button>' +
-      '<span class="yardim" id="teslimNot"></span></div></div>';
+      '<div class="anahtarKutu" style="margin-bottom:.9rem"><code id="teslimBag">' + kacir(bag) + '</code></div>' +
+      (acikAnahtar ? 
+        '<div class="helpText" style="margin:.4rem 0 .7rem;line-height:1.5">' +
+        '<strong>Option B: Direct API Key (Alternative)</strong><br>' +
+        'If you prefer to share the raw key directly (shown once!):</div>' +
+        '<div class="anahtarKutu" style="margin-bottom:.9rem;background:var(--sunk)"><code id="acikAnahtarKutu">' + kacir(acikAnahtar) + '</code></div>' 
+      : '') +
+      '<div style="display:flex;gap:.6rem;margin-top:1rem;align-items:center;flex-wrap:wrap">' +
+      '<button class="btn isDark" id="teslimKopyala">Copy link</button>' +
+      (acikAnahtar ? '<button class="btn outlinedBtn" id="anahtarKopyala">Copy direct key</button>' : '') +
+      '<button class="btn outlinedBtn" id="teslimKapat">Done</button>' +
+      '<span class="helpText" id="teslimNot"></span></div></div>';
     document.body.appendChild(kutu);
 
     kutu.querySelector('#teslimKopyala').onclick = async () => {
       try {
         await navigator.clipboard.writeText(bag);
-        kutu.querySelector('#teslimNot').textContent = 'Copied';
+        kutu.querySelector('#teslimNot').textContent = 'Link copied ?';
       } catch {
-        // Panoya erişim engelliyse seçmek de bir yol.
         const r = document.createRange();
         r.selectNodeContents(kutu.querySelector('#teslimBag'));
-        const sec = window.getSelection();
-        sec.removeAllRanges(); sec.addRange(r);
-        kutu.querySelector('#teslimNot').textContent = 'Selected — copy it';
+        window.getSelection().removeAllRanges();
+        window.getSelection().addRange(r);
+        kutu.querySelector('#teslimNot').textContent = 'Link selected';
       }
     };
+
+    if (acikAnahtar) {
+      kutu.querySelector('#anahtarKopyala').onclick = async () => {
+        try {
+          await navigator.clipboard.writeText(acikAnahtar);
+          kutu.querySelector('#teslimNot').textContent = 'Key copied ?';
+        } catch {
+          const r = document.createRange();
+          r.selectNodeContents(kutu.querySelector('#acikAnahtarKutu'));
+          window.getSelection().removeAllRanges();
+          window.getSelection().addRange(r);
+          kutu.querySelector('#teslimNot').textContent = 'Key selected';
+        }
+      };
+    }
+
     kutu.querySelector('#teslimKapat').onclick = () => kutu.remove();
   }
 
@@ -1260,7 +1326,7 @@ ${YAZI_TIPI}
         '</div>';
     }
     
-    govde += '<div class="bolumBaslik">Summary</div><dl class="ozellik">' +
+    govde += '<div class="sectionTitle">Summary</div><dl class="ozellik">' +
       '<dt>Status</dt><dd>' + durumHapi(k) + '</dd>' +
       '<dt>Latency</dt><dd>' + (k.latency_ms ?? 0) + ' ms</dd>' +
       '<dt>Input tokens</dt><dd>' + bin(gi) + '</dd>' +
@@ -1277,19 +1343,19 @@ ${YAZI_TIPI}
     const promptGosterim = bicimle(k.prompt);
     const cevapGosterim = bicimle(k.response);
     if (promptGosterim || cevapGosterim) {
-      govde += '<div class="bolumBaslik">Prompt &amp; response</div>';
+      govde += '<div class="sectionTitle">Prompt &amp; response</div>';
       if (promptGosterim) {
-        govde += '<div class="yardim" style="margin-top:.4rem">Prompt</div>' +
+        govde += '<div class="helpText" style="margin-top:.4rem">Prompt</div>' +
           '<pre class="kodKutu">' + kacir(promptGosterim) + '</pre>';
       }
       if (cevapGosterim) {
-        govde += '<div class="yardim" style="margin-top:.6rem">Response</div>' +
+        govde += '<div class="helpText" style="margin-top:.6rem">Response</div>' +
           '<pre class="kodKutu">' + kacir(cevapGosterim) + '</pre>';
       }
     }
 
     if (k.status === 'error') {
-      govde += '<div class="bolumBaslik">Why it was rejected</div>' +
+      govde += '<div class="sectionTitle">Why it was rejected</div>' +
         (k.error_message
           ? '<div class="dogrula err">' + kacir(k.error_message) + '</div>'
           : '<div class="dogrula bek">The reason was not recorded. This request ' +
@@ -1297,18 +1363,18 @@ ${YAZI_TIPI}
     }
 
     if (k.status === 'pending') {
-      govde += '<div class="bolumBaslik">Cost</div>' +
+      govde += '<div class="sectionTitle">Cost</div>' +
         '<div class="dogrula bek">This request was not fully recorded. ' +
         'Token counts and cost are missing.</div>';
     } else if (k.status === 'error' && !(k.input_tokens || k.output_tokens)) {
       // Reddedilen istekte hesaplanacak bir şey yok. Fiyat eksikliği mesajı
       // burada yanıltıcıydı: sorun fiyatın olmaması değil, isteğin hiç
       // çalışmamış olması.
-      govde += '<div class="bolumBaslik">Cost</div>' +
+      govde += '<div class="sectionTitle">Cost</div>' +
         '<div class="dogrula bek">No cost — the request was rejected before it ' +
         'reached the provider, so no tokens were used.</div>';
     } else if (!f) {
-      govde += '<div class="bolumBaslik">Cost</div>' +
+      govde += '<div class="sectionTitle">Cost</div>' +
         '<div class="dogrula err">⚠ No price defined for this model, cost cannot be computed.</div>';
     } else {
       // Kaydın kendi fiyatı varsa onunla doğruluyoruz. Bugünkü fiyatla
@@ -1328,7 +1394,7 @@ ${YAZI_TIPI}
         (Math.abs(kayitliFiyat.input - f.input) > 0.0000001 ||
          Math.abs(kayitliFiyat.output - f.output) > 0.0000001);
 
-      govde += '<div class="bolumBaslik">Cost breakdown</div><div class="hesap">' +
+      govde += '<div class="sectionTitle">Cost breakdown</div><div class="hesap">' +
         '<div class="sat"><span>input ' + bin(gi) + ' ÷ 1000 × $' + kullanilan.input + '</span><span>' + para(gm) + '</span></div>' +
         '<div class="sat"><span>output ' + bin(ci) + ' ÷ 1000 × $' + kullanilan.output + '</span><span>' + para(cm) + '</span></div>' +
         '<div class="cizgi"></div>' +
@@ -1342,7 +1408,7 @@ ${YAZI_TIPI}
             'now $' + f.input + ' / $' + f.output + ' per 1K. Past records are not restated.</div>'
           : '') +
         (!kayitliFiyat
-          ? '<div class="yardim" style="margin-top:.6rem">This record predates price tracking, ' +
+          ? '<div class="helpText" style="margin-top:.6rem">This record predates price tracking, ' +
             'so the check uses the current catalog price and may not reflect what was charged.</div>'
           : '');
     }
@@ -1352,14 +1418,14 @@ ${YAZI_TIPI}
   }
 
   function panelAc() {
-    $('perde').classList.remove('gizli'); $('yanpanel').classList.remove('gizli');
+    $('perde').classList.remove('hidden'); $('yanpanel').classList.remove('hidden');
     requestAnimationFrame(() => {
       $('perde').classList.add('acik'); $('yanpanel').classList.add('acik');
     });
   }
   function detayKapat() {
     $('perde').classList.remove('acik'); $('yanpanel').classList.remove('acik');
-    setTimeout(() => { $('perde').classList.add('gizli'); $('yanpanel').classList.add('gizli'); }, 180);
+    setTimeout(() => { $('perde').classList.add('hidden'); $('yanpanel').classList.add('hidden'); }, 180);
   }
   $('perde').addEventListener('click', detayKapat);
   $('ypKapat').addEventListener('click', detayKapat);
@@ -1383,14 +1449,14 @@ ${YAZI_TIPI}
   // kaydeden biri görünmeyen bütün izinleri sessizce silerdi.
   const secimDurumu = new Map();
 
-  function modelSecimKutusu(kapsayici, secili, tavan) {
+  function modelSecimKutusu(kapsayici, selected, tavan) {
     const aktif = modeller.filter(m => m.is_active);
     if (!aktif.length) {
-      kapsayici.innerHTML = '<div class="yardim">No active models in the catalog yet.</div>';
+      kapsayici.innerHTML = '<div class="helpText">No active models in the catalog yet.</div>';
       return;
     }
 
-    const secim = new Set(secili);
+    const secim = new Set(selected);
     secimDurumu.set(kapsayici.id, secim);
     let arama = '';
 
@@ -1408,15 +1474,15 @@ ${YAZI_TIPI}
       });
 
       const satirlar = sirali.map(m => {
-        const anahtar = m.provider + '/' + m.model;
+        const key = m.provider + '/' + m.model;
         const fiyat = (m.output_price || 0) * 1000;
-        const isaretli = secim.has(anahtar);
+        const isaretli = secim.has(key);
         const ucuz = tavanVar && fiyat <= tavan;
         return '<label class="secim">' +
-          '<input type="checkbox" value="' + kacir(anahtar) + '"' +
+          '<input type="checkbox" value="' + kacir(key) + '"' +
           (isaretli ? ' checked' : '') + '>' +
           nokta(m.provider) + '<span class="secimAd">' + kacir(m.model) + '</span>' +
-          ' <span class="yardim">$' + fiyat.toFixed(2) + '/1M' +
+          ' <span class="helpText">$' + fiyat.toFixed(2) + '/1M' +
           (isaretli
             ? ''
             : ucuz
@@ -1428,17 +1494,17 @@ ${YAZI_TIPI}
       }).join('');
 
       kapsayici.innerHTML =
-        '<div class="yardim" style="margin:0 0 .5rem">' +
+        '<div class="helpText" style="margin:0 0 .5rem">' +
         'Prices are dollars per million output tokens. A model under the price ' +
-        'limit opens on its own the first time this person asks for it; anything ' +
+        'limit opens on its own the first time this team asks for it; anything ' +
         'above the limit needs a tick here.</div>' +
         '<div style="display:flex;gap:.5rem;align-items:center;margin-bottom:.6rem">' +
         '<input class="secimArama" placeholder="Search models" value="' + kacir(arama) + '">' +
-        '<span class="yardim secimSayac" style="white-space:nowrap">' +
+        '<span class="helpText secimSayac" style="white-space:nowrap">' +
         secim.size + ' ticked · ' + eslesen.length +
         (arama ? ' of ' + aktif.length : '') + ' shown</span></div>' +
         '<div class="secimListe">' +
-        (sirali.length ? satirlar : '<div class="yardim">No model matches that.</div>') +
+        (sirali.length ? satirlar : '<div class="helpText">No model matches that.</div>') +
         '</div>';
 
       const kutu = kapsayici.querySelector('.secimArama');
@@ -1479,7 +1545,7 @@ ${YAZI_TIPI}
   // Şirket (clients) arka planda tek satır olarak duruyor ve "politika"
   // olarak sunuluyor: herkes için üst sınır. Tablo kaldırılmadı çünkü
   // ileride takım kavramı gerekebilir.
-  let kisiler = [], sirket = null, ortak = null, talepler = [];
+  let users = [], client = null, ortak = null, talepler = [];
 
   // Bir kişinin gerçekten çağırabildiği modeller.
   //
@@ -1534,89 +1600,89 @@ ${YAZI_TIPI}
   }
 
   function politikaCiz() {
-    if (!sirket) { $('politikaKart').innerHTML = ''; return; }
-    const tavan = sirket.max_output_price;
+    if (!client) { $('politikaKart').innerHTML = ''; return; }
+    const tavan = client.max_output_price;
 
     $('politikaKart').innerHTML =
-      '<div class="baslikkucuk">Company rules</div>' +
-      '<div class="yardim" style="margin:.35rem 0 1.1rem">' +
-      'The defaults for everyone at ' + kacir(sirket.name) + '. ' +
-      'A person can be given tighter limits on their own row; whichever is ' +
+      '<div class="smallTitle">Team rules</div>' +
+      '<div class="helpText" style="margin:.35rem 0 1.1rem">' +
+      'The defaults for everyone at ' + kacir(client.name) + '. ' +
+      'A team can be given tighter limits on their own row; whichever is ' +
       'lower applies.</div>' +
 
       // Şirket model listesi kaldırıldı: modeli tamamen kapatmak Models
       // sekmesindeki aktiflik bayrağının işi, kişiye açmak da kişi satırının.
       // Aradaki üçüncü liste hiçbir şey eklemiyor, sadece sessiz hata
       // üretiyordu.
-      '<div class="bolumBaslik" style="font-size:.85rem">Price limit</div>' +
-      '<div class="yardim" style="margin:.3rem 0 .7rem">' +
+      '<div class="sectionTitle" style="font-size:.85rem">Price limit</div>' +
+      '<div class="helpText" style="margin:.3rem 0 .7rem">' +
       'The default for everyone. Any model priced under this works without ' +
       'approval, so a cheap new model is usable the day it appears; anything ' +
-      'above it is refused and shows up as a request. A person can be given a ' +
+      'above it is refused and shows up as a request. A team can be given a ' +
       'lower limit, or an individual exception, on their own row. ' +
       'This is a rate per million tokens, unrelated to the budget below.</div>' +
       '<div class="formSatir" style="grid-template-columns:1fr 2fr">' +
       '<label>Highest price allowed<input id="poTavan" type="number" step="0.01" min="0" ' +
       'placeholder="no cap" value="' + (tavan ? (tavan * 1000).toFixed(2) : '') + '"></label>' +
-      '<div class="yardim" style="align-self:end;padding-bottom:.55rem">' +
+      '<div class="helpText" style="align-self:end;padding-bottom:.55rem">' +
       'dollars per million output tokens</div></div>' +
 
-      '<div class="bolumBaslik" style="margin-top:1.4rem;font-size:.85rem">Company budget</div>' +
-      '<div class="yardim" style="margin:.3rem 0 .7rem">' +
+      '<div class="sectionTitle" style="margin-top:1.4rem;font-size:.85rem">Team budget</div>' +
+      '<div class="helpText" style="margin:.3rem 0 .7rem">' +
       'Requests stop when this is used up. The daily figure keeps a runaway script ' +
       'from burning the month in an hour.</div>' +
       '<div class="formSatir" style="grid-template-columns:1fr 1fr 2fr">' +
       '<label>Per month<input id="poAy" type="number" step="1" min="0" placeholder="none" value="' +
-        (sirket.monthly_budget ?? '') + '"></label>' +
+        (client.monthly_budget ?? '') + '"></label>' +
       '<label>Per day<input id="poGun" type="number" step="1" min="0" placeholder="none" value="' +
-        (sirket.daily_budget ?? '') + '"></label>' +
-      '<div class="yardim" style="align-self:end;padding-bottom:.55rem">' +
-      butceOzet(sirket.butce) + '</div></div>' +
+        (client.daily_budget ?? '') + '"></label>' +
+      '<div class="helpText" style="align-self:end;padding-bottom:.55rem">' +
+      butceOzet(client.budget) + '</div></div>' +
 
       '<div style="display:flex;gap:.6rem;margin-top:1.2rem">' +
-      '<button class="dugme koyu" id="poKaydet">Save rules</button></div>' +
-      '<div class="uyari gizli" id="poHata"></div>';
+      '<button class="btn isDark" id="poKaydet">Save rules</button></div>' +
+      '<div class="alert hidden" id="poHata"></div>';
 
     $('poKaydet').onclick = async () => {
       $('poKaydet').disabled = true;
       const t = $('poTavan').value.trim();
       try {
         const ay = $('poAy').value.trim(), gun = $('poGun').value.trim();
-        await api('/customers/' + sirket.id, { method: 'PATCH', body: JSON.stringify({
+        await api('/customers/' + client.id, { method: 'PATCH', body: JSON.stringify({
           max_output_price: t === '' ? null : Number(t) / 1000,
           monthly_budget: ay === '' ? null : Number(ay),
           daily_budget: gun === '' ? null : Number(gun)
         })});
         await kisilerYukle();
       } catch (e) {
-        $('poHata').textContent = e.message; $('poHata').classList.remove('gizli');
+        $('poHata').textContent = e.message; $('poHata').classList.remove('hidden');
       } finally { $('poKaydet').disabled = false; }
     };
   }
 
   function kisiTabloCiz() {
-    $('kiSayac').textContent = kisiler.length + (kisiler.length === 1 ? ' team' : ' teams');
-    if (!kisiler.length) {
+    $('kiSayac').textContent = users.length + (users.length === 1 ? ' team' : ' teams');
+    if (!users.length) {
       $('kiTablo').innerHTML = '';
       $('kiBos').innerHTML = '<div class="simge">◷</div><h3>No teams yet</h3>' +
         '<p>Add someone so they can sign in to the portal and get a key.</p>';
-      $('kiBos').classList.remove('gizli');
+      $('kiBos').classList.remove('hidden');
       $('kiAltNot').textContent = '';
       return;
     }
-    $('kiBos').classList.add('gizli');
+    $('kiBos').classList.add('hidden');
 
     $('kiTablo').innerHTML =
       '<thead><tr><th>Team Name</th><th>Can use</th><th>Today</th><th>This month</th>' +
       '<th>Keys</th><th class="sayi">Requests</th><th>Last seen</th><th></th></tr></thead><tbody>' +
-      kisiler.map((k, i) => {
+      users.map((k, i) => {
         const izinli = k.allowed_models || [];
-        const canli = (k.anahtarlar || []).filter(a => a.is_active).length;
+        const canli = (k.keys || []).filter(a => a.is_active).length;
         const u = k.kullanim || {};
-        const b = k.butce;
+        const b = k.budget;
 
         // Sütun GERÇEKTEN kullanabildiklerini gösteriyor, sadece işaretli
-        // listeyi değil. İkisi aynı şey değil: fiyat tavanının altındaki
+        // listeyi değil. İuser aynı şey değil: fiyat tavanının altındaki
         // modeller hiç işaretlenmeden çalışıyor. Önce yalnızca işaretliler
         // yazılıyordu ve sütun "Can use" dediği hâlde yalan söylüyordu —
         // Umur gpt-4o kullanabiliyordu ama listede yoktu.
@@ -1625,49 +1691,49 @@ ${YAZI_TIPI}
           ? etkin.map(m =>
               '<span class="rozet' + (m.fiyattan ? ' fiyattan' : '') + '"' +
               ' title="' + (m.fiyattan ? 'Open because its price is under the limit'
-                                       : 'Ticked for this person') + '">' +
+                                       : 'Ticked for this team') + '">' +
               kacir(m.ad.split('/')[1]) + '</span>').join('')
           : '<span class="hap bek">nothing</span>';
 
         return '<tr class="tiklanir" tabindex="0" role="button" data-i="' + i + '">' +
           '<td>' + kacir(k.email) +
-            (k.role === 'owner' ? ' <span class="hap ok">owner</span>' : '') + '</td>' +
+            '</td>' +
           '<td>' + modelYazi + '</td>' +
           // Harcama ile bütçe aynı dönemden okunuyor: yan yana duran iki sayı
           // farklı dönemleri gösterirse karşılaştırılamaz.
           '<td class="sayi">' + (b && b.gunlukSinir !== null
-            ? para(b.gunlukHarcama) + ' <span class="yardim">/ $' + b.gunlukSinir + '</span>' +
+            ? para(b.gunlukHarcama) + ' <span class="helpText">/ $' + b.gunlukSinir + '</span>' +
               (b.asildi === 'gunluk' ? ' <span class="hap err">used up</span>' : '')
             : para((b && b.gunlukHarcama) || 0)) + '</td>' +
           '<td class="sayi">' + (b && b.aylikSinir !== null
-            ? para(b.aylikHarcama) + ' <span class="yardim">/ $' + b.aylikSinir + '</span>' +
+            ? para(b.aylikHarcama) + ' <span class="helpText">/ $' + b.aylikSinir + '</span>' +
               (b.asildi === 'aylik' ? ' <span class="hap err">used up</span>' : '')
             : para((b && b.aylikHarcama) || 0)) + '</td>' +
           '<td>' + (canli ? canli : '<span class="hap">none</span>') + '</td>' +
-          '<td class="sayi">' + bin(u.istek || 0) +
+          '<td class="sayi">' + bin(u.request || 0) +
             ((u.hata || 0) ? ' <span class="hap err">' + u.hata + '</span>' : '') + '</td>' +
           '<td class="sayi">' + (u.son ? gunTarih(u.son) : '—') + '</td>' +
-          '<td class="islem"><button class="satirDugme" data-ac="' + i + '">Manage</button></td></tr>';
+          '<td class="actionCell"><button class="rowBtn" data-ac="' + i + '">Manage</button></td></tr>';
       }).join('') + '</tbody>';
 
-    const izinsiz = kisiler.filter(k => !(k.allowed_models || []).length && !k.max_output_price).length;
-    const anahtarsiz = kisiler.filter(k => !(k.anahtarlar || []).length).length;
+    const izinsiz = users.filter(k => !(k.allowed_models || []).length && !k.max_output_price).length;
+    const anahtarsiz = users.filter(k => !(k.keys || []).length).length;
     $('kiAltNot').textContent =
       (izinsiz ? izinsiz + ' with no model access — their requests are rejected' : 'Everyone has model access') +
       (anahtarsiz ? ' · ' + anahtarsiz + ' without a key' : '');
   }
 
   function ortakTabloCiz() {
-    const liste = (ortak && ortak.anahtarlar) || [];
+    const liste = (ortak && ortak.keys) || [];
     $('ortakSayac').textContent = liste.length + (liste.length === 1 ? ' key' : ' keys');
     if (!liste.length) {
       $('ortakTablo').innerHTML = '';
       $('ortakBos').innerHTML = '<div class="simge">◷</div><h3>No shared keys</h3>' +
         '<p>Every key belongs to someone.</p>';
-      $('ortakBos').classList.remove('gizli');
+      $('ortakBos').classList.remove('hidden');
       return;
     }
-    $('ortakBos').classList.add('gizli');
+    $('ortakBos').classList.add('hidden');
     const u = (ortak && ortak.kullanim) || {};
     $('ortakTablo').innerHTML =
       '<thead><tr><th>Key</th><th>Environment</th><th>Created</th><th>Status</th></tr></thead><tbody>' +
@@ -1679,7 +1745,7 @@ ${YAZI_TIPI}
         '<td>' + (a.is_active ? '<span class="hap ok">active</span>'
                               : '<span class="hap">revoked</span>') + '</td></tr>').join('') +
       '</tbody>';
-    $('ortakSayac').textContent = liste.length + ' keys · ' + bin(u.istek || 0) + ' requests';
+    $('ortakSayac').textContent = liste.length + ' keys · ' + bin(u.request || 0) + ' requests';
   }
 
   function talepCiz() {
@@ -1688,17 +1754,17 @@ ${YAZI_TIPI}
       $('talepTablo').innerHTML = '';
       $('talepBos').innerHTML = '<div class="simge">◷</div><h3>Nothing pending</h3>' +
         '<p>No one has been turned away from a model.</p>';
-      $('talepBos').classList.remove('gizli');
+      $('talepBos').classList.remove('hidden');
       return;
     }
-    $('talepBos').classList.add('gizli');
+    $('talepBos').classList.add('hidden');
     $('talepTablo').innerHTML =
-      '<thead><tr><th>Person</th><th>Model</th><th>Why it was refused</th>' +
+      '<thead><tr><th>Team</th><th>Model</th><th>Why it was refused</th>' +
       '<th class="sayi">Attempts</th><th>Last try</th><th></th></tr></thead><tbody>' +
       talepler.map((t, i) => {
         // Her sebebin çözümü farklı; düğme de ona göre.
         const sebepler = {
-          'not-granted':   ['Not ticked for this person', 'Allow'],
+          'not-granted':   ['Not ticked for this team', 'Allow'],
           'too-expensive': ['Pricier than their price limit', 'Allow'],
           'model-inactive':['Model is switched off in the catalog', 'Allow'],
           'not-in-catalog':['Not in the catalog at all', 'Allow']
@@ -1709,23 +1775,23 @@ ${YAZI_TIPI}
         '<td>' + nokta(t.provider) + kacir(t.model) + '</td>' +
         '<td>' + aciklama +
           (t.sebep === 'model-inactive'
-            ? '<br><span class="yardim">Switch it on under Models first</span>'
+            ? '<br><span class="helpText">Switch it on under Models first</span>'
             : t.sebep === 'not-in-catalog'
-              ? '<br><span class="yardim">Add it under Models first</span>'
+              ? '<br><span class="helpText">Add it under Models first</span>'
               : '') + '</td>' +
         '<td class="sayi">' + bin(t.adet) + '</td>' +
         '<td class="sayi">' + gunTarih(t.son) + '</td>' +
-        '<td class="islem">' +
+        '<td class="actionCell">' +
           (t.sebep === 'not-in-catalog'
-            ? '<span class="yardim">—</span>'
-            : '<button class="satirDugme" data-talep="' + i + '">' + dugme + '</button>') +
+            ? '<span class="helpText">—</span>'
+            : '<button class="rowBtn" data-talep="' + i + '">' + dugme + '</button>') +
         '</td></tr>';
       }).join('') + '</tbody>';
   }
 
   async function kisilerYukle() {
-    $('uyari').classList.add('gizli');
-    if (!kisiler.length) $('yukleniyor').classList.remove('gizli');
+    $('uyari').classList.add('hidden');
+    if (!users.length) $('yukleniyor').classList.remove('hidden');
     try {
       // Katalog da lazım: "Can use" sütunu ve izin kutuları fiyatlara
       // bakıyor. Models sekmesine hiç girilmeden People açılırsa liste boş
@@ -1733,42 +1799,42 @@ ${YAZI_TIPI}
       const [v, t, mm] = await Promise.all([
         api('/people'), api('/access-requests'), api('/models')
       ]);
-      kisiler = v.kisiler; sirket = v.sirket; ortak = v.ortak;
+      users = v.users; client = v.client; ortak = v.ortak;
       talepler = t.talepler;
       modeller = mm.modeller;
       politikaCiz(); kisiTabloCiz(); ortakTabloCiz(); talepCiz();
     } catch (e) {
       $('uyari').textContent = e.message;
-      $('uyari').classList.remove('gizli');
+      $('uyari').classList.remove('hidden');
     } finally {
-      $('yukleniyor').classList.add('gizli');
+      $('yukleniyor').classList.add('hidden');
     }
   }
 
-  // Kişi detayı: erişim, anahtarlar, hesap işlemleri.
-  function kisiAc(k) {
+  // Kişi detayı: erişim, keys, hesap işlemleri.
+  function openTeam(k) {
     const u = k.kullanim || {};
     $('ypBaslik').textContent = k.email;
-    $('ypZaman').textContent = (k.role === 'owner' ? 'Owner' : k.role === 'team' ? 'Team' : 'Member') + ' since ' +
+    $('ypZaman').textContent = (k.role === 'team' ? 'Team' : 'Employee') + ' since ' +
       new Date(k.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
 
     const tavan = k.max_output_price;
     $('ypGovde').innerHTML =
-      '<div class="bolumBaslik">Usage</div><dl class="ozellik">' +
-      '<dt>Requests</dt><dd>' + bin(u.istek || 0) + '</dd>' +
-      '<dt>Cost</dt><dd>' + para(u.maliyet || 0) + '</dd>' +
+      '<div class="sectionTitle">Usage</div><dl class="ozellik">' +
+      '<dt>Requests</dt><dd>' + bin(u.request || 0) + '</dd>' +
+      '<dt>Cost</dt><dd>' + para(u.cost || 0) + '</dd>' +
       '<dt>Last request</dt><dd>' + (u.son
         ? new Date(u.son).toLocaleString('en-GB', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit' })
         : 'never') + '</dd></dl>' +
 
-      '<div class="bolumBaslik">Which models they can use</div>' +
-      '<div class="yardim" style="margin-bottom:.7rem">' +
-      'Applies to requests sent with the keys this person owns. Ticked means ' +
+      '<div class="sectionTitle">Which models they can use</div>' +
+      '<div class="helpText" style="margin-bottom:.7rem">' +
+      'Applies to requests sent with the keys this team owns. Ticked means ' +
       'open to them. Cheap models tick themselves the first time they are ' +
       'asked for; expensive ones wait for you.</div>' +
       '<div id="ypModeller" class="secimKutu"></div>' +
-      '<div class="bolumBaslik" style="margin-top:1.3rem;font-size:.85rem">Price limit</div>' +
-      '<div class="yardim" style="margin:.3rem 0 .7rem">' +
+      '<div class="sectionTitle" style="margin-top:1.3rem;font-size:.85rem">Price limit</div>' +
+      '<div class="helpText" style="margin:.3rem 0 .7rem">' +
       'Decides <b>which</b> models they may use, not how much they may spend. ' +
       'Anything cheaper than this works without being ticked above. ' +
       'This is a rate per million tokens — a single reply costs a tiny fraction ' +
@@ -1776,40 +1842,39 @@ ${YAZI_TIPI}
       '<div class="formSatir" style="grid-template-columns:1fr 2fr">' +
       '<label>Highest price<input id="ypTavan" type="number" step="0.01" min="0" ' +
       'placeholder="no cap" value="' + (tavan ? (tavan * 1000).toFixed(2) : '') + '"></label>' +
-      '<div class="yardim" style="align-self:end;padding-bottom:.55rem">' +
+      '<div class="helpText" style="align-self:end;padding-bottom:.55rem">' +
       'dollars per million output tokens</div></div>' +
-      '<div class="bolumBaslik" style="margin-top:1.4rem;font-size:.85rem">Budget</div>' +
-      '<div class="yardim" style="margin:.3rem 0 .7rem">' +
+      '<div class="sectionTitle" style="margin-top:1.4rem;font-size:.85rem">Budget</div>' +
+      '<div class="helpText" style="margin:.3rem 0 .7rem">' +
       'Real money actually spent. Requests stop once it runs out. Switching to a ' +
-      'pricier model does not use any of it up on its own.<br>' + butceOzet(k.butce) + '</div>' +
+      'pricier model does not use any of it up on its own.<br>' + butceOzet(k.budget) + '</div>' +
       '<div class="formSatir" style="grid-template-columns:1fr 1fr">' +
-      '<label>Per month<input id="ypAy" type="number" step="1" min="0" placeholder="company default" value="' +
+      '<label>Per month<input id="ypAy" type="number" step="1" min="0" placeholder="' + (k.role === 'team' ? 'unlimited' : 'team default') + '" value="' +
         (k.monthly_budget ?? '') + '"></label>' +
-      '<label>Per day<input id="ypGun" type="number" step="1" min="0" placeholder="company default" value="' +
+      '<label>Per day<input id="ypGun" type="number" step="1" min="0" placeholder="' + (k.role === 'team' ? 'unlimited' : 'team default') + '" value="' +
         (k.daily_budget ?? '') + '"></label></div>' +
 
       '<div class="kaydetCubugu">' +
-      '<button class="dugme koyu" id="ypKaydet">Save access</button>' +
-      '<button class="dugme cerceveli" id="ypRol">' +
-        (k.role === 'owner' ? 'Make member' : 'Make owner') + '</button>' +
-      '<button class="dugme cerceveli tehlike" id="ypSil">Remove</button>' +
-      '<span class="degisti gizli" id="ypDegisti">Unsaved changes</span></div>' +
-      '<div class="uyari gizli" id="ypHata"></div>' +
+      '<button class="btn isDark" id="ypKaydet">Save access</button>' +
+      
+      '<button class="btn outlinedBtn danger" id="ypSil">Remove</button>' +
+      '<span class="degisti hidden" id="ypDegisti">Unsaved changes</span></div>' +
+      '<div class="alert hidden" id="ypHata"></div>' +
 
-      '<div class="bolumBaslik" style="margin-top:1.8rem">Keys</div>' +
+      (k.role !== 'team' ? '<div class="sectionTitle" style="margin-top:1.8rem">Keys</div>' +
       '<div class="hesap" id="ypAnahtarlar">' +
-      ((k.anahtarlar || []).length
-        ? k.anahtarlar.map(a =>
+      ((k.keys || []).length
+        ? k.keys.map(a =>
             '<div class="sat"><span>' +
             (a.key_prefix ? '<code class="onek">' + kacir(a.key_prefix) + '…</code> ' : '') +
             kacir(a.label || 'unnamed') + ' · ' + kacir(a.environment) + ' · ' +
             gunTarih(a.created_at) + '</span><span>' +
             (a.is_active
-              ? '<button class="satirDugme tehlike" data-anahtar="' + a.id + '">Revoke</button>'
+              ? '<button class="rowBtn danger" data-key="' + a.id + '">Revoke</button>'
               : '<span class="hap">revoked</span>') + '</span></div>').join('')
         : '<div class="sat"><span>No key yet</span><span></span></div>') + '</div>' +
-      // Ad ve ortam burada seçiliyor. Önce ikisi de sabitti: her anahtar
-      // adsız ve "production" olarak çıkıyordu. Adsız anahtarlar listede
+      // Ad ve ortam burada seçiliyor. Önce ikisi de sabitti: her key
+      // adsız ve "production" olarak çıkıyordu. Adsız keys listede
       // "unnamed" diye birikiyor, hangisinin ne olduğu anlaşılmıyordu.
       '<div class="formSatir" style="grid-template-columns:2fr 1fr;margin-top:.7rem">' +
       '<label>Name<input id="ypAnahtarAd" placeholder="e.g. ' +
@@ -1820,175 +1885,211 @@ ${YAZI_TIPI}
         '<option value="local">local</option>' +
       '</select></label></div>' +
       '<label class="secim" style="margin-top:.7rem"><input type="checkbox" id="ypEskiKapat">Revoke existing keys</label>' +
-      '<button class="dugme cerceveli" id="ypYeniAnahtar" style="margin-top:.7rem">Issue key</button>' +
+      '<button class="btn outlinedBtn" id="ypYeniAnahtar" style="margin-top:.7rem">Issue key</button>' : '') +
 
-      '<div class="bolumBaslik" style="margin-top:1.8rem">Employees</div>' +
-      '<div class="yardim" style="margin-bottom:.7rem">' +
+      (k.role === 'team' ? '<div class="sectionTitle" style="margin-top:1.8rem">Members</div>' +
+      '<div class="helpText" style="margin-bottom:.7rem">' +
       "People assigned to this team. They inherit the team's model access and budget limits.</div>" +
       '<div id="ypCalisanlar">' +
       ((k.calisanlar || []).length
-        ? '<table class="tablokart" style="margin-bottom:.7rem"><thead><tr><th>Email</th><th>Role</th><th>Joined</th></tr></thead><tbody>' +
+        ? '<table class="tableCard" style="margin-bottom:.7rem"><thead><tr><th>Email</th><th>Joined</th><th style="width:70px"></th></tr></thead><tbody>' +
           (k.calisanlar || []).map(function(c) {
-            return '<tr><td>' + kacir(c.email) + '</td>' +
-              '<td>' + (c.role === 'owner' ? '<span class="hap ok">owner</span>' : 'member') + '</td>' +
-              '<td>' + gunTarih(c.created_at) + '</td></tr>';
+            return '<tr class="clickable" data-user-id="' + c.id + '"><td>' + kacir(c.email) + '</td>' +
+              '<td>' + gunTarih(c.created_at) + '</td>' +
+              '<td style="text-align:right"><button class="rowBtn danger" data-sil-user="' + c.id + '" data-user-email="' + kacir(c.email) + '" title="Remove employee">Remove</button></td></tr>';
           }).join('') +
           '</tbody></table>'
-        : '<div class="yardim" style="margin-bottom:.7rem">No employees in this team yet.</div>') +
+        : '<div class="helpText" style="margin-bottom:.7rem">No employees in this team yet.</div>') +
       '</div>' +
-      '<div class="formSatir" style="grid-template-columns:2fr 1fr;margin-top:.5rem">' +
-      '<label>Email<input id="ypCalisanEposta" type="email" placeholder="employee@company.com"></label>' +
-      '<label>Role<select id="ypCalisanRol"><option value="member">member</option><option value="owner">owner</option></select></label></div>' +
-      '<button class="dugme cerceveli" id="ypCalisanEkle" style="margin-top:.5rem">+ Add employee</button>' +
-      '<div class="uyari gizli" id="ypCalisanHata" style="margin-top:.5rem"></div>' +
-      '<div class="basarili gizli" id="ypCalisanOk" style="margin-top:.5rem"></div>' +
+      '<div style="display:flex;gap:.6rem;align-items:flex-end;margin-top:.6rem">' +
+      '<label style="flex:1">Email<input id="ypCalisanEposta" type="email" placeholder="employee@company.com"></label>' +
+      '<button class="btn outlinedBtn" id="ypCalisanEkle" style="height:38px;white-space:nowrap">+ Add employee</button></div>' +
+      '<div class="alert hidden" id="ypCalisanHata" style="margin-top:.5rem"></div>' +
+      '<div class="basarili hidden" id="ypCalisanOk" style="margin-top:.5rem"></div>' : '') +
 
-      '<div class="bolumBaslik" style="margin-top:1.8rem">Account</div>' +
+      (k.role !== 'team' ? '<div class="sectionTitle" style="margin-top:1.8rem">Account</div>' +
       '<div class="dugmeler" style="display:flex;gap:.6rem">' +
-      '<button class="dugme cerceveli" id="ypEposta">Change email</button>' +
-      '<button class="dugme cerceveli" id="ypSifre">Reset password</button></div>';
+      '<button class="btn outlinedBtn" id="ypEposta">Change email</button>' +
+      '<button class="btn outlinedBtn" id="ypSifre">Reset password</button></div>' : '');
 
     modelSecimKutusu($('ypModeller'), k.allowed_models || [], (() => {
-      const kt = k.max_output_price, st = sirket && sirket.max_output_price;
+      const kt = k.max_output_price, st = client && client.max_output_price;
       const e = (kt != null && st != null) ? Math.min(kt, st) : (kt != null ? kt : st);
       return e == null ? null : e * 1000;
     })());
     panelAc();
 
     // Bir şey değiştiği anda çubukta belirsin — kaydetmeden kapatmayı önler.
-    ['ypModeller', 'ypTavan', 'ypAy', 'ypGun'].forEach(id => {
+    ['ypModeller', 'ypTavan', 'ypAy', 'ypGun', 'ypRate'].forEach(id => {
       const e = $(id);
-      if (e) e.addEventListener('change', () => $('ypDegisti').classList.remove('gizli'));
+      if (e) e.addEventListener('change', () => $('ypDegisti').classList.remove('hidden'));
     });
 
     // Çalışan ekleme butonu: POST /admin/api/customers/:teamId/users
     $('ypCalisanEkle').onclick = async () => {
       const eposta = $('ypCalisanEposta').value.trim();
-      const rol = $('ypCalisanRol').value;
-      $('ypCalisanHata').classList.add('gizli');
-      $('ypCalisanOk').classList.add('gizli');
-      if (!eposta || !/^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test(eposta)) {
+      $('ypCalisanHata').classList.add('hidden');
+      $('ypCalisanOk').classList.add('hidden');
+      if (!eposta || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(eposta)) {
         $('ypCalisanHata').textContent = 'Enter a valid email address.';
-        $('ypCalisanHata').classList.remove('gizli');
+        $('ypCalisanHata').classList.remove('hidden');
         return;
       }
       $('ypCalisanEkle').disabled = true;
       try {
         const sonuc = await api('/customers/' + k.id + '/users', {
           method: 'POST',
-          body: JSON.stringify({ email: eposta, role: rol })
+          body: JSON.stringify({ email: eposta })
         });
         const sifre = sonuc.sifre || '(generated)';
         $('ypCalisanOk').innerHTML = 'Employee added! Temporary password: <code>' + kacir(sifre) + '</code> — share it securely.';
-        $('ypCalisanOk').classList.remove('gizli');
+        $('ypCalisanOk').classList.remove('hidden');
         $('ypCalisanEposta').value = '';
         await kisilerYukle();
         // Not refreshing the drawer immediately so the password remains visible
       } catch (e) {
         $('ypCalisanHata').textContent = e.message || 'Failed to add employee.';
-        $('ypCalisanHata').classList.remove('gizli');
+        $('ypCalisanHata').classList.remove('hidden');
       } finally {
         $('ypCalisanEkle').disabled = false;
       }
     };
 
-    $('ypKaydet').onclick = async () => {
-      const t = $('ypTavan').value.trim();
-      $('ypKaydet').disabled = true;
-      try {
-        const ay = $('ypAy').value.trim(), gun = $('ypGun').value.trim();
-        await api('/users/' + k.id + '/permissions', { method: 'PATCH', body: JSON.stringify({
-          allowed_models: secilenModeller($('ypModeller')),
-          max_output_price: t === '' ? null : Number(t) / 1000,
-          monthly_budget: ay === '' ? null : Number(ay),
-          daily_budget: gun === '' ? null : Number(gun)
-        })});
-        // kisilerYukle talepleri de yeniden çekiyor; verilen izin varsa
-        // talep hem buradan hem Dashboard şeridinden düşüyor.
-        const oncekiTalep = talepler.length;
-        await kisilerYukle();
-        detayKapat();
-        if (talepler.length < oncekiTalep) {
-          const dusen = oncekiTalep - talepler.length;
-          bildir(dusen + (dusen === 1 ? ' access request' : ' access requests') + ' cleared');
+    // �al��an ekleme butonu: POST /admin/api/customers/:teamId/users
+    if ($('ypCalisanlar')) {
+      $('ypCalisanlar').onclick = async (e) => {
+        const silBtn = e.target.closest('[data-sil-user]');
+        if (silBtn) {
+          e.stopPropagation();
+          const uid = silBtn.dataset.silUser;
+          const uEmail = silBtn.dataset.userEmail || 'this employee';
+          if (!confirm('Remove ' + uEmail + '? Keys they own will remain active and become shared.')) return;
+          silBtn.disabled = true;
+          try {
+            await api('/users/' + uid, { method: 'DELETE' });
+            await kisilerYukle();
+            openTeam(users.find(t => t.id === k.id) || k);
+          } catch (err) {
+            alert('Error: ' + err.message);
+            silBtn.disabled = false;
+          }
+          return;
         }
-      } catch (e) {
-        $('ypHata').textContent = e.message; $('ypHata').classList.remove('gizli');
-      } finally { $('ypKaydet').disabled = false; }
-    };
 
-    $('ypRol').onclick = async () => {
-      try {
-        await api('/users/' + k.id, { method: 'PATCH',
-          body: JSON.stringify({ role: k.role === 'owner' ? 'member' : 'owner' }) });
-        await kisilerYukle(); detayKapat();
-      } catch (e) { $('ypHata').textContent = e.message; $('ypHata').classList.remove('gizli'); }
-    };
+        const d = e.target.closest('tr.clickable');
+        if (!d) return;
+        const uid = d.dataset.userId;
+        const member = (k.calisanlar || []).find(x => x.id === uid);
+        if (member) openTeam(member);
+      };
+    }
 
-    $('ypSil').onclick = async () => {
-      if (!confirm('Remove ' + k.email + '? Keys they own stay active and become shared.')) return;
-      try {
-        await api('/users/' + k.id, { method: 'DELETE' });
-        await kisilerYukle(); detayKapat();
-      } catch (e) { $('ypHata').textContent = e.message; $('ypHata').classList.remove('gizli'); }
-    };
+    if ($('ypCalisanEkle')) {
+      $('ypCalisanEkle').onclick = async () => {
+        const eposta = $('ypCalisanEposta').value.trim();
+        $('ypCalisanHata').classList.add('hidden');
+        $('ypCalisanOk').classList.add('hidden');
+        if (!eposta || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(eposta)) {
+          $('ypCalisanHata').textContent = 'Enter a valid email address.';
+          $('ypCalisanHata').classList.remove('hidden');
+          return;
+        }
+        $('ypCalisanEkle').disabled = true;
+        try {
+          const sonuc = await api('/customers/' + k.id + '/users', {
+            method: 'POST',
+            body: JSON.stringify({ email: eposta })
+          });
+          const sifre = sonuc.sifre || '(generated)';
+          $('ypCalisanOk').innerHTML = 'Employee added! Temporary password: <code>' + kacir(sifre) + '</code> � share it securely.';
+          $('ypCalisanOk').classList.remove('hidden');
+          $('ypCalisanEposta').value = '';
+          await kisilerYukle();
+          openTeam(users.find(t => t.id === k.id) || k);
+        } catch (e) {
+          $('ypCalisanHata').textContent = e.message || 'Failed to add employee.';
+          $('ypCalisanHata').classList.remove('hidden');
+        } finally {
+          if ($('ypCalisanEkle')) $('ypCalisanEkle').disabled = false;
+        }
+      };
+    }
 
-    $('ypEposta').onclick = () => epostaKutusuAc($('ypEposta'), k.email, async (yeni) => {
-      await api('/users/' + k.id, { method: 'PATCH', body: JSON.stringify({ email: yeni }) });
-      await kisilerYukle(); detayKapat();
-    });
 
-    $('ypSifre').onclick = () => sifreSifirlamaAc($('ypSifre'), async (yeni) => {
-      const v = await api('/users/' + k.id, { method: 'PATCH', body: JSON.stringify({ password: yeni }) });
-      alert('New password: ' + v.sifre + '\\n\\nShown once — copy it now.');
-    });
 
-    $('ypYeniAnahtar').onclick = async () => {
-      const kapat = $('ypEskiKapat').checked;
-      if (kapat && !confirm('Existing keys stop working immediately. Continue?')) return;
-      try {
-        const v = await api('/customers/' + k.client_id + '/keys', {
-          method: 'POST', body: JSON.stringify({
-            eskileriKapat: kapat,
-            user_id: k.id,
-            environment: $('ypAnahtarOrtam').value,
-            label: $('ypAnahtarAd').value.trim() || undefined
-          })
+    if ($('ypSil')) {
+      $('ypSil').onclick = async () => {
+        const msg = k.role === 'team'
+          ? 'Delete team "' + k.email + '"? This will remove the team and its settings.'
+          : 'Remove ' + k.email + '? Keys they own will remain active and become shared.';
+        if (!confirm(msg)) return;
+        try {
+          const url = k.role === 'team' ? '/customers/' + k.id : '/users/' + k.id;
+          await api(url, { method: 'DELETE' });
+          await kisilerYukle();
+          detayKapat();
+        } catch (e) { alert('Error: ' + e.message); }
+      };
+    }
+
+    if (k.role !== 'team') {
+      if ($('ypEposta')) {
+        $('ypEposta').onclick = () => epostaKutusuAc($('ypEposta'), k.email, async (yeni) => {
+          await api('/users/' + k.id, { method: 'PATCH', body: JSON.stringify({ email: yeni }) });
+          await kisilerYukle();
+          detayKapat();
         });
-        await kisilerYukle();
-        // Sahibi olan anahtarlarda açık değer bize hiç gelmiyor; teslim
-        // bağlantısı geliyor. Bağlantıyı iletiyoruz, anahtarı yalnızca sahibi
-        // görüyor. Sahipsiz anahtarlarda teslim edilecek kişi olmadığı için
-        // eski davranış sürüyor.
-        if (v.teslimJetonu) {
-          teslimBagiGoster(k.email,
-            location.origin + '/portal/reveal/' + v.teslimJetonu, v.sonKullanma);
-        } else {
-          alert('New key:\\n\\n' + v.anahtar + '\\n\\nShown once — copy it now.' +
-            (v.teslimHatasi ? '\\n\\n' + v.teslimHatasi : ''));
-        }
-        detayKapat();
-      } catch (e) { $('ypHata').textContent = e.message; $('ypHata').classList.remove('gizli'); }
-    };
+      }
 
-    $('ypAnahtarlar').onclick = async (e) => {
-      const d = e.target.closest('[data-anahtar]'); if (!d) return;
-      if (!confirm('Revoke this key? Requests using it will be rejected.')) return;
-      try {
-        await api('/keys/' + d.dataset.anahtar, { method: 'PATCH', body: JSON.stringify({ is_active: false }) });
-        await kisilerYukle();
-        const yeni = kisiler.find(x => x.id === k.id);
-        if (yeni) kisiAc(yeni);
-      } catch (err) { $('ypHata').textContent = err.message; $('ypHata').classList.remove('gizli'); }
-    };
+      if ($('ypSifre')) {
+        $('ypSifre').onclick = () => sifreSifirlamaAc($('ypSifre'), async (yeni) => {
+          const v = await api('/users/' + k.id, { method: 'PATCH', body: JSON.stringify({ password: yeni }) });
+          alert('New password: ' + v.sifre + ' � Shown once, copy it now.');
+        });
+      }
+
+      $('ypYeniAnahtar').onclick = async () => {
+          $('ypYeniAnahtar').textContent = 'Issuing...';
+          $('ypYeniAnahtar').disabled = true;
+        const closeBtn = $('ypEskiKapat').checked;
+        if (closeBtn && !confirm('Existing keys stop working immediately. Continue?')) return;
+        try {
+          const v = await api('/customers/' + k.client_id + '/keys', {
+            method: 'POST', body: JSON.stringify({
+              eskileriKapat: closeBtn,
+              user_id: k.id,
+              environment: $('ypAnahtarOrtam').value,
+              label: $('ypAnahtarAd').value.trim() || undefined
+            })
+          });
+          await kisilerYukle();
+          if (v.teslimJetonu) {
+            teslimBagiGoster(k.email, location.origin + '/reveal/' + v.teslimJetonu, v.sonKullanma, v.key);
+          } else {
+            alert('New key:\\n\\n' + v.key + '\\n\\nShown once � copy it now.' + (v.teslimHatasi ? '\\n\\n' + v.teslimHatasi : ''));
+          }
+          detayKapat(); } catch (e) { alert('Error: ' + e.message); $('ypHata').textContent = e.message; $('ypHata').classList.remove('hidden'); $('ypHata').scrollIntoView(); if($('ypYeniAnahtar')) { $('ypYeniAnahtar').textContent = 'Issue key'; $('ypYeniAnahtar').disabled = false; } }
+      };
+
+      $('ypAnahtarlar').onclick = async (e) => {
+        const d = e.target.closest('[data-key]'); if (!d) return;
+        if (!confirm('Revoke this key? Requests using it will be rejected.')) return;
+        try {
+          await api('/keys/' + d.dataset.key, { method: 'PATCH', body: JSON.stringify({ is_active: false }) });
+          await kisilerYukle();
+          const yeni = (users.find(t => t.id === k.client_id)?.calisanlar || []).find(u => u.id === k.id);
+          if (yeni) openTeam(yeni);
+        } catch (err) { $('ypHata').textContent = err.message; $('ypHata').classList.remove('hidden'); $('ypHata').scrollIntoView({behavior: 'smooth'}); }
+      };
+    }
   }
 
   $('kiTablo').addEventListener('click', e => {
     const d = e.target.closest('[data-ac]') || e.target.closest('tr.tiklanir');
     if (!d) return;
     const i = Number(d.dataset.ac !== undefined ? d.dataset.ac : d.dataset.i);
-    const k = kisiler[i];
-    if (k) kisiAc(k);
+    const k = users[i];
+    if (k) openTeam(k);
   });
 
   $('talepTablo').addEventListener('click', async (e) => {
@@ -1998,14 +2099,14 @@ ${YAZI_TIPI}
     d.disabled = true;
     try {
       // Talep kişiye ait: iznini o kişinin listesine ekliyoruz.
-      const kisi = t.userId
-        ? kisiler.find(x => x.id === t.userId)
-        : kisiler.find(x => x.email === t.musteri);
-      if (kisi) {
-        await api('/users/' + kisi.id + '/permissions', {
+      const user = t.userId
+        ? users.find(x => x.id === t.userId)
+        : users.find(x => x.email === t.musteri);
+      if (user) {
+        await api('/users/' + user.id + '/permissions', {
           method: 'PATCH',
           body: JSON.stringify({
-            allowed_models: [...new Set([...(kisi.allowed_models || []), t.modelAnahtar])]
+            allowed_models: [...new Set([...(user.allowed_models || []), t.modelAnahtar])]
           })
         });
       } else {
@@ -2016,49 +2117,42 @@ ${YAZI_TIPI}
       await kisilerYukle();
     } catch (err) {
       $('uyari').textContent = err.message;
-      $('uyari').classList.remove('gizli');
+      $('uyari').classList.remove('hidden');
       d.disabled = false;
     }
   });
 
   // Yeni kişi.
   $('mEkleAc').addEventListener('click', () => {
-    $('mEkleKart').classList.toggle('gizli');
-    if (!$('mEkleKart').classList.contains('gizli')) {
+    $('mEkleKart').classList.toggle('hidden');
+    if (!$('mEkleKart').classList.contains('hidden')) {
       // Varsayılan olarak şirketin izin verdiği modeller işaretli geliyor:
       // en sık istenen bu, ve boş bırakılırsa kişi hiçbir şey yapamıyor.
-      modelSecimKutusu($('kiModeller'), (sirket && sirket.allowed_models) || [],
-        sirket && sirket.max_output_price != null ? sirket.max_output_price * 1000 : null);
+      modelSecimKutusu($('kiModeller'), (client && client.allowed_models) || [],
+        client && client.max_output_price != null ? client.max_output_price * 1000 : null);
       $('kiEposta').focus();
     }
   });
   $('kiEkleIptal').addEventListener('click', () => {
-    $('mEkleKart').classList.add('gizli');
-    $('kiEkleHata').classList.add('gizli');
+    $('mEkleKart').classList.add('hidden');
+    $('kiEkleHata').classList.add('hidden');
     $('kiEposta').value = ''; $('kiSifre').value = '';
   });
   $('kiEkleKaydet').addEventListener('click', async () => {
     const e = $('kiEposta').value.trim();
     if (!e) return;
-    $('kiEkleKaydet').disabled = true; $('kiEkleHata').classList.add('gizli');
+    $('kiEkleKaydet').disabled = true; $('kiEkleHata').classList.add('hidden');
     try {
-      const v = await api('/customers/' + sirket.id + '/users', {
-        method: 'POST',
-        body: JSON.stringify({ email: e, role: $('kiRol').value, password: $('kiSifre').value })
-      });
-      // Model erişimi hesap açıldıktan sonra veriliyor: hesabın kimliği
-      // olmadan izin yazılamıyor.
-      await api('/users/' + v.kullanici.id + '/permissions', {
-        method: 'PATCH',
-        body: JSON.stringify({ allowed_models: secilenModeller($('kiModeller')) })
-      });
-      $('kiEkleIptal').click();
-      await kisilerYukle();
-      alert('Account created — ' + v.kullanici.email + '\\n\\nPassword: ' + v.sifre +
-            '\\n\\nShown once. Send it over a channel you trust.');
+      const v = await api('/customers', {
+          method: 'POST',
+          body: JSON.stringify({ name: e, allowed_models: secilenModeller($('kiModeller')) })
+        });
+        $('kiEkleIptal').click();
+        await kisilerYukle();
+        alert('Team created: ' + e);
     } catch (err) {
       $('kiEkleHata').textContent = err.message;
-      $('kiEkleHata').classList.remove('gizli');
+      $('kiEkleHata').classList.remove('hidden');
     } finally { $('kiEkleKaydet').disabled = false; }
   });
 
@@ -2069,8 +2163,8 @@ ${YAZI_TIPI}
     if (!g) { $('oGrafikOkuma').innerHTML = ''; return; }
     const t = new Date(g.gun + 'T00:00:00').toLocaleDateString('en-GB',
       { day: 'numeric', month: 'short' });
-    $('oGrafikOkuma').innerHTML = t + ' · <b>' + bin(g.istek) + ' requests</b> · <b>' +
-      para(g.maliyet) + '</b>' + (g.hata ? ' · <b>' + g.hata + ' errors</b>' : '');
+    $('oGrafikOkuma').innerHTML = t + ' · <b>' + bin(g.request) + ' requests</b> · <b>' +
+      para(g.cost) + '</b>' + (g.hata ? ' · <b>' + g.hata + ' errors</b>' : '');
   }
 
   // Portaldaki grafikle aynı çizim: alan + çizgi, sabit dört kılavuz,
@@ -2081,7 +2175,7 @@ ${YAZI_TIPI}
 
     const G = 1000, Y = 250, sag = 16, ust = 14, alt = 34, sol = 84;
     const icG = G - sol - sag, icY = Y - ust - alt;
-    const enY = Math.max(...oSeri.map(d => d.maliyet), 0);
+    const enY = Math.max(...oSeri.map(d => d.cost), 0);
     const tavan = (() => { if (enY <= 0) return 1;
       const u = Math.pow(10, Math.floor(Math.log10(enY)));
       for (const k of [1,2,5,10]) if (enY <= k*u) return k*u; return 10*u; })();
@@ -2096,10 +2190,10 @@ ${YAZI_TIPI}
          + '<text class="eksenyazi" x="'+(sol-14)+'" y="'+(yy+4)+'" text-anchor="end">$'+d.toFixed(bas)+'</text>';
     }
 
-    const nk = oSeri.map((d,i) => x(i)+','+y(d.maliyet)).join(' ');
+    const nk = oSeri.map((d,i) => x(i)+','+y(d.cost)).join(' ');
     g += '<polygon class="dolgu" points="'+sol+','+y(0)+' '+nk+' '+(G-sag)+','+y(0)+'"/>'
        + '<polyline class="cizgi" points="'+nk+'"/>';
-    oSeri.forEach((d,i) => { if (d.istek) g += '<circle class="nokta" cx="'+x(i)+'" cy="'+y(d.maliyet)+'" r="3.5"/>'; });
+    oSeri.forEach((d,i) => { if (d.request) g += '<circle class="nokta" cx="'+x(i)+'" cy="'+y(d.cost)+'" r="3.5"/>'; });
 
     const kisa = (t) => new Date(t+'T00:00:00').toLocaleDateString('en-GB',{day:'numeric',month:'short'});
     const adim = Math.max(1, Math.ceil(oSeri.length / 8));
@@ -2111,8 +2205,8 @@ ${YAZI_TIPI}
     for (const i of yazilan)
       g += '<text class="eksenyazi" x="'+x(i)+'" y="'+(Y-8)+'" text-anchor="middle">'+kisa(oSeri[i].gun)+'</text>';
 
-    g += '<line id="oImlec" class="imlec gizli" y1="'+ust+'" y2="'+(ust+icY)+'"/>'
-       + '<circle id="oVurgu" class="vurgu gizli" r="5"/>';
+    g += '<line id="oImlec" class="imlec hidden" y1="'+ust+'" y2="'+(ust+icY)+'"/>'
+       + '<circle id="oVurgu" class="vurgu hidden" r="5"/>';
     const gen = icG / (oSeri.length - 1);
     oSeri.forEach((d,i) => {
       g += '<rect class="yakala" data-i="'+i+'" x="'+(x(i)-gen/2)+'" y="'+ust+'" width="'+gen+'" height="'+icY+'"/>';
@@ -2120,23 +2214,23 @@ ${YAZI_TIPI}
 
     $('oGrafik').innerHTML = '<svg class="cizim" viewBox="0 0 '+G+' '+Y+'">'+g+'</svg>';
 
-    const zirve = oSeri.reduce((a,b) => b.maliyet > a.maliyet ? b : a, oSeri[0]);
-    oOku(zirve.istek ? zirve : null);
+    const zirve = oSeri.reduce((a,b) => b.cost > a.cost ? b : a, oSeri[0]);
+    oOku(zirve.request ? zirve : null);
 
     const svg = $('oGrafik').querySelector('svg');
     svg.addEventListener('mousemove', e => {
       const hedef = e.target.closest('.yakala'); if (!hedef) return;
       const i = Number(hedef.dataset.i), d = oSeri[i];
       $('oImlec').setAttribute('x1', x(i)); $('oImlec').setAttribute('x2', x(i));
-      $('oImlec').classList.remove('gizli');
-      $('oVurgu').setAttribute('cx', x(i)); $('oVurgu').setAttribute('cy', y(d.maliyet));
-      $('oVurgu').classList.toggle('gizli', !d.istek);
+      $('oImlec').classList.remove('hidden');
+      $('oVurgu').setAttribute('cx', x(i)); $('oVurgu').setAttribute('cy', y(d.cost));
+      $('oVurgu').classList.toggle('hidden', !d.request);
       oOku(d);
     });
     svg.addEventListener('mouseleave', () => {
-      $('oImlec').classList.add('gizli'); $('oVurgu').classList.add('gizli');
-      const z = oSeri.reduce((a,b) => b.maliyet > a.maliyet ? b : a, oSeri[0]);
-      oOku(z.istek ? z : null);
+      $('oImlec').classList.add('hidden'); $('oVurgu').classList.add('hidden');
+      const z = oSeri.reduce((a,b) => b.cost > a.cost ? b : a, oSeri[0]);
+      oOku(z.request ? z : null);
     });
   }
 
@@ -2148,26 +2242,26 @@ ${YAZI_TIPI}
 
   function oTablolar(v) {
     const m = v.musteriler.slice(0, 8);
-    const enM = Math.max(...m.map(x => x.maliyet), 0);
+    const enM = Math.max(...m.map(x => x.cost), 0);
     $('oMusteriSayac').textContent = v.musteriler.length + ' active';
     $('oMusteriTablo').innerHTML = m.length
       ? '<thead><tr><th>Customer</th><th class="sayi">Requests</th><th class="sayi">Cost</th><th></th></tr></thead><tbody>' +
         m.map(x => '<tr><td>' + kacir(x.ad) + '</td>' +
-          '<td class="sayi">' + bin(x.istek) + (x.hata ? ' <span class="hap err">' + x.hata + '</span>' : '') + '</td>' +
-          '<td class="sayi">' + para(x.maliyet) + '</td>' +
-          '<td style="width:6rem">' + oran(x.maliyet, enM) + '</td></tr>').join('') + '</tbody>'
-      : '<tbody><tr><td class="yardim">No traffic in this period.</td></tr></tbody>';
+          '<td class="sayi">' + bin(x.request) + (x.hata ? ' <span class="hap err">' + x.hata + '</span>' : '') + '</td>' +
+          '<td class="sayi">' + para(x.cost) + '</td>' +
+          '<td style="width:6rem">' + oran(x.cost, enM) + '</td></tr>').join('') + '</tbody>'
+      : '<tbody><tr><td class="helpText">No traffic in this period.</td></tr></tbody>';
 
     const md = v.modeller.slice(0, 8);
-    const enD = Math.max(...md.map(x => x.maliyet), 0);
+    const enD = Math.max(...md.map(x => x.cost), 0);
     $('oModelSayac').textContent = v.modeller.length + ' in use';
     $('oModelTablo').innerHTML = md.length
       ? '<thead><tr><th>Model</th><th class="sayi">Requests</th><th class="sayi">Cost</th><th></th></tr></thead><tbody>' +
         md.map(x => '<tr><td>' + nokta(x.provider) + kacir(x.ad.split('/')[1]) + '</td>' +
-          '<td class="sayi">' + bin(x.istek) + (x.hata ? ' <span class="hap err">' + x.hata + '</span>' : '') + '</td>' +
-          '<td class="sayi">' + para(x.maliyet) + '</td>' +
-          '<td style="width:6rem">' + oran(x.maliyet, enD) + '</td></tr>').join('') + '</tbody>'
-      : '<tbody><tr><td class="yardim">No traffic in this period.</td></tr></tbody>';
+          '<td class="sayi">' + bin(x.request) + (x.hata ? ' <span class="hap err">' + x.hata + '</span>' : '') + '</td>' +
+          '<td class="sayi">' + para(x.cost) + '</td>' +
+          '<td style="width:6rem">' + oran(x.cost, enD) + '</td></tr>').join('') + '</tbody>'
+      : '<tbody><tr><td class="helpText">No traffic in this period.</td></tr></tbody>';
   }
 
   // Sağlık satırları: sorun varsa uyarı rengi, yoksa sessiz kalıyor.
@@ -2175,7 +2269,7 @@ ${YAZI_TIPI}
     const satir = (etiket, deger, sorunlu, ipucu) =>
       '<div class="saglikSatir">' +
       '<div><div class="saglikAd">' + etiket + '</div>' +
-      '<div class="yardim">' + ipucu + '</div></div>' +
+      '<div class="helpText">' + ipucu + '</div></div>' +
       '<div class="' + (sorunlu ? 'hap bek' : 'hap ok') + '">' + deger + '</div></div>';
 
     $('oBakim').innerHTML =
@@ -2204,32 +2298,32 @@ ${YAZI_TIPI}
   // Panodaki bekleyen erişim talebi şeridi.
   function talepSeridiCiz(liste) {
     const kutu = $('oTalep');
-    if (!liste.length) { kutu.classList.add('gizli'); return; }
-    kutu.classList.remove('gizli');
+    if (!liste.length) { kutu.classList.add('hidden'); return; }
+    kutu.classList.remove('hidden');
 
     const kisiSayisi = new Set(liste.map(t => t.musteri)).size;
     const ilk = liste.slice(0, 3).map(t =>
       '<div style="margin:.25rem 0"><b>' + kacir(t.musteri) + '</b> &rarr; ' +
-      kacir(t.modelAnahtar) + ' <span class="yardim">(' + t.adet +
+      kacir(t.modelAnahtar) + ' <span class="helpText">(' + t.adet +
       (t.adet === 1 ? ' try' : ' tries') + ')</span></div>').join('');
 
     kutu.innerHTML =
       '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;flex-wrap:wrap">' +
-      '<div><div class="baslikkucuk" style="margin:0">' +
+      '<div><div class="smallTitle" style="margin:0">' +
       liste.length + (liste.length === 1 ? ' model waiting for approval' : ' models waiting for approval') +
-      '</div><div class="yardim" style="margin:.3rem 0 .5rem">' +
+      '</div><div class="helpText" style="margin:.3rem 0 .5rem">' +
       'From ' + kisiSayisi + (kisiSayisi === 1 ? ' person' : ' people') +
       ' who called a model they cannot use yet.</div>' + ilk +
-      (liste.length > 3 ? '<div class="yardim" style="margin-top:.3rem">and ' +
+      (liste.length > 3 ? '<div class="helpText" style="margin-top:.3rem">and ' +
         (liste.length - 3) + ' more</div>' : '') +
-      '</div><button class="dugme koyu" id="oTalepGit" style="flex:0 0 auto">Review in People</button></div>';
+      '</div><button class="btn isDark" id="oTalepGit" style="flex:0 0 auto">Review in People</button></div>';
 
-    $('oTalepGit').onclick = () => bolumGoster('kisiler');
+    $('oTalepGit').onclick = () => bolumGoster('users');
   }
 
   async function ozetYukle() {
-    $('uyari').classList.add('gizli');
-    $('yukleniyor').classList.remove('gizli');
+    $('uyari').classList.add('hidden');
+    $('yukleniyor').classList.remove('hidden');
     try {
       // Talepler panoda da gösteriliyor: bekleyen bir onay varsa yöneticinin
       // People sekmesine girmesini beklemek yerine açılışta görmesi lazım.
@@ -2244,17 +2338,17 @@ ${YAZI_TIPI}
       const kart = (ad, deger, aciklama, ton) => '<div class="metrik"><div class="ad">' + ad +
         '</div><div class="aciklama">' + aciklama + '</div><div class="sayi' +
         (ton ? ' ' + ton : '') + '">' + deger + '</div></div>';
-      const oran = o.istek ? (o.hata / o.istek * 100) : 0;
+      const oran = o.request ? (o.hata / o.request * 100) : 0;
       // Eşikler bütçe çubuklarındaki (%80 uyarı, %100 kritik) mantıkla aynı
       // aile — panelde zaten yerleşik bir dil, burada da tutarlı olsun diye.
-      const oranTonu = oran >= 15 ? 'tehlike' : oran >= 5 ? 'uyari' : '';
+      const oranTonu = oran >= 15 ? 'danger' : oran >= 5 ? 'uyari' : '';
       $('oOzet').innerHTML =
-        kart('Requests', bin(o.istek), 'in selected range') +
+        kart('Requests', bin(o.request), 'in selected range') +
         kart('Error rate', oran.toFixed(1) + '%', bin(o.hata) + ' rejected or failed', oranTonu) +
         kart('Tokens', bin(o.token), 'input + output') +
-        kart('Cost', para(o.maliyet), 'total amount') +
+        kart('Cost', para(o.cost), 'total amount') +
         kart('Avg latency', bin(o.ortSure) + ' ms', 'across completed requests') +
-        kart('Active customers', bin(o.aktifMusteri), 'sent at least one request');
+        kart('Active teams', bin(o.aktifMusteri), 'sent at least one request');
 
       $('oGrafikBaslik').textContent =
         (gun === 0 ? 'All time' : 'Last ' + gun + ' days') + ' — daily spend';
@@ -2263,9 +2357,9 @@ ${YAZI_TIPI}
       oBakimCiz(v.bakim, v.katalog);
     } catch (e) {
       $('uyari').textContent = 'Could not load the dashboard. ' + e.message;
-      $('uyari').classList.remove('gizli');
+      $('uyari').classList.remove('hidden');
     } finally {
-      $('yukleniyor').classList.add('gizli');
+      $('yukleniyor').classList.add('hidden');
     }
   }
 
@@ -2286,27 +2380,27 @@ ${YAZI_TIPI}
   function fKaynakCiz(k) {
     const satir = (ad, o) =>
       '<div class="saglikSatir"><div><div class="saglikAd">' + ad + '</div>' +
-      '<div class="yardim">' + (o.erisilebilir
+      '<div class="helpText">' + (o.erisilebilir
         ? o.modelSayisi + ' models, fetched ' + o.yasSaniye + 's ago'
         : 'unreachable — stored prices are untouched') + '</div></div>' +
       '<div class="hap ' + (o.erisilebilir ? 'ok' : 'err') + '">' +
       (o.erisilebilir ? 'live' : 'down') + '</div></div>';
 
     $('fKaynak').innerHTML =
-      '<div class="baslikkucuk">Sources</div>' +
-      '<div class="yardim" style="margin:.35rem 0 1rem">' +
+      '<div class="smallTitle">Sources</div>' +
+      '<div class="helpText" style="margin:.35rem 0 1rem">' +
       'Two independent lists. A price is applied automatically only when both agree, ' +
       'or when only one carries the model and the price went down.</div>' +
       satir('OpenRouter', k.openrouter) +
       satir('LiteLLM', k.litellm) +
       '<div style="display:flex;gap:.6rem;flex-wrap:wrap;margin-top:1.1rem">' +
-      '<button class="dugme koyu" id="fDususUygula">Apply price drops</button>' +
-      '<button class="dugme cerceveli" id="fRematch">Repair broken mappings</button>' +
-      '<button class="dugme cerceveli" id="fYenile">Check again</button></div>' +
-      '<div class="yardim" style="margin-top:.7rem">' +
+      '<button class="btn isDark" id="fDususUygula">Apply price drops</button>' +
+      '<button class="btn outlinedBtn" id="fRematch">Repair broken mappings</button>' +
+      '<button class="btn outlinedBtn" id="fYenile">Check again</button></div>' +
+      '<div class="helpText" style="margin-top:.7rem">' +
       'Drops are applied without asking: leaving them means overcharging customers. ' +
       'Increases always wait for your approval.</div>' +
-      '<div class="uyari gizli" id="fSonuc"></div>';
+      '<div class="alert hidden" id="fSonuc"></div>';
 
     $('fDususUygula').addEventListener('click', () => fUygula({ sadeceDususler: true }));
     $('fYenile').addEventListener('click', fiyatYukle);
@@ -2328,16 +2422,16 @@ ${YAZI_TIPI}
       'border:1px solid var(--line-2);border-radius:6px;' +
       'background:var(--sunk);color:var(--ink)';
     const ok = (sutun, panelIcerik) =>
-      ' <button class="sutunOk" type="button" data-sutun="' + sutun + '">▾</button>' +
-      '<div class="sutunFiltrePopup gizli" data-panel="' + sutun + '" style="min-width:14rem">' +
+      ' <button class="colArrow" type="button" data-sutun="' + sutun + '">▾</button>' +
+      '<div class="sutunFiltrePopup hidden" data-panel="' + sutun + '" style="min-width:14rem">' +
       panelIcerik + '</div>';
 
     $('fTablo').innerHTML =
       '<thead><tr>' +
-      '<th class="sutunBaslik">Model' + ok('arama',
+      '<th class="colHeader">Model' + ok('arama',
         '<input type="text" id="fAra" placeholder="Search models" style="' + kutuStil + '">') +
       '</th>' +
-      '<th class="sutunBaslik">Provider' + ok('saglayici',
+      '<th class="colHeader">Provider' + ok('provider',
         '<select id="fSagSuz" style="' + kutuStil + '">' +
           '<option value="">All providers</option>' +
           '<option value="openai">OpenAI</option>' +
@@ -2345,7 +2439,7 @@ ${YAZI_TIPI}
           '<option value="gemini">Google</option></select>') +
       '</th>' +
       '<th>Mapped to</th><th class="sayi">Ours</th><th class="sayi">Source</th>' +
-      '<th class="sutunBaslik">Status' + ok('durum',
+      '<th class="colHeader">Status' + ok('durum',
         '<select id="fDurumSuz" style="' + kutuStil + '">' +
           '<option value="">All statuses</option>' +
           '<option value="uyuyor">Matches the source</option>' +
@@ -2369,19 +2463,19 @@ ${YAZI_TIPI}
       fTabloCiz(fiyatVeri);
     });
 
-    $('fTablo').querySelectorAll('.sutunOk').forEach(dugme => {
+    $('fTablo').querySelectorAll('.colArrow').forEach(dugme => {
       dugme.addEventListener('click', (e) => {
         e.stopPropagation();
         const panel = $('fTablo').querySelector('[data-panel="' + dugme.dataset.sutun + '"]');
-        const kapaliydi = panel.classList.contains('gizli');
-        $('fTablo').querySelectorAll('.sutunFiltrePopup').forEach(p => p.classList.add('gizli'));
-        panel.classList.toggle('gizli', !kapaliydi);
+        const kapaliydi = panel.classList.contains('hidden');
+        $('fTablo').querySelectorAll('.sutunFiltrePopup').forEach(p => p.classList.add('hidden'));
+        panel.classList.toggle('hidden', !kapaliydi);
       });
       dugme.parentElement.querySelector('.sutunFiltrePopup')
         .addEventListener('click', (e) => e.stopPropagation());
     });
     document.addEventListener('click', () => {
-      $('fTablo').querySelectorAll('.sutunFiltrePopup').forEach(p => p.classList.add('gizli'));
+      $('fTablo').querySelectorAll('.sutunFiltrePopup').forEach(p => p.classList.add('hidden'));
     });
   }
 
@@ -2419,17 +2513,17 @@ ${YAZI_TIPI}
           '<td>' + (SAGLAYICI[x.provider] || x.provider) + '</td>' +
           '<td>' + (kimlikler.length
             ? '<code class="onek">' + kacir(kimlikler[0]) + '</code>' +
-              (kimlikler.length > 1 ? ' <span class="yardim">+' + (kimlikler.length - 1) + '</span>' : '')
-            : '<span class="yardim">—</span>') + '</td>' +
+              (kimlikler.length > 1 ? ' <span class="helpText">+' + (kimlikler.length - 1) + '</span>' : '')
+            : '<span class="helpText">—</span>') + '</td>' +
           '<td class="sayi">' + m1000(x.bizimGirdi) + ' / ' + m1000(x.bizimCikti) + '</td>' +
           '<td class="sayi">' + (x.kaynakGirdi === null ? '—'
             : m1000(x.kaynakGirdi) + ' / ' + m1000(x.kaynakCikti)) + '</td>' +
           '<td><span class="hap ' + renk + '">' + yazi + '</span></td>' +
           '<td class="sayi">' + gunTarih(x.kontrolTarihi) + '</td>' +
-          '<td class="islem">' +
-            '<button class="satirDugme" data-eylem="esle">Mapping</button>' +
+          '<td class="actionCell">' +
+            '<button class="rowBtn" data-eylem="esle">Mapping</button>' +
             ((x.durum === 'ucuzlamis' || x.durum === 'zamlanmis')
-              ? '<button class="satirDugme" data-eylem="uygula">Apply source price</button>'
+              ? '<button class="rowBtn" data-eylem="uygula">Apply source price</button>'
               : '') +
           '</td></tr>';
       }).join('');
@@ -2445,9 +2539,9 @@ ${YAZI_TIPI}
       $('fHataTablo').innerHTML = '';
       $('fHataBos').innerHTML = '<div class="simge">◷</div><h3>Nothing failing</h3>' +
         '<p>No catalog model is being rejected by its provider.</p>';
-      $('fHataBos').classList.remove('gizli');
+      $('fHataBos').classList.remove('hidden');
     } else {
-      $('fHataBos').classList.add('gizli');
+      $('fHataBos').classList.add('hidden');
       $('fHataTablo').innerHTML =
         '<thead><tr><th>Model</th><th class="sayi">Failures</th><th>Last seen</th>' +
         '<th>Provider said</th></tr></thead><tbody>' +
@@ -2464,10 +2558,10 @@ ${YAZI_TIPI}
       $('fTalepTablo').innerHTML = '';
       $('fTalepBos').innerHTML = '<div class="simge">◷</div><h3>Nothing requested</h3>' +
         '<p>No customer asked for a model outside the catalog.</p>';
-      $('fTalepBos').classList.remove('gizli');
+      $('fTalepBos').classList.remove('hidden');
       return;
     }
-    $('fTalepBos').classList.add('gizli');
+    $('fTalepBos').classList.add('hidden');
     $('fTalepTablo').innerHTML =
       '<thead><tr><th>Model</th><th class="sayi">Attempts</th><th>Last try</th>' +
       '<th>Source price</th></tr></thead><tbody>' +
@@ -2477,8 +2571,8 @@ ${YAZI_TIPI}
         '<td class="sayi">' + gunTarih(x.son) + '</td>' +
         '<td>' + (x.onerilenKaynak
           ? m1000(x.onerilenGirdi) + ' / ' + m1000(x.onerilenCikti) +
-            ' <span class="yardim">' + kacir(x.onerilenKaynak) + '</span>'
-          : '<span class="yardim">not found at source</span>') + '</td></tr>').join('') + '</tbody>';
+            ' <span class="helpText">' + kacir(x.onerilenKaynak) + '</span>'
+          : '<span class="helpText">not found at source</span>') + '</td></tr>').join('') + '</tbody>';
   }
 
   // Eşleştirme paneli. Kimlikler artık liste: sağlayıcı ad değiştirdiğinde
@@ -2489,7 +2583,7 @@ ${YAZI_TIPI}
     $('ypZaman').textContent = 'Source mapping';
 
     $('ypGovde').innerHTML =
-      '<div class="yardim" style="margin-bottom:1rem">' +
+      '<div class="helpText" style="margin-bottom:1rem">' +
       'One name per line. They are tried in order, so an old name can stay ' +
       'while a new one is added — the switch then costs nothing.</div>' +
 
@@ -2499,26 +2593,26 @@ ${YAZI_TIPI}
           (x.onerilenEslesme.cikti * 1000).toFixed(2) + ') is close to the last known value.</div>'
         : '') +
 
-      '<div class="bolumBaslik">OpenRouter</div>' +
+      '<div class="sectionTitle">OpenRouter</div>' +
       '<textarea id="ypOr" rows="3" placeholder="openai/gpt-4o">' + kacir(dizi(x.orIds)) + '</textarea>' +
 
-      '<div class="bolumBaslik" style="margin-top:1.2rem">LiteLLM</div>' +
+      '<div class="sectionTitle" style="margin-top:1.2rem">LiteLLM</div>' +
       '<textarea id="ypLite" rows="2" placeholder="gpt-4o">' + kacir(dizi(x.liteIds)) + '</textarea>' +
-      '<div class="yardim" style="margin-top:.35rem">' +
+      '<div class="helpText" style="margin-top:.35rem">' +
       'Second source. When both agree on a price it is applied automatically.</div>' +
 
       (x.adaylar && x.adaylar.length
-        ? '<div class="bolumBaslik" style="margin-top:1.5rem">Candidates at OpenRouter</div>' +
+        ? '<div class="sectionTitle" style="margin-top:1.5rem">Candidates at OpenRouter</div>' +
           '<div class="secimKutu">' + x.adaylar.map(a =>
             '<button class="secim" data-aday="' + kacir(a) + '">' + kacir(a) + '</button>').join('') + '</div>'
         : '') +
 
-      (x.not ? '<div class="yardim" style="margin-top:1.2rem">' + kacir(x.not) + '</div>' : '') +
+      (x.not ? '<div class="helpText" style="margin-top:1.2rem">' + kacir(x.not) + '</div>' : '') +
 
       '<div style="display:flex;gap:.6rem;margin-top:1.2rem">' +
-      '<button class="dugme koyu" id="ypEsleKaydet">Save mapping</button>' +
-      '<button class="dugme cerceveli" id="ypEsleTemizle">Clear</button></div>' +
-      '<div class="uyari gizli" id="ypHata"></div>';
+      '<button class="btn isDark" id="ypEsleKaydet">Save mapping</button>' +
+      '<button class="btn outlinedBtn" id="ypEsleTemizle">Clear</button></div>' +
+      '<div class="alert hidden" id="ypHata"></div>';
 
     // Aday düğmesi OpenRouter kutusuna satır ekliyor, üzerine yazmıyor.
     $('ypGovde').addEventListener('click', e => {
@@ -2542,7 +2636,7 @@ ${YAZI_TIPI}
         detayKapat();
         await fiyatYukle();
       } catch (e) {
-        $('ypHata').textContent = e.message; $('ypHata').classList.remove('gizli');
+        $('ypHata').textContent = e.message; $('ypHata').classList.remove('hidden'); $('ypHata').scrollIntoView({behavior: 'smooth'});
       }
     };
     $('ypEsleKaydet').addEventListener('click', () => kaydet(false));
@@ -2577,10 +2671,10 @@ ${YAZI_TIPI}
         '<p>' + (v.tabloYok
           ? 'The price_events table has not been created yet.'
           : 'The first scheduled run has not happened.') + '</p>';
-      $('fOlayBos').classList.remove('gizli');
+      $('fOlayBos').classList.remove('hidden');
       return;
     }
-    $('fOlayBos').classList.add('gizli');
+    $('fOlayBos').classList.add('hidden');
     const m = (x) => x === null || x === undefined ? '' : '$' + (Number(x) * 1000).toFixed(2);
     $('fOlayTablo').innerHTML =
       '<thead><tr><th>When</th><th>Type</th><th>Model</th><th>Change</th>' +
@@ -2589,7 +2683,7 @@ ${YAZI_TIPI}
         '<td class="sayi">' + new Date(x.created_at).toLocaleString('en-GB',
           { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) + '</td>' +
         '<td><span class="hap ' + (OLAY_RENK[x.tur] || '') + '">' + kacir(x.tur) + '</span>' +
-          (x.tetikleyen === 'cron' ? ' <span class="yardim">auto</span>' : '') + '</td>' +
+          (x.tetikleyen === 'cron' ? ' <span class="helpText">auto</span>' : '') + '</td>' +
         '<td>' + kacir(x.model || '—') + '</td>' +
         '<td class="sayi">' + (x.eski_girdi !== null && x.eski_girdi !== undefined
           ? m(x.eski_girdi) + '/' + m(x.eski_cikti) + ' → ' + m(x.yeni_girdi) + '/' + m(x.yeni_cikti)
@@ -2606,31 +2700,31 @@ ${YAZI_TIPI}
     const kutu = document.createElement('div');
     kutu.className = 'sifreKutu';
     kutu.innerHTML =
-      '<div class="baslikkucuk" style="font-size:.85rem">Email address</div>' +
+      '<div class="smallTitle" style="font-size:.85rem">Email address</div>' +
       '<input id="epYeni" class="sifreAlan" type="email" spellcheck="false" ' +
       'autocapitalize="off" autocorrect="off" value="' + kacir(mevcut) + '">' +
-      '<div class="yardim" style="margin-top:.5rem">' +
+      '<div class="helpText" style="margin-top:.5rem">' +
       'This is what they sign in with. The password stays the same.</div>' +
       '<div class="dugmeler">' +
-      '<button class="dugme koyu" id="epKaydet">Save</button>' +
-      '<button class="dugme cerceveli" id="epIptal">Cancel</button></div>';
+      '<button class="btn isDark" id="epKaydet">Save</button>' +
+      '<button class="btn outlinedBtn" id="epIptal">Cancel</button></div>';
 
     const satir = dugme.closest('.sat') || dugme.parentNode;
     satir.after(kutu);
     dugme.disabled = true;
     $('epYeni').focus();
 
-    const kapat = () => { kutu.remove(); dugme.disabled = false; };
-    $('epIptal').onclick = kapat;
+    const closeBtn = () => { kutu.remove(); dugme.disabled = false; };
+    $('epIptal').onclick = closeBtn;
     $('epKaydet').onclick = async () => {
       $('epKaydet').disabled = true;
       try { await uygula($('epYeni').value); } catch (err) {
         kutu.insertAdjacentHTML('beforeend',
-          '<div class="uyari" style="margin-top:.6rem">' + kacir(err.message) + '</div>');
+          '<div class="alert" style="margin-top:.6rem">' + kacir(err.message) + '</div>');
         $('epKaydet').disabled = false;
         return;
       }
-      kapat();
+      closeBtn();
     };
     $('epYeni').onkeydown = (e) => { if (e.key === 'Enter') $('epKaydet').click(); };
   }
@@ -2649,36 +2743,36 @@ ${YAZI_TIPI}
     const kutu = document.createElement('div');
     kutu.className = 'sifreKutu';
     kutu.innerHTML =
-      '<div class="baslikkucuk" style="font-size:.85rem">New password</div>' +
+      '<div class="smallTitle" style="font-size:.85rem">New password</div>' +
       '<input id="sfYeni" class="sifreAlan" type="text" spellcheck="false" ' +
       'autocapitalize="off" autocorrect="off" autocomplete="off" ' +
       'placeholder="leave empty to generate one">' +
-      '<div class="yardim" style="margin-top:.5rem">' +
+      '<div class="helpText" style="margin-top:.5rem">' +
       'At least 10 characters. Shown as you type so you can read it out. ' +
       'The current password stops working immediately and all their open sessions ' +
       'are signed out.</div>' +
       '<div class="dugmeler">' +
-      '<button class="dugme koyu" id="sfKaydet">Set password</button>' +
-      '<button class="dugme cerceveli" id="sfIptal">Cancel</button></div>';
+      '<button class="btn isDark" id="sfKaydet">Set password</button>' +
+      '<button class="btn outlinedBtn" id="sfIptal">Cancel</button></div>';
 
     const satir = dugme.closest('.sat') || dugme.parentNode;
     satir.after(kutu);
     dugme.disabled = true;
     $('sfYeni').focus();
 
-    const kapat = () => { kutu.remove(); dugme.disabled = false; };
-    $('sfIptal').onclick = kapat;
+    const closeBtn = () => { kutu.remove(); dugme.disabled = false; };
+    $('sfIptal').onclick = closeBtn;
     $('sfKaydet').onclick = async () => {
       $('sfKaydet').disabled = true;
       try {
         await uygula($('sfYeni').value);
       } catch (e) {
         kutu.insertAdjacentHTML('beforeend',
-          '<div class="uyari" style="margin-top:.6rem">' + kacir(e.message) + '</div>');
+          '<div class="alert" style="margin-top:.6rem">' + kacir(e.message) + '</div>');
         $('sfKaydet').disabled = false;
         return;
       }
-      kapat();
+      closeBtn();
     };
     $('sfYeni').onkeydown = (e) => { if (e.key === 'Enter') $('sfKaydet').click(); };
   }
@@ -2693,18 +2787,18 @@ ${YAZI_TIPI}
       await fiyatYukle();
       const not = $('fSonuc');
       if (!not) return;
-      not.classList.remove('gizli');
+      not.classList.remove('hidden');
       not.innerHTML = (v.baglanan.length
         ? v.baglanan.map(b => kacir(b.model) + ' → ' + kacir(b.kimlik) +
-            ' <span class="yardim">(' + b.sapma + ' from the last known price)</span>').join('<br>')
+            ' <span class="helpText">(' + b.sapma + ' from the last known price)</span>').join('<br>')
         : 'No broken mapping could be repaired automatically.') +
         (v.belirsiz.length
           ? '<br><br>Left alone: ' + v.belirsiz.map(b =>
-              kacir(b.model) + ' <span class="yardim">— ' + kacir(b.sebep) + '</span>').join(', ')
+              kacir(b.model) + ' <span class="helpText">— ' + kacir(b.sebep) + '</span>').join(', ')
           : '');
     } catch (e) {
       $('uyari').textContent = e.message;
-      $('uyari').classList.remove('gizli');
+      $('uyari').classList.remove('hidden');
     } finally {
       const b = $('fRematch');
       if (b) { b.disabled = false; b.textContent = 'Repair broken mappings'; }
@@ -2717,18 +2811,18 @@ ${YAZI_TIPI}
       await fiyatYukle();
       const not = $('fSonuc');
       if (!not) return;
-      not.classList.remove('gizli');
+      not.classList.remove('hidden');
       not.innerHTML = (v.uygulanan.length
         ? v.uygulanan.map(u => kacir(u.model) + ' ' + u.eski + ' → ' + u.yeni +
-            ' <span class="yardim">(' + kacir(u.kaynak) + ')</span>').join('<br>')
+            ' <span class="helpText">(' + kacir(u.kaynak) + ')</span>').join('<br>')
         : 'Nothing to update — no mapped model is cheaper at its source.') +
         ((v.atlanan && v.atlanan.length)
           ? '<br><br>Skipped: ' + v.atlanan.map(a =>
-              kacir(a.model) + ' <span class="yardim">— ' + kacir(a.sebep) + '</span>').join(', ')
+              kacir(a.model) + ' <span class="helpText">— ' + kacir(a.sebep) + '</span>').join(', ')
           : '');
     } catch (e) {
       $('uyari').textContent = e.message;
-      $('uyari').classList.remove('gizli');
+      $('uyari').classList.remove('hidden');
     }
   }
 
@@ -2740,8 +2834,8 @@ ${YAZI_TIPI}
   });
 
   async function fiyatYukle() {
-    $('uyari').classList.add('gizli');
-    $('yukleniyor').classList.remove('gizli');
+    $('uyari').classList.add('hidden');
+    $('yukleniyor').classList.remove('hidden');
     try {
       fiyatVeri = await api('/prices');
       fKaynakCiz(fiyatVeri.kaynaklar);
@@ -2749,12 +2843,12 @@ ${YAZI_TIPI}
       await fOlaylariCiz();
     } catch (e) {
       $('uyari').textContent = e.message;
-      $('uyari').classList.remove('gizli');
+      $('uyari').classList.remove('hidden');
       $('fKaynak').innerHTML = '';
       $('fTablo').innerHTML = '';
       $('fTalepTablo').innerHTML = '';
     } finally {
-      $('yukleniyor').classList.add('gizli');
+      $('yukleniyor').classList.add('hidden');
     }
   }
 
@@ -2768,45 +2862,45 @@ ${YAZI_TIPI}
   function jetonKisitiUygula() {
     const jetonla = girisYolu === 'jeton';
     document.querySelectorAll('#menu button[data-bolum]').forEach(b => {
-      const izinli = !jetonla || b.dataset.bolum === 'yoneticiler';
+      const izinli = !jetonla || b.dataset.bolum === 'admins';
       b.disabled = !izinli;
       b.style.opacity = izinli ? '' : '.4';
     });
-    $('jetonUyari').classList.toggle('gizli', !jetonla);
-    if (jetonla) bolumGoster('yoneticiler');
+    $('jetonUyari').classList.toggle('hidden', !jetonla);
+    if (jetonla) bolumGoster('admins');
   }
 
   // Oturum düştüğünde giriş ekranına dön ve sebebini söyle.
   function oturumBitti(mesaj) {
     jeton = null; modeller = [];
     try { localStorage.removeItem(DEPO); } catch (e) {}
-    $('uygulama').classList.add('gizli');
-    $('girisEkran').classList.remove('gizli');
+    $('uygulama').classList.add('hidden');
+    $('girisEkran').classList.remove('hidden');
     $('hata').textContent = mesaj ||
       'Your session ended — this happens right after your own password is reset. ' +
       'Sign in with the new one.';
-    $('hata').classList.remove('gizli');
+    $('hata').classList.remove('hidden');
   }
 
   async function yoneticileriYukle() {
     const kutu = $('yonListe');
-    $('yonHata').classList.add('gizli');
+    $('yonHata').classList.add('hidden');
     try {
       const v = await api('/admins');
-      const liste = v.yoneticiler || [];
+      const liste = v.admins || [];
       kutu.innerHTML = liste.length
         ? '<div class="hesap">' + liste.map(y =>
             '<div class="sat"><span>' + kacir(y.email) +
-            '<br><span class="yardim">' +
+            '<br><span class="helpText">' +
             (y.last_login_at ? 'last signed in ' + gunTarih(y.last_login_at) : 'never signed in') +
             '</span></span><span>' +
-            '<button class="satirDugme" data-yon-eposta="' + y.id + '">Change email</button>' +
-            '<button class="satirDugme" data-yon-sifre="' + y.id + '">Reset password</button>' +
+            '<button class="rowBtn" data-yon-eposta="' + y.id + '">Change email</button>' +
+            '<button class="rowBtn" data-yon-sifre="' + y.id + '">Reset password</button>' +
             (liste.length > 1
-              ? '<button class="satirDugme tehlike" data-yon-sil="' + y.id + '">Remove</button>'
+              ? '<button class="rowBtn danger" data-yon-sil="' + y.id + '">Remove</button>'
               : '') +
             '</span></div>').join('') + '</div>'
-        : '<div class="yardim">No administrator accounts yet. Add one — the shared token ' +
+        : '<div class="helpText">No administrator accounts yet. Add one — the shared token ' +
           'is meant to be a fallback, not the way in.</div>';
 
       kutu.onclick = async (e) => {
@@ -2839,27 +2933,27 @@ ${YAZI_TIPI}
           }
         } catch (err) {
           $('yonHata').textContent = err.message;
-          $('yonHata').classList.remove('gizli');
+          $('yonHata').classList.remove('hidden');
         }
       };
     } catch (e) {
-      kutu.innerHTML = '<div class="uyari">' + kacir(e.message) + '</div>';
+      kutu.innerHTML = '<div class="alert">' + kacir(e.message) + '</div>';
     }
   }
 
   function yonSifreGoster(baslik, sifre) {
     const alan = document.createElement('div');
     alan.className = 'sifreKutu';
-    alan.innerHTML = '<div class="baslikkucuk" style="font-size:.85rem">' + baslik + '</div>' +
+    alan.innerHTML = '<div class="smallTitle" style="font-size:.85rem">' + baslik + '</div>' +
       '<div class="anahtarKutu" style="margin-top:.6rem"><code>' + kacir(sifre) + '</code></div>' +
-      '<div class="yardim" style="margin-top:.5rem">Shown once — copy it now.</div>';
+      '<div class="helpText" style="margin-top:.5rem">Shown once — copy it now.</div>';
     $('yonListe').parentNode.insertBefore(alan, $('yonListe').nextSibling);
   }
 
   $('yonEkle').addEventListener('click', async () => {
     const e = $('yonEposta').value.trim();
     if (!e) return;
-    $('yonEkle').disabled = true; $('yonHata').classList.add('gizli');
+    $('yonEkle').disabled = true; $('yonHata').classList.add('hidden');
     try {
       const v = await api('/admins', {
         method: 'POST',
@@ -2867,24 +2961,24 @@ ${YAZI_TIPI}
       });
       $('yonEposta').value = ''; $('yonSifre').value = '';
       await yoneticileriYukle();
-      yonSifreGoster('Administrator added — ' + v.yonetici.email, v.sifre);
+      yonSifreGoster('Administrator added — ' + v.admin.email, v.sifre);
     } catch (err) {
       $('yonHata').textContent = err.message;
-      $('yonHata').classList.remove('gizli');
+      $('yonHata').classList.remove('hidden');
     } finally { $('yonEkle').disabled = false; }
   });
 
   async function yukle() {
-    $('uyari').classList.add('gizli');
-    if (!modeller.length) $('yukleniyor').classList.remove('gizli');
+    $('uyari').classList.add('hidden');
+    if (!modeller.length) $('yukleniyor').classList.remove('hidden');
     try {
       modeller = (await api('/models')).modeller;
-      tabloCiz();
+      drawTable();
     } catch (e) {
       $('uyari').textContent = 'Could not load models. ' + e.message;
-      $('uyari').classList.remove('gizli');
+      $('uyari').classList.remove('hidden');
     } finally {
-      $('yukleniyor').classList.add('gizli');
+      $('yukleniyor').classList.add('hidden');
     }
   }
 
@@ -2926,17 +3020,38 @@ ${YAZI_TIPI}
   // tabloyla birlikte dinamik kuruluyor (mBaslikKur) — sayfa yüklenirken
   // DOM'da henüz yoklar, burada bağlamak hataya yol açardı.
 
+  if ($('modelArama')) {
+    $('modelArama').addEventListener('input', () => {
+      modelSayfasi = 1;
+      drawTable();
+    });
+  }
+  if ($('mOncekiSayfa')) {
+    $('mOncekiSayfa').addEventListener('click', () => {
+      if (modelSayfasi > 1) {
+        modelSayfasi--;
+        drawTable();
+      }
+    });
+  }
+  if ($('mSonrakiSayfa')) {
+    $('mSonrakiSayfa').addEventListener('click', () => {
+      modelSayfasi++;
+      drawTable();
+    });
+  }
+
   $('ekleAc').addEventListener('click', () => {
-    $('ekleKart').classList.toggle('gizli');
-    $('ekleHata').classList.add('gizli');
-    if (!$('ekleKart').classList.contains('gizli')) $('yModel').focus();
+    $('ekleKart').classList.toggle('hidden');
+    $('ekleHata').classList.add('hidden');
+    if (!$('ekleKart').classList.contains('hidden')) $('yModel').focus();
   });
-  $('ekleIptal').addEventListener('click', () => $('ekleKart').classList.add('gizli'));
+  $('ekleIptal').addEventListener('click', () => $('ekleKart').classList.add('hidden'));
 
   $('ekleKaydet').addEventListener('click', async () => {
     const model = $('yModel').value.trim();
     if (!model) { $('ekleHata').textContent = 'Model ID is required.';
-                  $('ekleHata').classList.remove('gizli'); return; }
+                  $('ekleHata').classList.remove('hidden'); return; }
     const g = $('yGirdi').value.trim(), c = $('yCikti').value.trim();
     const govde = { provider: $('yProvider').value, model,
       input_price: g === '' ? null : Number(g) / 1000,
@@ -2945,24 +3060,24 @@ ${YAZI_TIPI}
     try {
       await api('/models', { method:'POST', body: JSON.stringify(govde) });
       $('yModel').value = ''; $('yGirdi').value = ''; $('yCikti').value = '';
-      $('ekleKart').classList.add('gizli');
+      $('ekleKart').classList.add('hidden');
       await yukle();
     } catch (err) {
       $('ekleHata').textContent = err.message;
-      $('ekleHata').classList.remove('gizli');
+      $('ekleHata').classList.remove('hidden');
     } finally { $('ekleKaydet').disabled = false; }
   });
 
   async function girisYap(hazir) {
     const saklı = typeof hazir === 'string' ? hazir : null;
     const d = saklı || $('jeton').value.trim(); if (!d) return;
-    $('btn').disabled = true; $('hata').classList.add('gizli');
+    $('btn').disabled = true; $('hata').classList.add('hidden');
     jeton = d;
     try {
       await api('/models');
       try { localStorage.setItem(DEPO, JSON.stringify({ a: d, t: Date.now() })); } catch (e) {}
-      $('girisEkran').classList.add('gizli');
-      $('uygulama').classList.remove('gizli');
+      $('girisEkran').classList.add('hidden');
+      $('uygulama').classList.remove('hidden');
       girisYolu = 'jeton';
       jetonKisitiUygula();
     } catch (e) {
@@ -2970,7 +3085,7 @@ ${YAZI_TIPI}
       try { localStorage.removeItem(DEPO); } catch (err) {}
       if (!saklı) {
         $('hata').textContent = 'Token not recognized.';
-        $('hata').classList.remove('gizli');
+        $('hata').classList.remove('hidden');
       }
     } finally { $('btn').disabled = false; }
   }
@@ -2978,7 +3093,7 @@ ${YAZI_TIPI}
   async function hesapGirisi() {
     const e = $('yEposta').value.trim(), sf = $('ySifre').value;
     if (!e || !sf) return;
-    $('btnHesap').disabled = true; $('hata').classList.add('gizli');
+    $('btnHesap').disabled = true; $('hata').classList.add('hidden');
     try {
       const c = await fetch('/admin/api/session', {
         method: 'POST', headers: { 'content-type': 'application/json' },
@@ -2987,14 +3102,14 @@ ${YAZI_TIPI}
       const v = await c.json();
       if (!c.ok) {
         $('hata').textContent = v.error || 'Sign-in failed.';
-        $('hata').classList.remove('gizli');
+        $('hata').classList.remove('hidden');
         return;
       }
       jeton = null;
       try { localStorage.removeItem(DEPO); } catch (err) {}
       $('ySifre').value = '';
-      $('girisEkran').classList.add('gizli');
-      $('uygulama').classList.remove('gizli');
+      $('girisEkran').classList.add('hidden');
+      $('uygulama').classList.remove('hidden');
       girisYolu = 'hesap';
       jetonKisitiUygula();
       // Model listesi Customers ekranındaki izin kutucukları için de gerekli.
@@ -3002,16 +3117,16 @@ ${YAZI_TIPI}
       bolumGoster(bolum);
     } catch (err) {
       $('hata').textContent = 'Could not reach the server.';
-      $('hata').classList.remove('gizli');
+      $('hata').classList.remove('hidden');
     } finally { $('btnHesap').disabled = false; }
   }
 
   $('girisSekme').addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
-    [...$('girisSekme').children].forEach(x => x.classList.toggle('secili', x === b));
-    $('yolHesap').classList.toggle('gizli', b.dataset.yol !== 'hesap');
-    $('yolJeton').classList.toggle('gizli', b.dataset.yol !== 'jeton');
-    $('hata').classList.add('gizli');
+    [...$('girisSekme').children].forEach(x => x.classList.toggle('selected', x === b));
+    $('yolHesap').classList.toggle('hidden', b.dataset.yol !== 'hesap');
+    $('yolJeton').classList.toggle('hidden', b.dataset.yol !== 'jeton');
+    $('hata').classList.add('hidden');
   });
 
   $('btnHesap').addEventListener('click', hesapGirisi);
@@ -3021,9 +3136,9 @@ ${YAZI_TIPI}
   $('btn').addEventListener('click', () => girisYap());
   $('jeton').addEventListener('keydown', e => { if (e.key === 'Enter') girisYap(); });
   $('yenile').addEventListener('click', () => {
-    if (bolum === 'istekler') { offset = 0; iSatirlar = []; istekYukle(false); }
+    if (bolum === 'requests') { offset = 0; iSatirlar = []; istekYukle(false); }
     else if (bolum === 'ozet') ozetYukle();
-    else if (bolum === 'kisiler') kisilerYukle();
+    else if (bolum === 'users') kisilerYukle();
     else if (bolum === 'fiyatlar') fiyatYukle();
     else yukle();
   });
@@ -3032,7 +3147,7 @@ ${YAZI_TIPI}
     d.disabled = true; d.textContent = 'Preparing...';
     try {
       const s = new URLSearchParams({ gun: String(gun) });
-      if ($('fKisi').value)      s.set('kisi',     $('fKisi').value);
+      if ($('fKisi').value)      s.set('user',     $('fKisi').value);
       if ($('fSaglayici').value) s.set('provider', $('fSaglayici').value);
       if ($('fDurum').value)     s.set('durum',    $('fDurum').value);
 
@@ -3048,7 +3163,7 @@ ${YAZI_TIPI}
       URL.revokeObjectURL(bag.href);
     } catch (e) {
       $('uyari').textContent = 'Could not prepare the file.';
-      $('uyari').classList.remove('gizli');
+      $('uyari').classList.remove('hidden');
     } finally {
       d.disabled = false; d.textContent = 'Download CSV';
     }
@@ -3060,7 +3175,7 @@ ${YAZI_TIPI}
     try { await fetch('/admin/api/session', { method: 'DELETE' }); } catch (e) {}
     jeton = null; $('jeton').value = ''; $('ySifre').value = ''; modeller = [];
     try { localStorage.removeItem(DEPO); } catch (e) {}
-    $('uygulama').classList.add('gizli'); $('girisEkran').classList.remove('gizli');
+    $('uygulama').classList.add('hidden'); $('girisEkran').classList.remove('hidden');
   });
 
   try {
@@ -3072,8 +3187,8 @@ ${YAZI_TIPI}
           const v = await c.json();
           // Jetonla girilmişse çerez yok; saklanan jetona düşülüyor.
           if (v.yol === 'hesap') {
-            $('girisEkran').classList.add('gizli');
-            $('uygulama').classList.remove('gizli');
+            $('girisEkran').classList.add('hidden');
+            $('uygulama').classList.remove('hidden');
             girisYolu = 'hesap';
             jetonKisitiUygula();
             await yukle();
@@ -3124,7 +3239,7 @@ export function adminRoutes(app: Hono) {
 
 
   // Fiyatlar 1000 token başına saklanıyor, panel formu 1M başına alıp bölüyor.
-  // Uca doğrudan 1M değeri gönderilirse fiyat bin kat şişer ve maliyet sessizce
+  // Uca doğrudan 1M değeri gönderilirse fiyat bin kat şişer ve cost sessizce
   // yanlış yazılır. Bugün bilinen en pahalı modeller 1M başına ~$100 civarında,
   // yani 1K başına ~$0.1. Sınırı bunun on katına koyuyoruz: gerçek bir fiyatı
   // engellemez, birim hatasını yakalar.
@@ -3250,7 +3365,7 @@ export function adminRoutes(app: Hono) {
       return x;
     };
 
-    // İsteği kim attı? Ağ geçidi kişiyi görmüyor, anahtarı görüyor; anahtarın
+    // İsteği kim attı? Ağ geçidi kişiyi görmüyor, keyı görüyor; keyın
     // sahibi isteği atan kişi. Tek şirketli kurulumda "Customer" sütunu hep
     // aynı adı yazıyordu, asıl sorulan "bunu kim yaptı" idi.
     const { data: anahtarSahipleri } = await supabase
@@ -3285,12 +3400,12 @@ export function adminRoutes(app: Hono) {
     }>;
     const ozet = donem.reduce(
       (a, k) => ({
-        istek: a.istek + 1,
+        request: a.request + 1,
         hata: a.hata + (k.status === 'error' ? 1 : 0),
         token: a.token + (k.input_tokens ?? 0) + (k.output_tokens ?? 0),
-        maliyet: a.maliyet + Number(k.cost ?? 0)
+        cost: a.cost + Number(k.cost ?? 0)
       }),
-      { istek: 0, hata: 0, token: 0, maliyet: 0 }
+      { request: 0, hata: 0, token: 0, cost: 0 }
     );
 
     // 2) Görüntülenecek sayfa
@@ -3312,9 +3427,9 @@ export function adminRoutes(app: Hono) {
       ((musteriler ?? []) as Array<{ id: string; name: string }>).map((m) => [m.id, m.name])
     );
 
-    // Filtre listesi. clients tablosunda istek atmamış ve adı tekrar eden
+    // Filtre listesi. clients tablosunda request atmamış ve adı tekrar eden
     // satırlar var; hepsini listelemek listeyi okunmaz yapıyor. Bu yüzden
-    // yalnızca dönemde isteği olan müşterileri, istek sayısıyla gösteriyoruz.
+    // yalnızca dönemde isteği olan müşterileri, request sayısıyla gösteriyoruz.
     //
     // Sayım müşteri filtresinden bağımsız olmalı — yoksa bir müşteri seçilince
     // liste tek satıra düşer. O yüzden ayrı bir sorgu.
@@ -3346,21 +3461,21 @@ export function adminRoutes(app: Hono) {
       });
 
     const kayitlar = ((sayfa ?? []) as Array<Record<string, unknown>>).map((k) => {
-      const anahtar = k.key_id ? String(k.key_id) : null;
-      const sahip = anahtar ? anahtarKisisi.get(anahtar) ?? null : null;
+      const key = k.key_id ? String(k.key_id) : null;
+      const sahip = key ? anahtarKisisi.get(key) ?? null : null;
       return {
         ...k,
         musteri: adlar.get(String(k.client_id)) ?? null,
-        kisi: sahip ? sahip.email : null,
-        anahtarAdi: anahtar ? anahtarEtiketi.get(anahtar) ?? null : null
+        user: sahip ? sahip.email : null,
+        anahtarAdi: key ? anahtarEtiketi.get(key) ?? null : null
       };
     }).filter((k) => {
       // Kişi süzgeci kayıtlar hazırlandıktan sonra uygulanıyor: kişi ile
-      // kayıt arasındaki bağ anahtar üzerinden kuruluyor, tek bir SQL
+      // kayıt arasındaki bağ key üzerinden kuruluyor, tek bir SQL
       // koşuluyla ifade edilemiyor.
-      if (!s.kisi) return true;
-      if (s.kisi === 'yok') return k.kisi === null;
-      return k.kisi === s.kisi;
+      if (!s.user) return true;
+      if (s.user === 'yok') return k.user === null;
+      return k.user === s.user;
     });
 
     // Model süzgecinin seçenekleri. Müşteri sayımıyla aynı gerekçe: seçim
@@ -3381,7 +3496,7 @@ export function adminRoutes(app: Hono) {
       .sort((a, b) => b[1] - a[1])
       .map(([ad, adet]) => ({ ad, label: `${ad.split('/')[1]} (${adet})` }));
 
-    // Kişi süzgecinin seçenekleri, dönemdeki istek sayılarıyla.
+    // Kişi süzgecinin seçenekleri, dönemdeki request sayılarıyla.
     let kisiSayimSorgu: any = supabase.from('logs').select('key_id').limit(10000);
     if (baslangic) kisiSayimSorgu = kisiSayimSorgu.gte('created_at', baslangic);
     if (s.durum) kisiSayimSorgu = kisiSayimSorgu.eq('status', s.durum);
@@ -3404,11 +3519,11 @@ export function adminRoutes(app: Hono) {
     return c.json({
       ozet,
       kayitlar,
-      toplam: ozet.istek,
+      toplam: ozet.request,
       offset,
       musteriler: filtreMusterileri,
       modeller: filtreModelleri,
-      kisiler: filtreKisileri,
+      users: filtreKisileri,
       fiyatlar: await priceList()
     });
   });
@@ -3430,11 +3545,11 @@ export function adminRoutes(app: Hono) {
       .order('created_at', { ascending: false });
     if (error) return c.json({ error: 'Could not read customers.' }, 500 as any);
 
-    // Anahtarlar. key_hash'i dışarı vermiyoruz — özet bile olsa gereksiz.
+    // Keys. key_hash'i dışarı vermiyoruz — özet bile olsa gereksiz.
     //
     // key_prefix sonradan eklenen bir sütun. Göç çalıştırılmamışsa sorgu hata
     // verir; o durumda öneksiz okuyoruz ki ekran tamamen çökmesin.
-    let anahtarlar: unknown[] | null = null;
+    let keys: unknown[] | null = null;
     const ilk = await supabase
       .from('client_keys')
       .select('id, client_id, environment, is_active, created_at, key_prefix, label, user_id')
@@ -3444,12 +3559,12 @@ export function adminRoutes(app: Hono) {
         .from('client_keys')
         .select('id, client_id, environment, is_active, created_at')
         .order('created_at', { ascending: false });
-      anahtarlar = geri.data;
+      keys = geri.data;
     } else {
-      anahtarlar = ilk.data;
+      keys = ilk.data;
     }
 
-    // İstek sayısı ve son istek zamanı.
+    // İstek sayısı ve son request zamanı.
     const { data: kayitlar } = await supabase
       .from('logs').select('client_id, created_at').limit(10000);
 
@@ -3463,7 +3578,7 @@ export function adminRoutes(app: Hono) {
     }
 
     const anahtarlarPer = new Map<string, unknown[]>();
-    for (const a of (anahtarlar ?? []) as Array<{ client_id: string }>) {
+    for (const a of (keys ?? []) as Array<{ client_id: string }>) {
       const dizi = anahtarlarPer.get(String(a.client_id)) ?? [];
       dizi.push(a);
       anahtarlarPer.set(String(a.client_id), dizi);
@@ -3472,7 +3587,7 @@ export function adminRoutes(app: Hono) {
     const liste = ((musteriler ?? []) as Array<Record<string, unknown>>).map((m) => {
       const id = String(m.id);
       const say = sayac.get(id) ?? { adet: 0, son: null };
-      return { ...m, anahtarlar: anahtarlarPer.get(id) ?? [], istek: say.adet, sonIstek: say.son };
+      return { ...m, keys: anahtarlarPer.get(id) ?? [], request: say.adet, sonIstek: say.son };
     });
 
     return c.json({ musteriler: liste });
@@ -3490,8 +3605,8 @@ export function adminRoutes(app: Hono) {
     const ad = String(g.name ?? '').trim();
     if (!ad) return c.json({ error: 'Customer name is required.' }, 400 as any);
 
-    // Anahtar üretimi ve karma Umur'un createNewClient işlevinde; onu çağırıyoruz
-    // ki anahtar mantığı tek yerde kalsın.
+    // Key üretimi ve karma Umur'un createNewClient işlevinde; onu çağırıyoruz
+    // ki key mantığı tek yerde kalsın.
     const sonuc = await createNewClient(ad, String(g.environment ?? 'production'));
     if (!sonuc.success || !sonuc.clientId) {
       return c.json({ error: 'Could not create the customer.' }, 500 as any);
@@ -3511,14 +3626,14 @@ export function adminRoutes(app: Hono) {
 
     if (h) return c.json({ error: 'Customer created but permissions could not be saved.' }, 500 as any);
 
-    // Anahtarı createNewClient üretti; öneki burada işliyoruz ki o işlev
+    // Keyı createNewClient üretti; öneki burada işliyoruz ki o işlev
     // (Umur'un dosyası) olduğu gibi kalsın. Sütun yoksa sessizce geçiyoruz.
     await supabase.from('client_keys')
       .update({ key_prefix: String(sonuc.plainApiKey).slice(0, 12) })
       .eq('client_id', sonuc.clientId);
 
-    // Açık anahtar yalnızca burada dönüyor; veritabanında karması duruyor.
-    return c.json({ musteri: { ...guncel, anahtarlar: [], istek: 0, sonIstek: null }, anahtar: sonuc.plainApiKey });
+    // Açık key yalnızca burada dönüyor; veritabanında karması duruyor.
+    return c.json({ musteri: { ...guncel, keys: [], request: 0, sonIstek: null }, key: sonuc.plainApiKey });
   });
 
   app.patch('/admin/api/customers/:id', async (c) => {
@@ -3531,7 +3646,7 @@ export function adminRoutes(app: Hono) {
       name?: string; is_active?: boolean; client_type?: string;
       allowed_models?: string[]; allowed_domains?: string[];
       max_output_price?: number | null;
-      monthly_budget?: number | null; daily_budget?: number | null;
+      monthly_budget?: number | null; daily_budget?: number | null; rate_limit?: number | null;
     }>(c)) ?? {};
 
     const guncelleme: Record<string, unknown> = {};
@@ -3564,8 +3679,8 @@ export function adminRoutes(app: Hono) {
     return c.json({ musteri: data });
   });
 
-  // Yeni anahtar. Kaybolan anahtar geri getirilemez (yalnızca karması saklanıyor),
-  // bu yüzden çözüm yenisini vermek. Eskisi isteğe bağlı olarak kapatılıyor.
+  // Yeni key. Kaybolan key geri getirilemez (yalnızca karması saklanıyor),
+  // bu yüzden çözüm yenisini vermek. Eskisi isteğe bağlı olarak closeBtnılıyor.
   app.post('/admin/api/customers/:id/keys', async (c) => {
     if (!(await hesapOturumuMu(c))) {
       return c.json({ error: 'Unauthorized.' }, 401 as any);
@@ -3580,13 +3695,13 @@ export function adminRoutes(app: Hono) {
       .from('clients').select('id').eq('id', id).single();
     if (!musteri) return c.json({ error: 'Customer not found.' }, 404 as any);
 
-    // Yalnızca o kişinin anahtarları iptal ediliyor; başkasının anahtarını
+    // Yalnızca o kişinin keysı iptal ediliyor; başkasının keyını
     // kapatmak yan etki olurdu.
     if (g.eskileriKapat) {
-      let kapat = supabase.from('client_keys')
+      let closeBtn = supabase.from('client_keys')
         .update({ is_active: false }).eq('client_id', id);
-      if (g.user_id) kapat = kapat.eq('user_id', g.user_id);
-      await kapat;
+      if (g.user_id) closeBtn = closeBtn.eq('user_id', g.user_id);
+      await closeBtn;
     }
 
     const acik = generateProxyKey();
@@ -3596,7 +3711,7 @@ export function adminRoutes(app: Hono) {
       environment: String(g.environment ?? 'production'),
       key_prefix: acik.slice(0, 12)
     };
-    // Sahibi olan anahtar o kişinin kullanımı sayılıyor; sahipsizler ortak.
+    // Sahibi olan key o kişinin kullanımı sayılıyor; sahipsizler ortak.
     if (g.user_id) satir.user_id = g.user_id;
     if (g.label) satir.label = String(g.label).trim();
 
@@ -3612,11 +3727,11 @@ export function adminRoutes(app: Hono) {
 
     if (error) return c.json({ error: 'Could not issue a key.' }, 500 as any);
 
-    // Anahtarın sahibi varsa açık değeri yöneticiye DÖNMÜYORUZ; şifrelenip
+    // Keyın sahibi varsa açık değeri yöneticiye DÖNMÜYORUZ; şifrelenip
     // tek kullanımlık bir bağlantıya konuyor. Yönetici bağlantıyı iletiyor,
-    // anahtarı yalnızca sahibi görüyor.
+    // keyı yalnızca sahibi görüyor.
     //
-    // Sahipsiz (ortak servis) anahtarlarında teslim edilecek bir kişi yok;
+    // Sahipsiz (ortak servis) keysında teslim edilecek bir kişi yok;
     // orada açık değer yöneticide kalıyor, başka yolu yok.
     const kayit = data as { id: string } | null;
     if (g.user_id && kayit) {
@@ -3624,16 +3739,17 @@ export function adminRoutes(app: Hono) {
       if (teslim.ok) {
         return c.json({
           anahtarKaydi: data,
-          teslimJetonu: teslim.jeton,
-          sonKullanma: teslim.sonKullanma
+          teslimJetonu: (teslim as any).token || (teslim as any).jeton,
+          sonKullanma: teslim.sonKullanma,
+          key: acik
         });
       }
-      // Teslim kaydı açılamadıysa anahtarı kaybetmemek için açık dönüyoruz;
-      // aksi halde üretilmiş ama kimsenin ulaşamayacağı bir anahtar kalırdı.
-      return c.json({ anahtarKaydi: data, anahtar: acik, teslimHatasi: teslim.hata });
+      // Teslim kaydı açılamadıysa keyı kaybetmemek için açık dönüyoruz;
+      // aksi halde üretilmiş ama kimsenin ulaşamayacağı bir key kalırdı.
+      return c.json({ anahtarKaydi: data, key: acik, teslimHatasi: (teslim as any).error || (teslim as any).hata });
     }
 
-    return c.json({ anahtarKaydi: data, anahtar: acik });
+    return c.json({ anahtarKaydi: data, key: acik });
   });
 
   app.patch('/admin/api/keys/:id', async (c) => {
@@ -3696,52 +3812,52 @@ export function adminRoutes(app: Hono) {
     // Toplamlar
     const ozet = veri.reduce(
       (a, k) => ({
-        istek: a.istek + 1,
+        request: a.request + 1,
         hata: a.hata + (k.status === 'error' ? 1 : 0),
         bekleyen: a.bekleyen + (k.status === 'pending' ? 1 : 0),
         token: a.token + (k.input_tokens ?? 0) + (k.output_tokens ?? 0),
-        maliyet: a.maliyet + Number(k.cost ?? 0),
+        cost: a.cost + Number(k.cost ?? 0),
         sure: a.sure + (k.latency_ms ?? 0),
         sureli: a.sureli + (k.latency_ms ? 1 : 0)
       }),
-      { istek: 0, hata: 0, bekleyen: 0, token: 0, maliyet: 0, sure: 0, sureli: 0 }
+      { request: 0, hata: 0, bekleyen: 0, token: 0, cost: 0, sure: 0, sureli: 0 }
     );
 
     // Günlük seri. Boş günler de diziye giriyor, yoksa grafik zamanı yanlış
     // ölçekler — portaldaki grafikle aynı mantık.
     const gunAnahtar = (t: string) => t.slice(0, 10);
-    const gunluk = new Map<string, { istek: number; maliyet: number; hata: number }>();
+    const gunluk = new Map<string, { request: number; cost: number; hata: number }>();
     for (const k of veri) {
       const g = gunAnahtar(k.created_at);
-      const o = gunluk.get(g) ?? { istek: 0, maliyet: 0, hata: 0 };
-      o.istek += 1;
-      o.maliyet += Number(k.cost ?? 0);
+      const o = gunluk.get(g) ?? { request: 0, cost: 0, hata: 0 };
+      o.request += 1;
+      o.cost += Number(k.cost ?? 0);
       o.hata += k.status === 'error' ? 1 : 0;
       gunluk.set(g, o);
     }
     const ilk = veri.length
       ? veri.reduce((a, k) => (k.created_at < a ? k.created_at : a), veri[0]!.created_at).slice(0, 10)
       : null;
-    const seri: Array<{ gun: string; istek: number; maliyet: number; hata: number }> = [];
+    const seri: Array<{ gun: string; request: number; cost: number; hata: number }> = [];
     if (ilk) {
       const bas = baslangic ? new Date(baslangic) : new Date(ilk + 'T00:00:00Z');
       const son = new Date();
       for (const d = new Date(bas); d <= son; d.setUTCDate(d.getUTCDate() + 1)) {
         const g = d.toISOString().slice(0, 10);
-        seri.push({ gun: g, ...(gunluk.get(g) ?? { istek: 0, maliyet: 0, hata: 0 }) });
+        seri.push({ gun: g, ...(gunluk.get(g) ?? { request: 0, cost: 0, hata: 0 }) });
       }
     }
 
     // Müşteri ve model kırılımı
-    const topla = <T extends string>(anahtar: (k: Kayit) => T) => {
-      const m = new Map<T, { istek: number; hata: number; token: number; maliyet: number }>();
+    const topla = <T extends string>(key: (k: Kayit) => T) => {
+      const m = new Map<T, { request: number; hata: number; token: number; cost: number }>();
       for (const k of veri) {
-        const a = anahtar(k);
-        const o = m.get(a) ?? { istek: 0, hata: 0, token: 0, maliyet: 0 };
-        o.istek += 1;
+        const a = key(k);
+        const o = m.get(a) ?? { request: 0, hata: 0, token: 0, cost: 0 };
+        o.request += 1;
         o.hata += k.status === 'error' ? 1 : 0;
         o.token += (k.input_tokens ?? 0) + (k.output_tokens ?? 0);
-        o.maliyet += Number(k.cost ?? 0);
+        o.cost += Number(k.cost ?? 0);
         m.set(a, o);
       }
       return m;
@@ -3749,11 +3865,11 @@ export function adminRoutes(app: Hono) {
 
     const musteriKirilim = [...topla((k) => String(k.client_id)).entries()]
       .map(([id, o]) => ({ id, ad: adlar.get(id) ?? 'Unknown', ...o }))
-      .sort((a, b) => b.maliyet - a.maliyet || b.istek - a.istek);
+      .sort((a, b) => b.cost - a.cost || b.request - a.request);
 
     const modelKirilim = [...topla((k) => `${k.provider}/${k.model}`).entries()]
       .map(([ad, o]) => ({ ad, provider: ad.split('/')[0], ...o }))
-      .sort((a, b) => b.maliyet - a.maliyet || b.istek - a.istek);
+      .sort((a, b) => b.cost - a.cost || b.request - a.request);
 
     // Bakım isteyen noktalar. Panelin varlık sebebi bunları görünür kılmak.
     const katalog = (katalogSatirlari ?? []) as Array<{
@@ -3785,10 +3901,10 @@ export function adminRoutes(app: Hono) {
 
     return c.json({
       ozet: {
-        istek: ozet.istek,
+        request: ozet.request,
         hata: ozet.hata,
         token: ozet.token,
-        maliyet: ozet.maliyet,
+        cost: ozet.cost,
         ortSure: ozet.sureli ? Math.round(ozet.sure / ozet.sureli) : 0,
         aktifMusteri: musteriKirilim.length
       },
@@ -3802,7 +3918,7 @@ export function adminRoutes(app: Hono) {
 
   // Müşteri silme. Yalnızca hiç isteği olmayan müşteri silinebiliyor:
   // kayıtları olan bir müşteri silinirse geçmiş logların sahibi kaybolur,
-  // maliyet raporları kime ait olduğu belirsiz satırlarla dolar.
+  // cost raporları kime ait olduğu belirsiz satırlarla dolar.
   // İşi biten müşteri için doğru yol askıya almak, silmek değil.
   app.delete('/admin/api/customers/:id', async (c) => {
     if (!(await hesapOturumuMu(c))) {
@@ -3819,7 +3935,7 @@ export function adminRoutes(app: Hono) {
       }, 409 as any);
     }
 
-    // Anahtarlar önce: client_id'ye bağlı oldukları için müşteri kalırsa
+    // Keys önce: client_id'ye bağlı oldukları için müşteri kalırsa
     // yetim satır bırakırlar.
     const { error: ah } = await supabase.from('client_keys').delete().eq('client_id', id);
     if (ah) return c.json({ error: 'Could not remove the keys.' }, 500 as any);
@@ -3871,7 +3987,7 @@ export function adminRoutes(app: Hono) {
     };
 
     const satirlar = [
-      ['tarih', 'musteri', 'saglayici', 'model', 'girdi_token', 'cikti_token',
+      ['tarih', 'musteri', 'provider', 'model', 'girdi_token', 'cikti_token',
        'sure_ms', 'maliyet_usd', 'durum', 'hata'].join(';')
     ];
     for (const k of (data ?? []) as Array<Record<string, unknown>>) {
@@ -3889,7 +4005,7 @@ export function adminRoutes(app: Hono) {
       ].join(';'));
     }
 
-    const dosya = 'istekler-' + new Date().toISOString().slice(0, 10) + '.csv';
+    const dosya = 'requests-' + new Date().toISOString().slice(0, 10) + '.csv';
     c.header('content-type', 'text/csv; charset=utf-8');
     c.header('content-disposition', 'attachment; filename="' + dosya + '"');
     return c.body('﻿' + satirlar.join('\n'));
@@ -3899,7 +4015,7 @@ export function adminRoutes(app: Hono) {
   //
   // Fiyatları elle giriyoruz ve hiçbir şey doğruluğunu kontrol etmiyordu.
   // gpt-4o'nun fiyatı yarıya düştüğünde tablomuz eski kaldı, kimse fark etmedi.
-  // Burası o körlüğü kapatıyor: dış kaynakla farkı gösteriyor, kararı bırakıyor.
+  // Burası o körlüğü closeBtnıyor: dış kaynakla farkı gösteriyor, kararı bırakıyor.
 
   app.get('/admin/api/prices', async (c) => {
     if (!(await hesapOturumuMu(c))) {
@@ -3961,12 +4077,12 @@ export function adminRoutes(app: Hono) {
 
       // Hiç eşleştirilmemişse: aday listesi + fiyat sürekliliğiyle öneri.
       if (!orIds.length && !liteIds.length) {
-        const oneri = or ? fiyatlaYenidenEslestir(m.provider, m.model, bg, bc, or.fiyatlar) : null;
+        const oneri = or ? fiyatlaYenidenEslestir(m.provider, m.model, bg, bc, or.prices) : null;
         return {
           ...temel,
-          adaylar: or ? olasiKarsiliklar(m.provider, m.model, or.fiyatlar) : [],
+          adaylar: or ? olasiKarsiliklar(m.provider, m.model, or.prices) : [],
           onerilenEslesme: oneri?.secilen
-            ? { kimlik: oneri.secilen.kimlik, girdi: oneri.secilen.girdi, cikti: oneri.secilen.cikti }
+            ? { kimlik: oneri.secilen.kimlik, girdi: oneri.secilen.input, cikti: oneri.secilen.output }
             : null,
           durum: 'eslesmemis' as const
         };
@@ -3977,18 +4093,18 @@ export function adminRoutes(app: Hono) {
       // Eşleştirme var ama hiçbir kaynakta bulunamıyor: ad değişmiş olabilir.
       // Fiyat sürekliliğiyle yeni adı öneriyoruz, uygulamayı yöneticiye bırakarak.
       if (!okuma.okumalar.length) {
-        const oneri = or ? fiyatlaYenidenEslestir(m.provider, m.model, bg, bc, or.fiyatlar) : null;
+        const oneri = or ? fiyatlaYenidenEslestir(m.provider, m.model, bg, bc, or.prices) : null;
         return {
           ...temel,
-          adaylar: or ? olasiKarsiliklar(m.provider, m.model, or.fiyatlar) : [],
+          adaylar: or ? olasiKarsiliklar(m.provider, m.model, or.prices) : [],
           onerilenEslesme: oneri?.secilen
-            ? { kimlik: oneri.secilen.kimlik, girdi: oneri.secilen.girdi, cikti: oneri.secilen.cikti }
+            ? { kimlik: oneri.secilen.kimlik, girdi: oneri.secilen.input, cikti: oneri.secilen.output }
             : null,
           durum: 'kaynakta-yok' as const
         };
       }
 
-      const kg = okuma.girdi ?? 0, kc = okuma.cikti ?? 0;
+      const kg = okuma.input ?? 0, kc = okuma.output ?? 0;
       const ayni = Math.abs(bg - kg) < ESIK && Math.abs(bc - kc) < ESIK;
       const ucuz = (kg + kc) < (bg + bc);
 
@@ -4046,13 +4162,13 @@ export function adminRoutes(app: Hono) {
 
     const talepler = [...talepSayac.entries()]
       .map(([ad, o]) => {
-        const aday = or ? olasiKarsiliklar(o.provider, o.model, or.fiyatlar) : [];
-        const ilk = aday[0] ? or?.fiyatlar.get(aday[0]) : undefined;
+        const aday = or ? olasiKarsiliklar(o.provider, o.model, or.prices) : [];
+        const ilk = aday[0] ? or?.prices.get(aday[0]) : undefined;
         return {
           ad, provider: o.provider, model: o.model, adet: o.adet, son: o.son,
           onerilenKaynak: aday[0] ?? null,
-          onerilenGirdi: ilk?.girdi ?? null,
-          onerilenCikti: ilk?.cikti ?? null
+          onerilenGirdi: ilk?.input ?? null,
+          onerilenCikti: ilk?.output ?? null
         };
       })
       .sort((a, b) => b.adet - a.adet);
@@ -4137,9 +4253,9 @@ export function adminRoutes(app: Hono) {
       const eklenen: string[] = [];
 
       // --- OpenRouter ---
-      const orCalisiyor = or ? orMevcut.some((k) => or.fiyatlar.has(k)) : false;
+      const orCalisiyor = or ? orMevcut.some((k) => or.prices.has(k)) : false;
       if (or && !orCalisiyor) {
-        const sonuc = fiyatlaYenidenEslestir(m.provider, m.model, bg, bc, or.fiyatlar);
+        const sonuc = fiyatlaYenidenEslestir(m.provider, m.model, bg, bc, or.prices);
         if (sonuc.sonuc === 'baglandi' && sonuc.secilen) {
           guncelleme.source_ids = [...orMevcut, sonuc.secilen.kimlik];
           eklenen.push(sonuc.secilen.kimlik);
@@ -4152,9 +4268,9 @@ export function adminRoutes(app: Hono) {
       //
       // İkinci kaynağı da otomatik dolduruyoruz. Elle yazdırmak, otomatikleştirmeye
       // çalıştığımız işi yarım bırakmak olurdu.
-      const liteCalisiyor = lite ? liteMevcut.some((k) => lite.fiyatlar.has(k)) : false;
+      const liteCalisiyor = lite ? liteMevcut.some((k) => lite.prices.has(k)) : false;
       if (lite && !liteCalisiyor) {
-        const adaylar = liteAdaylari(m.model, lite.fiyatlar);
+        const adaylar = liteAdaylari(m.model, lite.prices);
         const toplam = bg + bc;
 
         // Aynı model birçok platform önekiyle listeleniyor: doğrudan sağlayıcı
@@ -4167,10 +4283,10 @@ export function adminRoutes(app: Hono) {
         // Eşitlikte önek sayısı az olan, yani doğrudan sağlayıcı kaydı kazanıyor.
         const puanli = adaylar
           .map((k) => {
-            const f = lite.fiyatlar.get(k);
+            const f = lite.prices.get(k);
             if (!f) return null;
             const sapma = toplam > 0
-              ? Math.abs((f.girdi + f.cikti) - toplam) / toplam
+              ? Math.abs((f.input + f.output) - toplam) / toplam
               : 0;
             return { k, sapma, dilim: k.split('/').length };
           })
@@ -4264,7 +4380,7 @@ export function adminRoutes(app: Hono) {
         continue;
       }
 
-      const kg = okuma.girdi ?? 0, kc = okuma.cikti ?? 0;
+      const kg = okuma.input ?? 0, kc = okuma.output ?? 0;
       const bg = Number(m.input_price ?? 0), bc = Number(m.output_price ?? 0);
       if (Math.abs(bg - kg) < 0.000001 && Math.abs(bc - kc) < 0.000001) {
         // Değişiklik yok ama doğrulama yapıldı; damgayı tazeliyoruz.
@@ -4311,7 +4427,7 @@ export function adminRoutes(app: Hono) {
   // kayıtlara giriyordu — ama hiçbir ekranda görünmüyordu. Yani "kim hangi
   // modele geçmek istiyor" bilgisi elimizde duruyor, kimse bakmıyordu.
   //
-  // Talep için ayrı bir mekanizma kurmaya gerek yok: reddedilen her istek
+  // Talep için ayrı bir mekanizma kurmaya gerek yok: reddedilen her request
   // zaten bir talep. Portala düğme koymadan da müşterinin ne istediğini
   // biliyoruz.
   app.get('/admin/api/access-requests', async (c) => {
@@ -4326,8 +4442,8 @@ export function adminRoutes(app: Hono) {
       .order('created_at', { ascending: false })
       .limit(3000);
 
-    // Talebi KİŞİYE bağlıyoruz. Ağ geçidi kişiyi görmüyor ama anahtarı
-    // görüyor; anahtarın sahibi talebi yapan kişi. Sahipsiz anahtarlarda
+    // Talebi KİŞİYE bağlıyoruz. Ağ geçidi kişiyi görmüyor ama keyı
+    // görüyor; keyın sahibi talebi yapan kişi. Sahipsiz anahtarlarda
     // (ortak servisler) kime izin verileceği belli olmadığı için talep
     // şirkete kalıyor.
     const { data: anahtarSatir } = await supabase
@@ -4339,7 +4455,7 @@ export function adminRoutes(app: Hono) {
 
     const { data: kisiSatir } = await supabase
       .from('users').select('id, email, client_id, allowed_models, max_output_price');
-    const kisiler = new Map(
+    const users = new Map(
       ((kisiSatir ?? []) as Array<{
         id: string; email: string; client_id: string;
         allowed_models: string[] | null; max_output_price: number | null;
@@ -4397,23 +4513,23 @@ export function adminRoutes(app: Hono) {
       const musteri = musteriHarita.get(String(h.client_id));
       if (!musteri) continue;
 
-      // Anahtarın sahibi varsa talep o kişinin.
+      // Keyın sahibi varsa talep o kişinin.
       const sahipId = h.key_id ? anahtarSahibi.get(h.key_id) ?? null : null;
-      const kisi = sahipId ? kisiler.get(sahipId) : undefined;
+      const user = sahipId ? users.get(sahipId) : undefined;
 
       // Aradan izin verilmişse talep düşmüş demektir.
       //
       // Sahipli anahtarda kişinin listesi, sahipsizde şirketinki.
-      const mevcutIzin = kisi ? (kisi.allowed_models ?? []) : (musteri.allowed_models ?? []);
+      const mevcutIzin = user ? (user.allowed_models ?? []) : (musteri.allowed_models ?? []);
       if (mevcutIzin.includes(modelAnahtar)) continue;
 
       // Fiyat tavanı da bir izin yolu. Liste dışında kalsa bile model
-      // tavanın altındaysa istek şu an geçiyor demektir; talep düşmüştür.
+      // tavanın altındaysa request şu an geçiyor demektir; talep düşmüştür.
       //
       // Bunu atlamak gerçek bir hataydı: ret kaydı eskiydi, aradan tavan
       // yükselmişti, model çoktan açılmıştı — ama liste hâlâ "onay bekliyor"
       // diyordu. Yönetici zaten çalışan bir şey için Allow'a basıyordu.
-      const kisiTavan = kisi ? (kisi.max_output_price ?? null) : null;
+      const kisiTavan = user ? (user.max_output_price ?? null) : null;
       const sirketTavan = musteri.max_output_price ?? null;
       const etkinTavan = kisiTavan !== null && sirketTavan !== null
         ? Math.min(kisiTavan, sirketTavan)
@@ -4435,11 +4551,11 @@ export function adminRoutes(app: Hono) {
             ? 'too-expensive'
             : 'not-granted';
 
-      const anahtar = `${kisi ? kisi.id : h.client_id}|${modelAnahtar}`;
-      const o = sayac.get(anahtar) ?? {
+      const key = `${user ? user.id : h.client_id}|${modelAnahtar}`;
+      const o = sayac.get(key) ?? {
         clientId: String(h.client_id),
-        userId: kisi ? kisi.id : null,
-        musteri: kisi ? kisi.email : musteri.name,
+        userId: user ? user.id : null,
+        musteri: user ? user.email : musteri.name,
         modelAnahtar,
         provider: h.provider, model: h.model, adet: 0, son: h.created_at,
         sebep,
@@ -4448,7 +4564,7 @@ export function adminRoutes(app: Hono) {
       };
       o.adet += 1;
       if (h.created_at > o.son) o.son = h.created_at;
-      sayac.set(anahtar, o);
+      sayac.set(key, o);
     }
 
     const talepler = [...sayac.values()].sort((a, b) => b.adet - a.adet || (a.son < b.son ? 1 : -1));
@@ -4553,8 +4669,8 @@ export function adminRoutes(app: Hono) {
       const bg = Number(m.input_price ?? 0), bc = Number(m.output_price ?? 0);
 
       // --- 1) kırık eşleştirmeyi onar ---
-      if (or && !orIds.some((k) => or.fiyatlar.has(k))) {
-        const sonuc = fiyatlaYenidenEslestir(m.provider, m.model, bg, bc, or.fiyatlar);
+      if (or && !orIds.some((k) => or.prices.has(k))) {
+        const sonuc = fiyatlaYenidenEslestir(m.provider, m.model, bg, bc, or.prices);
         if (sonuc.sonuc === 'baglandi' && sonuc.secilen) {
           orIds = [...orIds, sonuc.secilen.kimlik];
           await supabase.from('model_catalog')
@@ -4567,13 +4683,13 @@ export function adminRoutes(app: Hono) {
           });
         }
       }
-      if (lite && !liteIds.some((k) => lite.fiyatlar.has(k))) {
-        const adaylar = liteAdaylari(m.model, lite.fiyatlar);
+      if (lite && !liteIds.some((k) => lite.prices.has(k))) {
+        const adaylar = liteAdaylari(m.model, lite.prices);
         const toplam = bg + bc;
         const puanli = adaylar
           .map((k) => {
-            const f = lite.fiyatlar.get(k);
-            return f ? { k, sapma: toplam > 0 ? Math.abs((f.girdi + f.cikti) - toplam) / toplam : 0 } : null;
+            const f = lite.prices.get(k);
+            return f ? { k, sapma: toplam > 0 ? Math.abs((f.input + f.output) - toplam) / toplam : 0 } : null;
           })
           .filter((x): x is { k: string; sapma: number } => x !== null)
           .filter((x) => toplam <= 0 || x.sapma <= 0.25)
@@ -4602,7 +4718,7 @@ export function adminRoutes(app: Hono) {
         continue;
       }
 
-      const kg = okuma.girdi ?? 0, kc = okuma.cikti ?? 0;
+      const kg = okuma.input ?? 0, kc = okuma.output ?? 0;
 
       // Fiyat zaten doğruysa değiştirecek bir şey yok — ama doğrulandığını
       // kaydetmemiz gerekiyor. price_checked_at yalnızca fiyat değişince
@@ -4630,7 +4746,7 @@ export function adminRoutes(app: Hono) {
       // Zam da uygulanıyor. Önce yalnızca düşüşler uygulanıyordu; gerekçe
       // "artışı sessizce uygulamak müşteriye fazla fatura çıkarır" idi ve bu
       // yanlıştı: kimseye fatura kesmiyoruz, kendi harcamamızı izliyoruz.
-      // Maliyet katalogdaki fiyattan hesaplandığı için eski düşük fiyatta
+      // Cost katalogdaki fiyattan hesaplandığı için eski düşük fiyatta
       // kalmak harcamayı OLDUĞUNDAN AZ gösteriyor — bütçe eksik sayıyor,
       // gerçek fatura daha yüksek geliyor. Yani asıl riskli yön güncellememek.
       const otomatik = okuma.dogrulandi && oran <= 0.5;
@@ -4718,22 +4834,22 @@ export function adminRoutes(app: Hono) {
         let orId: string | null = null, liteId: string | null = null;
 
         if (or) {
-          const aday = olasiKarsiliklar(m.provider, m.model, or.fiyatlar)[0];
-          const f = aday ? or.fiyatlar.get(aday) : undefined;
+          const aday = olasiKarsiliklar(m.provider, m.model, or.prices)[0];
+          const f = aday ? or.prices.get(aday) : undefined;
           // Yalnızca adı birebir tutan adayı kabul ediyoruz. Benzer adlı
           // başka bir modelin fiyatını yazmak, yanlış fiyatı sessizce
           // kataloga sokmak olurdu.
           const sade = (t: string) => t.toLowerCase().replace(/[^a-z0-9]/g, '');
           if (aday && f && sade(aday.split('/').slice(1).join('/')) === sade(m.model)) {
-            girdi = f.girdi; cikti = f.cikti; orId = aday;
+            girdi = f.input; cikti = f.output; orId = aday;
           }
         }
         if (lite) {
-          const aday = liteAdaylari(m.model, lite.fiyatlar)[0];
-          const f = aday ? lite.fiyatlar.get(aday) : undefined;
+          const aday = liteAdaylari(m.model, lite.prices)[0];
+          const f = aday ? lite.prices.get(aday) : undefined;
           if (aday && f) {
             liteId = aday;
-            if (girdi === null) { girdi = f.girdi; cikti = f.cikti; }
+            if (girdi === null) { girdi = f.input; cikti = f.output; }
           }
         }
 
@@ -4824,7 +4940,7 @@ export function adminRoutes(app: Hono) {
       );
       for (const e of eklenenModeller) mevcutTum.add(e.model);
 
-      for (const [kaynakId, f] of or.fiyatlar) {
+      for (const [kaynakId, f] of or.prices) {
         const parca = kaynakId.split('/');
         if (parca.length !== 2) continue;
         if (kaynakId.includes(':') || kaynakId.startsWith('~')) continue;
@@ -4833,21 +4949,21 @@ export function adminRoutes(app: Hono) {
         const modelAdi = parca[1] ?? '';
         if (!kaynakSaglayici || !modelAdi) continue;
 
-        const saglayici = SAGLAYICI_ESLEME[kaynakSaglayici];
-        if (!saglayici) continue;
+        const provider = SAGLAYICI_ESLEME[kaynakSaglayici];
+        if (!provider) continue;
 
-        const ad = `${saglayici}/${modelAdi}`;
+        const ad = `${provider}/${modelAdi}`;
         if (mevcutTum.has(ad)) continue;
-        if (!(f.girdi > 0 && f.cikti > 0)) continue;
+        if (!(f.input > 0 && f.output > 0)) continue;
 
         // İkinci kaynakta da varsa doğrulanmış sayılıyor.
-        const liteAday = lite ? liteAdaylari(modelAdi, lite.fiyatlar)[0] ?? null : null;
+        const liteAday = lite ? liteAdaylari(modelAdi, lite.prices)[0] ?? null : null;
 
         const { error: h } = await supabase.from('model_catalog').insert([{
-          provider: saglayici,
+          provider: provider,
           model: modelAdi,
-          input_price: f.girdi,
-          output_price: f.cikti,
+          input_price: f.input,
+          output_price: f.output,
           is_active: true,
           price_checked_at: simdi,
           price_source: liteAday ? 'verified' : 'openrouter',
@@ -4862,11 +4978,11 @@ export function adminRoutes(app: Hono) {
         mevcutTum.add(ad);
         eklenenModeller.push({
           model: ad,
-          fiyat: `$${(f.girdi * 1000).toFixed(2)} / $${(f.cikti * 1000).toFixed(2)}`
+          fiyat: `$${(f.input * 1000).toFixed(2)} / $${(f.output * 1000).toFixed(2)}`
         });
         olaylar.push({
           tur: 'model', tetikleyen, model: ad,
-          yeni_girdi: f.girdi, yeni_cikti: f.cikti,
+          yeni_girdi: f.input, yeni_cikti: f.output,
           kaynak: liteAday ? 'openrouter + litellm' : 'openrouter',
           aciklama: 'New at the source; added with its price. ' +
             'The price limit decides who may use it.'
@@ -4891,7 +5007,7 @@ export function adminRoutes(app: Hono) {
   // Zamanlayıcının çağırdığı uç.
   //
   // Yönetici jetonu istemiyoruz — cron o jetonu bilmiyor. Onun yerine ayrı
-  // bir gizli anahtar: adres tahmin edilse bile dışarıdan tetiklenemesin.
+  // bir hidden key: adres tahmin edilse bile dışarıdan tetiklenemesin.
   // Vercel kendi cron çağrılarına da bir başlık ekliyor, onu da kabul ediyoruz.
   
   app.get('/admin/api/cron/sessions', async (c) => {
@@ -4951,16 +5067,18 @@ export function adminRoutes(app: Hono) {
   });
 
 app.get('/admin/api/cron/prices', async (c) => {
-    const gizli = process.env.CRON_SECRET;
+    const hidden = process.env.CRON_SECRET;
     const baslik = c.req.header('x-cron-secret');
-    // User-Agent check removed for security
-    const yonetici = await yoneticiMi(c);
+    // User-Agent check removed for security — spoofable, never a real auth signal.
+    // Still computed here (not for auth) so the manual-vs-cron label below works.
+    const vercelCron = String(c.req.header('user-agent') ?? '').includes('vercel-cron');
+    const admin = await yoneticiMi(c);
 
-    if (!yonetici && (!gizli || baslik !== gizli)) {
+    if (!admin && (!hidden || baslik !== hidden)) {
       return c.json({ error: 'Unauthorized.' }, 401 as any);
     }
 
-    const sonuc = await fiyatDenetimiCalistir(yonetici && !vercelCron ? 'manual' : 'cron');
+    const sonuc = await fiyatDenetimiCalistir(admin && !vercelCron ? 'manual' : 'cron');
     return c.json(sonuc);
   });
 
@@ -5016,18 +5134,19 @@ app.get('/admin/api/cron/prices', async (c) => {
     const g = (await govdeOku<{ email?: string; password?: string; role?: string }>(c)) ?? {};
 
     const { data: musteri } = await supabase
-      .from('clients').select('id').eq('id', id).limit(1);
+      .from('clients').select('id, rate_limit').eq('id', id).limit(1);
     if (!(musteri ?? []).length) return c.json({ error: 'Customer not found.' }, 404 as any);
 
     // Şifre verilmezse üretiyoruz. Yöneticinin şifre uydurması, zayıf ve
     // tekrar eden şifreler demek.
     const sifre = String(g?.password ?? '').trim() || uretilmisSifre();
     const sonuc = await hesapOlustur('musteri', String(g?.email ?? ''), sifre, id);
-    if (!sonuc.ok) return c.json({ error: sonuc.hata }, 400 as any);
+    if (!sonuc.ok) return c.json({ error: sonuc.error }, 400 as any);
 
-    if (g?.role === 'owner') {
-      await supabase.from('users').update({ role: 'owner' }).eq('id', sonuc.hesap.id);
-    }
+    await supabase.from('users').update({ 
+        role: g?.role === 'owner' ? 'owner' : 'member',
+        rate_limit: musteri[0]?.rate_limit
+      }).eq('id', sonuc.hesap.id);
 
     // Şifre yalnızca burada dönüyor; veritabanında karması duruyor.
     return c.json({ kullanici: { ...sonuc.hesap, role: g?.role === 'owner' ? 'owner' : 'member' }, sifre });
@@ -5063,7 +5182,7 @@ app.get('/admin/api/cron/prices', async (c) => {
       if (kusur) return c.json({ error: kusur }, 400 as any);
 
       const sonuc = await sifreDegistir('musteri', id, null, yeni);
-      if (!sonuc.ok) return c.json({ error: sonuc.hata }, 400 as any);
+      if (!sonuc.ok) return c.json({ error: sonuc.error }, 400 as any);
       return c.json({ sifirlandi: true, sifre: yeni });
     }
 
@@ -5082,8 +5201,8 @@ app.get('/admin/api/cron/prices', async (c) => {
     }
     const id = c.req.param('id');
 
-    // Kullanıcının sahip olduğu anahtarlar silinmiyor: kod onlarla çalışmaya
-    // devam ediyor. Yalnızca sahipsiz kalıyorlar, ortak anahtar oluyorlar.
+    // Kullanıcının sahip olduğu keys silinmiyor: kod onlarla çalışmaya
+    // devam ediyor. Yalnızca sahipsiz kalıyorlar, ortak key oluyorlar.
     // Kişi ayrıldı diye çalışan bir servisi durdurmak istemiyoruz.
     await supabase.from('client_keys').update({ user_id: null }).eq('user_id', id);
 
@@ -5111,7 +5230,7 @@ app.get('/admin/api/cron/prices', async (c) => {
       .from('client_keys').update(guncelleme).eq('id', id)
       .select('id, label, user_id').single();
     if (error) return c.json({ error: 'Could not update the key.' }, 500 as any);
-    return c.json({ anahtar: data });
+    return c.json({ key: data });
   });
 
   // ---------------- yönetici oturumu ----------------
@@ -5132,23 +5251,23 @@ app.get('/admin/api/cron/prices', async (c) => {
       return c.json({ error: 'Email and password are required.' }, 400 as any);
     }
 
-    const sonuc = await girisDogrula('yonetici', eposta, sifre);
+    const sonuc = await girisDogrula('admin', eposta, sifre);
     if (!sonuc.ok) {
       // Hangi kısmın yanlış olduğunu söylemiyoruz.
       return c.json({ error: 'Email or password is not correct.' }, 401 as any);
     }
 
-    c.header('set-cookie', cerezYaz(CEREZ_ADI.yonetici, sonuc.cerez, URETIM));
+    c.header('set-cookie', cerezYaz(CEREZ_ADI.admin, sonuc.cerez, URETIM));
     return c.json({ hesap: { id: sonuc.hesap.id, email: sonuc.hesap.email } });
   });
 
   app.delete('/admin/api/session', async (c) => {
-    c.header('set-cookie', cerezSil(CEREZ_ADI.yonetici, URETIM));
+    c.header('set-cookie', cerezSil(CEREZ_ADI.admin, URETIM));
     return c.json({ cikildi: true });
   });
 
   app.get('/admin/api/me', async (c) => {
-    const hesap = await oturumdakiHesap('yonetici', c.req.header('cookie'));
+    const hesap = await oturumdakiHesap('admin', c.req.header('cookie'));
     if (hesap) return c.json({ hesap: { id: hesap.id, email: hesap.email }, yol: 'hesap' });
 
     // Jetonla girilmişse de oturum sayılıyor, ama hesabı yok.
@@ -5171,7 +5290,7 @@ app.get('/admin/api/cron/prices', async (c) => {
         error: eksik ? 'Run giris-sistemi.sql first.' : 'Could not read administrators.'
       }, eksik ? 428 : 500 as any);
     }
-    return c.json({ yoneticiler: data ?? [] });
+    return c.json({ admins: data ?? [] });
   });
 
   app.post('/admin/api/admins', async (c) => {
@@ -5180,9 +5299,9 @@ app.get('/admin/api/cron/prices', async (c) => {
     }
     const g = (await govdeOku<{ email?: string; password?: string }>(c)) ?? {};
     const sifre = String(g?.password ?? '').trim() || uretilmisSifre();
-    const sonuc = await hesapOlustur('yonetici', String(g?.email ?? ''), sifre);
-    if (!sonuc.ok) return c.json({ error: sonuc.hata }, 400 as any);
-    return c.json({ yonetici: sonuc.hesap, sifre });
+    const sonuc = await hesapOlustur('admin', String(g?.email ?? ''), sifre);
+    if (!sonuc.ok) return c.json({ error: sonuc.error }, 400 as any);
+    return c.json({ admin: sonuc.hesap, sifre });
   });
 
   app.patch('/admin/api/admins/:id', async (c) => {
@@ -5214,8 +5333,8 @@ app.get('/admin/api/cron/prices', async (c) => {
     const kusur = sifreKusuru(yeni);
     if (kusur) return c.json({ error: kusur }, 400 as any);
 
-    const sonuc = await sifreDegistir('yonetici', id, null, yeni);
-    if (!sonuc.ok) return c.json({ error: sonuc.hata }, 400 as any);
+    const sonuc = await sifreDegistir('admin', id, null, yeni);
+    if (!sonuc.ok) return c.json({ error: sonuc.error }, 400 as any);
     return c.json({ sifirlandi: true, sifre: yeni });
   });
 
@@ -5283,7 +5402,7 @@ app.get('/admin/api/cron/prices', async (c) => {
       const eksik = /allowed_models|max_output_price|column/i.test(String(error.message));
       return c.json({
         error: eksik
-          ? 'Per-user permissions need new columns on users. Run tek-sirket.sql first.'
+          ? 'Per-user permissions need new columns on users. Run tek-client.sql first.'
           : 'Could not update permissions.'
       }, eksik ? 428 : 500 as any);
     }
@@ -5305,42 +5424,42 @@ app.get('/admin/api/cron/prices', async (c) => {
 
     const { data: kullanicilar, error: uErr } = await supabase
       .from('users')
-      .select('id, email, role, client_id, created_at, last_login_at')
+      .select('id, email, role, client_id, created_at, last_login_at, rate_limit')
       .order('created_at', { ascending: true });
 
-    const { data: sirketler } = await supabase
+    const { data: clients } = await supabase
       .from('clients')
-      .select('id, name, allowed_models, max_output_price, client_type, allowed_domains, is_active, monthly_budget, daily_budget');
+      .select('id, name, allowed_models, max_output_price, client_type, allowed_domains, is_active, monthly_budget, daily_budget, rate_limit');
 
-    const { data: anahtarlar } = await supabase
+    const { data: keys } = await supabase
       .from('client_keys')
       .select('id, label, environment, is_active, user_id, client_id, key_prefix, created_at');
 
     const { data: kayitlar } = await supabase
       .from('logs').select('client_id, status, input_tokens, output_tokens, cost, created_at').limit(10000);
 
-    type Toplam = { istek: number; hata: number; token: number; maliyet: number; son: string | null };
-    const bos = (): Toplam => ({ istek: 0, hata: 0, token: 0, maliyet: 0, son: null });
+    type Toplam = { request: number; hata: number; token: number; cost: number; son: string | null };
+    const bos = (): Toplam => ({ request: 0, hata: 0, token: 0, cost: 0, son: null });
     const kisiToplam = new Map<string, Toplam>();
     const ortakToplam = bos();
 
     for (const k of (kayitlar ?? [])) {
       if (!k.client_id) {
-        ortakToplam.istek += 1;
-        ortakToplam.maliyet += Number(k.cost ?? 0);
+        ortakToplam.request += 1;
+        ortakToplam.cost += Number(k.cost ?? 0);
         continue;
       }
       const hedef = kisiToplam.get(k.client_id) ?? bos();
-      hedef.istek += 1;
+      hedef.request += 1;
       hedef.hata += k.status === 'error' ? 1 : 0;
       hedef.token += (k.input_tokens ?? 0) + (k.output_tokens ?? 0);
-      hedef.maliyet += Number(k.cost ?? 0);
+      hedef.cost += Number(k.cost ?? 0);
       if (!hedef.son || k.created_at > hedef.son) hedef.son = k.created_at;
       kisiToplam.set(k.client_id, hedef);
     }
 
     const anahtarPerClient = new Map<string, unknown[]>();
-    for (const a of (anahtarlar ?? [])) {
+    for (const a of (keys ?? [])) {
       if (!a.client_id) continue;
       const d = anahtarPerClient.get(a.client_id) ?? [];
       d.push(a);
@@ -5351,14 +5470,15 @@ app.get('/admin/api/cron/prices', async (c) => {
     for (const u of (kullanicilar ?? [])) {
       if (!u.client_id) continue;
       const d = kullaniciPerClient.get(u.client_id) ?? [];
-      d.push(u);
+      const userKeys = ((keys ?? []) as Array<{ user_id: string | null }>).filter(k => k.user_id === u.id);
+      d.push({ ...u, keys: userKeys });
       kullaniciPerClient.set(u.client_id, d);
     }
 
-    const kisiler = await Promise.all(
-      ((sirketler ?? []) as Array<Record<string, unknown>>).map(async (s) => {
+    const users = await Promise.all(
+      ((clients ?? []) as Array<Record<string, unknown>>).map(async (s) => {
         const id = String(s.id);
-        const butce = await butceDurumu(id, {
+        const budget = await getBudgetStatus(id, {
           aylik: (s.monthly_budget as number | null) ?? null,
           gunluk: (s.daily_budget as number | null) ?? null
         });
@@ -5367,20 +5487,20 @@ app.get('/admin/api/cron/prices', async (c) => {
           email: s.name, // To mimic user structure for frontend
           role: 'team',
           created_at: s.created_at || new Date().toISOString(), // Fallback
-          anahtarlar: anahtarPerClient.get(id) ?? [],
+          keys: anahtarPerClient.get(id) ?? [],
           kullanim: kisiToplam.get(id) ?? bos(),
-          butce,
+          budget,
           calisanlar: kullaniciPerClient.get(id) ?? []
         };
       })
     );
 
-    const ortakAnahtarlar = ((anahtarlar ?? []) as Array<{ client_id: string | null }>).filter((a) => !a.client_id);
+    const ortakAnahtarlar = ((keys ?? []) as Array<{ client_id: string | null }>).filter((a) => !a.client_id);
 
     return c.json({
-      kisiler,
-      sirket: null, // Since we are showing teams, we don't need a top-level single company
-      ortak: { anahtarlar: ortakAnahtarlar, kullanim: ortakToplam }
+      users,
+      client: null, // Since we are showing teams, we don't need a top-level single company
+      ortak: { keys: ortakAnahtarlar, kullanim: ortakToplam }
     });
   });
 }

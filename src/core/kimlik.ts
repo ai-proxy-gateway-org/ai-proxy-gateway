@@ -16,16 +16,16 @@ import {
   sifreKarmasi, sifreDogru, oturumUret, oturumCoz, parolaIzi, cerezOku
 } from '../utils/hesap.js';
 
-export type HesapTuru = 'musteri' | 'yonetici';
+export type HesapTuru = 'musteri' | 'admin';
 
 const TABLO: Record<HesapTuru, string> = {
   musteri: 'users',
-  yonetici: 'admin_users'
+  admin: 'admin_users'
 };
 
 export const CEREZ_ADI: Record<HesapTuru, string> = {
   musteri: 'portal_oturum',
-  yonetici: 'panel_oturum'
+  admin: 'panel_oturum'
 };
 
 function epostaDuzelt(e: string): string {
@@ -51,24 +51,24 @@ export async function hesapOlustur(
   eposta: string,
   sifre: string,
   clientId?: string
-): Promise<{ ok: true; hesap: Hesap } | { ok: false; hata: string }> {
+): Promise<{ ok: true; hesap: Hesap } | { ok: false; error: string }> {
   const e = epostaDuzelt(eposta);
-  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) return { ok: false, hata: 'Enter a valid email address.' };
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e)) return { ok: false, error: 'Enter a valid email address.' };
 
   const kusur = sifreKusuru(sifre);
-  if (kusur) return { ok: false, hata: kusur };
+  if (kusur) return { ok: false, error: kusur };
 
   if (tur === 'musteri' && !clientId) {
-    return { ok: false, hata: 'A customer user must belong to a customer.' };
+    return { ok: false, error: 'A customer user must belong to a customer.' };
   }
 
   // Veritabanı dizini son savunma; uygulamada da bakıyoruz. Yalnızca dizine
   // güvenmek, dizin bir ortamda kurulmadığında aynı adresle iki hesap
-  // açılmasına ve girişin hangi hesaba bakacağını bilememesine yol açıyordu.
+  // açılmasına ve girişin hangi hesaba bakacağını bilememesine path açıyordu.
   const { data: mevcut } = await supabase
     .from(TABLO[tur]).select('id').eq('email', e).limit(1);
   if ((mevcut ?? []).length) {
-    return { ok: false, hata: 'This email address is already registered.' };
+    return { ok: false, error: 'This email address is already registered.' };
   }
 
   const satir: Record<string, unknown> = {
@@ -86,7 +86,7 @@ export async function hesapOlustur(
 
   if (error) {
     const cakisma = /duplicate|unique/i.test(String(error.message));
-    return { ok: false, hata: cakisma ? 'This email address is already registered.' : 'Could not create the account.' };
+    return { ok: false, error: cakisma ? 'This email address is already registered.' : 'Could not create the account.' };
   }
 
   // Sütun listesi çalışma anında seçildiği için Supabase'in tip çıkarımı
@@ -103,7 +103,7 @@ export async function girisDogrula(
   const e = epostaDuzelt(eposta);
 
   // maybeSingle yerine limit(1): tabloda beklenmedik bir yinelenen satır
-  // varsa maybeSingle hata veriyor ve giriş tamamen çalışmaz hale geliyordu.
+  // varsa maybeSingle error veriyor ve giriş tamamen çalışmaz hale geliyordu.
   // Böyle bir durumda giriş çalışmaya devam etsin, sorun ayrıca görünsün.
   const { data: satirlar } = await supabase
     .from(TABLO[tur])
@@ -116,20 +116,20 @@ export async function girisDogrula(
   // Hesap yoksa da bir karma doğrulaması yapıyoruz. Aksi halde var olmayan
   // e-posta anında, var olan geç cevap dönerdi ve bu fark hangi adreslerin
   // kayıtlı olduğunu sızdırırdı.
-  const kayit = data as { id: string; email: string; password_hash: string; client_id?: string } | null;
-  const karma = kayit?.password_hash
+  const record = data as { id: string; email: string; password_hash: string; client_id?: string } | null;
+  const karma = record?.password_hash
     ?? 'scrypt$00000000000000000000000000000000$0000000000000000000000000000000000000000000000000000000000000000';
 
   const dogru = await sifreDogru(sifre, karma);
-  if (!kayit || !dogru) return { ok: false };
+  if (!record || !dogru) return { ok: false };
 
   await supabase.from(TABLO[tur])
-    .update({ last_login_at: new Date().toISOString() }).eq('id', kayit.id);
+    .update({ last_login_at: new Date().toISOString() }).eq('id', record.id);
 
-  const hesap: Hesap = { id: kayit.id, email: kayit.email, clientId: kayit.client_id ?? null };
+  const hesap: Hesap = { id: record.id, email: record.email, clientId: record.client_id ?? null };
   const cerez = oturumUret(
     { tur, kullaniciId: hesap.id, clientId: hesap.clientId },
-    kayit.password_hash
+    record.password_hash
   );
   return { ok: true, hesap, cerez };
 }
@@ -153,11 +153,11 @@ export async function oturumdakiHesap(
     .limit(1);
   const data = (bulunan ?? [])[0] ?? null;
 
-  const kayit = data as { id: string; email: string; password_hash: string; client_id?: string } | null;
-  if (!kayit) return null;
-  if (parolaIzi(kayit.password_hash) !== o.iz) return null;
+  const record = data as { id: string; email: string; password_hash: string; client_id?: string } | null;
+  if (!record) return null;
+  if (parolaIzi(record.password_hash) !== o.iz) return null;
 
-  return { id: kayit.id, email: kayit.email, clientId: kayit.client_id ?? null };
+  return { id: record.id, email: record.email, clientId: record.client_id ?? null };
 }
 
 export async function sifreDegistir(
@@ -165,19 +165,19 @@ export async function sifreDegistir(
   hesapId: string,
   eskiSifre: string | null,
   yeniSifre: string
-): Promise<{ ok: true } | { ok: false; hata: string }> {
+): Promise<{ ok: true } | { ok: false; error: string }> {
   const kusur = sifreKusuru(yeniSifre);
-  if (kusur) return { ok: false, hata: kusur };
+  if (kusur) return { ok: false, error: kusur };
 
-  const { data: kayitlar } = await supabase
+  const { data: records } = await supabase
     .from(TABLO[tur]).select('id, password_hash').eq('id', hesapId).limit(1);
-  const data = (kayitlar ?? [])[0] ?? null;
-  const kayit = data as { password_hash: string } | null;
-  if (!kayit) return { ok: false, hata: 'Account not found.' };
+  const data = (records ?? [])[0] ?? null;
+  const record = data as { password_hash: string } | null;
+  if (!record) return { ok: false, error: 'Account not found.' };
 
   // eskiSifre null ise yönetici sıfırlaması: mevcut şifre sorulmuyor.
-  if (eskiSifre !== null && !(await sifreDogru(eskiSifre, kayit.password_hash))) {
-    return { ok: false, hata: 'Current password is not correct.' };
+  if (eskiSifre !== null && !(await sifreDogru(eskiSifre, record.password_hash))) {
+    return { ok: false, error: 'Current password is not correct.' };
   }
 
   const { error } = await supabase
@@ -185,6 +185,6 @@ export async function sifreDegistir(
     .update({ password_hash: await sifreKarmasi(yeniSifre) })
     .eq('id', hesapId);
 
-  if (error) return { ok: false, hata: 'Could not update the password.' };
+  if (error) return { ok: false, error: 'Could not update the password.' };
   return { ok: true };
 }

@@ -1,13 +1,13 @@
-// Sağlayıcıya özgü her şey (hedef adres + gerçek API anahtarı başlıkları) tek yerde.
-// wf-ortak §3: "Kontrolden geçen istekler, Provider Adapter katmanlarında ilgili
-// sağlayıcının gerçek API anahtarı eklenerek hedefe iletilir."
+// Sağlayıcıya özgü her şey (hedef adres + gerçek API keyı başlıkları) tek yerde.
+// wf-ortak §3: "Kontrolden geçen requests, Provider Adapter katmanlarında ilgili
+// sağlayıcının gerçek API keyı eklenerek hedefe iletilir."
 //
 // Hedef adres varsayılan olarak sağlayıcının gerçek adresidir. Geliştirmede mock
 // sunucuya yönlendirmek için ilgili BASE_URL değişkeni açıkça verilir.
 //
 // Önceden tersi geçerliydi: değişken boşsa mock'a düşülüyordu. Yerelde kolaylık
 // sağlıyordu ama üretimde sessiz bir tuzak: Vercel'de localhost:4000 diye bir
-// sunucu yok, bütün istekler bağlantı hatasıyla düşerdi. Varsayılanın güvenli
+// sunucu yok, bütün requests bağlantı hatasıyla düşerdi. Varsayılanın güvenli
 // tarafı, unutulduğunda çalışan taraf olmalı.
 
 export type ProviderName = 'openai' | 'gemini' | 'anthropic';
@@ -32,7 +32,7 @@ function envOrUndefined(name: string): string | undefined {
 //
 // Node'un --env-file'ı ortamda ZATEN var olan bir değişkenin üzerine yazmıyor.
 // Kabuğunda eskiden boş bir OPENAI_BASE_URL kalmışsa dosyadaki değer
-// yok sayılıyor ve istekler sessizce gerçek sağlayıcıya gidip 401 alıyordu.
+// yok sayılıyor ve requests sessizce gerçek sağlayıcıya gidip 401 alıyordu.
 // Bayrak açıkken niyet zaten mock; boş adresi gerçek sağlayıcı saymak
 // tekrar eden bir tuzaktı.
 const YEREL_MOCK = 'http://localhost:4000';
@@ -73,7 +73,7 @@ export function buildProviderTarget(
     return { url: `${baseUrl}/v1/messages`, headers };
   }
 
-  // Gemini streaming'i gövdedeki bir alanla değil, ayrı bir uç nokta ile ifade eder.
+  // Gemini streaming'i gövdedeki bir alanla değil, ayrı bir uç dot ile ifade eder.
   const apiKey = envOrUndefined('GEMINI_API_KEY');
   if (apiKey) headers['x-goog-api-key'] = apiKey;
   const action = isStreaming ? 'streamGenerateContent?alt=sse' : 'generateContent';
@@ -81,7 +81,7 @@ export function buildProviderTarget(
 }
 
 // Pass-through yaklaşımı gereği gövdeye dokunmuyoruz. Tek istisna Gemini:
-// `stream` alanı gerçek Gemini API'sinde yok, bizim uç nokta seçimimiz için
+// `stream` alanı gerçek Gemini API'sinde yok, bizim uç dot seçimimiz için
 // kullanılan bir bayrak. Olduğu gibi iletirsek sağlayıcı bilinmeyen alan diye reddeder.
 export function prepareBodyForProvider(provider: ProviderName, body: unknown): unknown {
   if (provider !== 'gemini') return body;

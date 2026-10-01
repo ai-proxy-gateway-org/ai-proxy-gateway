@@ -49,7 +49,15 @@ export class DrizzleAdapter implements IDatabase {
         return { success: false, error: 'Forbidden: Client is inactive or not found', status: 403 };
       }
 
-      return { success: true, client: clientData };
+      
+      let userData = null;
+      if (keyData.user_id) {
+        // Fetch user manually since users is not in schema.ts
+        const { data } = await supabase.from('users').select('*').eq('id', keyData.user_id).single();
+        if (data) userData = data;
+      }
+      return { success: true, client: clientData, user: userData };
+  
     } catch (error) {
       return { success: false, error: 'Internal Server Error', status: 500 };
     }
@@ -75,8 +83,8 @@ export class DrizzleAdapter implements IDatabase {
       let totalCost = 0;
 
       if (inputTokens !== null && outputTokens !== null) {
-        // Asıl fiyat kaynağı admin panelindeki Models tablosu (model_catalog) —
-        // orada girilen/doğrulanan güncel fiyatlar. model_pricing.json çok
+        // Asıl price kaynağı admin panelindeki Models tablosu (model_catalog) —
+        // orada girilen/doğrulanan güncel prices. model_pricing.json çok
         // eski ve sadece 3 model içeriyor, artık yalnızca model_catalog'da
         // henüz kaydı olmayan bir model için yedek (fallback) olarak kullanılıyor.
         const { data: katalogKaydi } = await supabase
@@ -87,7 +95,7 @@ export class DrizzleAdapter implements IDatabase {
           .maybeSingle();
 
         if (katalogKaydi && katalogKaydi.input_price != null && katalogKaydi.output_price != null) {
-          // model_catalog fiyatları da (model_pricing.json ile aynı birimde)
+          // model_catalog pricesı da (model_pricing.json ile aynı birimde)
           // 1000 token başına saklanıyor — admin panelindeki "$ per 1M tokens"
           // input'u kaydedilirken zaten /1000 ile buraya çevriliyor (bkz.
           // admin.ts, PATCH /models/:id).
@@ -121,7 +129,7 @@ export class DrizzleAdapter implements IDatabase {
     try {
       if (!prompt) return;
       
-      // Kasa'dan OpenAI anahtarını alıyoruz (gizli!)
+      // Kasa'dan OpenAI keyını alıyoruz (hidden!)
       const { getProviderKey } = await import('../utils/vault.js');
       const openaiKey = await getProviderKey('openai');
       
@@ -140,7 +148,7 @@ export class DrizzleAdapter implements IDatabase {
       const moderation = result.results?.[0];
       
       if (moderation?.flagged) {
-        // En yüksek skorlu tehlike kategorisini bul
+        // En yüksek skorlu danger kategorisini bul
         let maxCategory = '';
         let maxScore = 0;
         

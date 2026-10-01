@@ -58,7 +58,7 @@ export async function getOrCreateSession(
 
 /**
  * Oturuma bir soru-cevap çifti (prompt + yanıt) ekler.
- * Her ekleme hem mesaj listesini hem de ana oturum kaydındaki sayacı günceller.
+ * Her ekleme hem mesaj listesini hem de ana oturum kaydındaki counterı günceller.
  */
 export async function addMessageToSession(
   clientId: string,
@@ -91,7 +91,7 @@ export async function addMessageToSession(
   await redis.rpush(messagesKey, JSON.stringify(userMsg), JSON.stringify(assistantMsg))
   await redis.expire(messagesKey, 86400)
 
-  // Mesaj sayacını güncelle
+  // Mesaj counterını güncelle
   const session = await redis.get<SessionInfo>(sessionKey)
   if (session) {
     session.messageCount += 1

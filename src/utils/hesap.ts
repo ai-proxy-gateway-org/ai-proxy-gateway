@@ -2,7 +2,7 @@
 //
 // Anahtarlar için kullandığımız SHA-256 (utils/auth.ts) burada KULLANILMAZ.
 // SHA-256 hızlı olmak üzere tasarlanmış; rastgele üretilmiş 64 karakterlik bir
-// anahtar için bu sorun değil, ama insanın seçtiği bir şifre için felaket:
+// key için bu sorun değil, ama insanın seçtiği bir şifre için felaket:
 // saniyede milyarlarca deneme yapılabiliyor.
 //
 // scrypt bilerek yavaş ve bellek isteyen bir işlev. Node'un içinde geliyor,
@@ -27,8 +27,8 @@ export async function sifreKarmasi(sifre: string): Promise<string> {
   return `scrypt$${tuz.toString('hex')}$${karma.toString('hex')}`;
 }
 
-export async function sifreDogru(sifre: string, kayit: string): Promise<boolean> {
-  const [yontem, tuzHex, karmaHex] = kayit.split('$');
+export async function sifreDogru(sifre: string, record: string): Promise<boolean> {
+  const [yontem, tuzHex, karmaHex] = record.split('$');
   if (yontem !== 'scrypt' || !tuzHex || !karmaHex) return false;
 
   const beklenen = Buffer.from(karmaHex, 'hex');
@@ -42,7 +42,7 @@ export async function sifreDogru(sifre: string, kayit: string): Promise<boolean>
 // ---------------------------------------------------------------------------
 // Oturum
 //
-// Sunucusuz ortamda her istek ayrı bir çalıştırma; bellekte oturum tutulamıyor.
+// Sunucusuz ortamda her request ayrı bir çalıştırma; bellekte oturum tutulamıyor.
 // İki seçenek vardı: veritabanında oturum tablosu ya da imzalı çerez.
 //
 // İmzalı çerez seçildi — her istekte bir veritabanı turu daha eklemiyor.
@@ -62,25 +62,25 @@ function imzaAnahtari(): string {
 }
 
 export interface Oturum {
-  tur: 'musteri' | 'yonetici';
+  tur: 'musteri' | 'admin';
   kullaniciId: string;
   clientId: string | null;
   biter: number;
 }
 
-function imzala(govde: string): string {
-  return crypto.createHmac('sha256', imzaAnahtari()).update(govde).digest('base64url');
+function imzala(bodyEl: string): string {
+  return crypto.createHmac('sha256', imzaAnahtari()).update(bodyEl).digest('base64url');
 }
 
 // parolaIzi: şifre karmasının kısa bir özeti. Şifre değişince değişiyor ve
 // eski çerezlerin imzası tutmuyor.
 export function oturumUret(o: Omit<Oturum, 'biter'>, parolaKarmasi: string): string {
-  const govde = JSON.stringify({
+  const bodyEl = JSON.stringify({
     ...o,
     biter: Math.floor(Date.now() / 1000) + OTURUM_SURESI_SN,
     iz: parolaIzi(parolaKarmasi)
   });
-  const kodlu = Buffer.from(govde).toString('base64url');
+  const kodlu = Buffer.from(bodyEl).toString('base64url');
   return `${kodlu}.${imzala(kodlu)}`;
 }
 
@@ -94,7 +94,7 @@ export function oturumCoz(cerez: string | undefined): (Oturum & { iz: string }) 
   if (!kodlu || !imza) return null;
 
   const beklenen = imzala(kodlu);
-  // İmza uzunlukları farklıysa timingSafeEqual hata atıyor; önce onu eliyoruz.
+  // İmza uzunlukları farklıysa timingSafeEqual error atıyor; önce onu eliyoruz.
   if (imza.length !== beklenen.length) return null;
   if (!crypto.timingSafeEqual(Buffer.from(imza), Buffer.from(beklenen))) return null;
 
@@ -133,9 +133,9 @@ export function cerezSil(ad: string, uretim: boolean): string {
   ].filter(Boolean).join('; ');
 }
 
-export function cerezOku(baslik: string | undefined, ad: string): string | undefined {
-  if (!baslik) return undefined;
-  for (const parca of baslik.split(';')) {
+export function cerezOku(title: string | undefined, ad: string): string | undefined {
+  if (!title) return undefined;
+  for (const parca of title.split(';')) {
     const [k, ...v] = parca.trim().split('=');
     if (k === ad) return v.join('=');
   }

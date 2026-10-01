@@ -34,7 +34,7 @@ const redis = new Redis({
   token: process.env.UPSTASH_REDIS_REST_TOKEN!,
 })
 
-// Kasa (Vault) servisimizin gizli adresi ve yetki anahtarı
+// Kasa (Vault) servisimizin hidden adresi ve yetki keyı
 const VAULT_API_URL = process.env.VAULT_API_URL
 const VAULT_ACCESS_TOKEN = process.env.VAULT_ACCESS_TOKEN
 
@@ -109,7 +109,7 @@ async function refreshKeyInVault(provider: string, cacheKey: string): Promise<st
   const data = await response.json()
   const realApiKey = data.apiKey
 
-  // 3. ADIM: Kasa'dan alınan taze anahtarı Redis'e kaydet.
+  // 3. ADIM: Kasa'dan alınan taze keyı Redis'e kaydet.
   // staleAt: 5 dakika (300,000 ms) sonra "eskimiş" kabul edilecek (Arka planda yenilenecek)
   // ex: Redis'ten tamamen silinmesi için 2 saat (7200 sn) veriyoruz ki aradaki 2 saatte gelen ilk müşteri beklemeyip stale veriyi alabilsin.
   const cacheObject: CachedKey = {

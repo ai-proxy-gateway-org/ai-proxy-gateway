@@ -1,6 +1,6 @@
 // B tarafının log servisine açılan katman.
 //
-// Eskiden logRequestComplete errorMessage almıyordu; sebep metni burada ayrı
+// Eskiden logRequestComplete errorMessage almıyordu; reason metni burada ayrı
 // bir güncellemeyle yazılıyordu. İmza genişletildiği için o ek tur kalktı:
 // artık tek yazma yetiyor.
 
@@ -31,7 +31,7 @@ export async function logRequestComplete(
   );
 }
 
-// Sağlayıcıya hiç gitmeden reddedilen istekler de kayda geçsin
+// Sağlayıcıya hiç gitmeden reddedilen requests de kayda geçsin
 // (görev tanımı: "All AI requests made through the Proxy should be logged").
 export async function logDeniedRequest(
   clientId: string,

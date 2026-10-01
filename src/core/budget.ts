@@ -1,8 +1,8 @@
 // Harcama bütçesi.
 //
 // Fiyat tavanı HANGİ modelin kullanılabileceğini sınırlıyor, NE KADAR
-// harcanacağını değil: ucuz bir modelle çok istek atan biri yine bütçeyi
-// bitirebiliyor. Üç ayrı soru, üç ayrı mekanizma — fiyat tavanı, bütçe,
+// harcanacağını değil: ucuz bir modelle çok request atan biri yine bütçeyi
+// bitirebiliyor. Üç ayrı soru, üç ayrı mekanizma — price tavanı, bütçe,
 // hız limiti.
 //
 // Sayaç Redis'te tutuluyor, veritabanında değil. Her istekte logs üzerinden
@@ -10,8 +10,8 @@
 // Gerçek kaynak yine veritabanı: sayaç bozulursa logs'tan yeniden
 // hesaplanabiliyor.
 //
-// Bilinen kusur: maliyet ancak cevap geldikten sonra biliniyor. Limit dolmak
-// üzereyken gelen bir istek limiti birkaç sent aşabilir. Kesinlik için her
+// Bilinen kusur: cost ancak cevap geldikten sonra biliniyor. Limit dolmak
+// üzereyken gelen bir request limiti birkaç sent aşabilir. Kesinlik için her
 // isteği kilitlemek gerekirdi, o da her isteğe gecikme eklerdi.
 
 import { Redis } from '@upstash/redis';
@@ -27,28 +27,28 @@ const GUN_TTL = 48 * 60 * 60;
 // Dönem sınırları yerel saate göre.
 //
 // UTC kullanıldığında Türkiye'de gün sabah 03:00'te dönüyordu: gece 01:00'de
-// atılan istek bir önceki güne sayılıyordu. Saat dilimi ayarlanabilir çünkü
+// atılan request bir önceki güne sayılıyordu. Saat dilimi ayarlanabilir çünkü
 // proje açık kaynak olacak; başka ülkede kuran kendi saatini ister.
 const SAAT_DILIMI = process.env.BUDGET_TIMEZONE || 'Europe/Istanbul';
 
-// Verilen saat diliminde "yıl-ay-gün" üretir. Intl kullanılıyor: yaz saati
-// geçişlerini ve dilim kurallarını elle hesaplamak hataya açık.
-function yerelTarih(now: Date): { yil: number; ay: number; gun: number } {
+// Verilen saat diliminde "yıl-month-gün" üretir. Intl kullanılıyor: yaz saati
+// geçişlerini ve timezone kurallarını elle hesaplamak hataya açık.
+function yerelTarih(now: Date): { yil: number; month: number; day: number } {
   const parcalar = new Intl.DateTimeFormat('en-CA', {
     timeZone: SAAT_DILIMI,
     year: 'numeric', month: '2-digit', day: '2-digit'
   }).formatToParts(now);
 
   const al = (tip: string) => Number(parcalar.find((p) => p.type === tip)?.value ?? 0);
-  return { yil: al('year'), ay: al('month'), gun: al('day') };
+  return { yil: al('year'), month: al('month'), day: al('day') };
 }
 
 function donemler(now = new Date()) {
   const t = yerelTarih(now);
   const iki = (x: number) => String(x).padStart(2, '0');
   return {
-    ay: `${t.yil}-${iki(t.ay)}`,
-    gun: `${t.yil}-${iki(t.ay)}-${iki(t.gun)}`
+    month: `${t.yil}-${iki(t.month)}`,
+    day: `${t.yil}-${iki(t.month)}-${iki(t.day)}`
   };
 }
 
@@ -62,16 +62,16 @@ function ofsetMs(an: Date): number {
 // Dönemin başladığı anı UTC olarak verir — logs sorgusu bunu istiyor.
 //
 // Ofset dönemin BAŞINDA ölçülüyor, şu anda değil. Aylık dönemde bu fark
-// ediyor: ayın 1'i kış saatinde, bugün yaz saatinde olabilir. Ofseti bugüne
-// göre alsaydık ay başı bir saat kayardı.
+// ediyor: monthın 1'i kış saatinde, bugün yaz saatinde olabilir. Ofseti bugüne
+// göre alsaydık month başı bir saat kayardı.
 //
 // İki tur: ilk turda duvar saatini UTC sanıp kaba bir an buluyoruz, ikinci
 // turda ofseti o ana göre yeniden ölçüp düzeltiyoruz. Yaz saati geçişi tam
 // gece yarısında olmadığı sürece iki tur yeter.
 function yerelGunBasiUTC(now: Date, ayinBasi: boolean): string {
   const t = yerelTarih(now);
-  const gun = ayinBasi ? 1 : t.gun;
-  const duvar = Date.UTC(t.yil, t.ay - 1, gun, 0, 0, 0);
+  const day = ayinBasi ? 1 : t.day;
+  const duvar = Date.UTC(t.yil, t.month - 1, day, 0, 0, 0);
 
   let an = duvar;
   for (let tur = 0; tur < 2; tur++) an = duvar - ofsetMs(new Date(an));
@@ -79,44 +79,44 @@ function yerelGunBasiUTC(now: Date, ayinBasi: boolean): string {
   return new Date(an).toISOString();
 }
 
-function anahtarlar(kimlik: string) {
-  const { ay, gun } = donemler();
+function keys(kimlik: string) {
+  const { month, day } = donemler();
   return {
-    aylik: `spend:${kimlik}:${ay}`,
-    gunluk: `spend:${kimlik}:${gun}`
+    aylik: `spend:${kimlik}:${month}`,
+    gunluk: `spend:${kimlik}:${day}`
   };
 }
 
-export interface ButceSinirlari {
+export interface BudgetLimits {
   aylik: number | null;
   gunluk: number | null;
 }
 
-export interface ButceDurumu {
+export interface BudgetStatus {
   aylikHarcama: number;
   gunlukHarcama: number;
   aylikSinir: number | null;
   gunlukSinir: number | null;
-  asildi: 'aylik' | 'gunluk' | null;
+  exceeded: 'aylik' | 'gunluk' | null;
 }
 
-export type ButceTuru = 'kisi' | 'sirket';
+export type BudgetType = 'user' | 'client';
 
 // Dönemin harcamasını KAYITLARDAN hesaplar.
 //
 // Sayaç Redis'te ama gerçek kaynak logs tablosu. Sayaç yeni açıldığında
-// (özellik ilk kez devreye girdiğinde, dönem değiştiğinde ya da Redis
+// (özellik ilk kez devreye inputğinde, dönem değiştiğinde ya da Redis
 // temizlendiğinde) boş oluyor; o durumda kayıtlardan hesaplanıp sayaç
-// dolduruluyor. Aksi halde "19 istek var ama harcama sıfır" gibi bir
-// tutarsızlık çıkıyordu: istek sayısı kayıtlardan, harcama sayaçtan
+// dolduruluyor. Aksi halde "19 request var ama harcama sıfır" gibi bir
+// tutarsızlık çıkıyordu: request sayısı kayıtlardan, harcama sayaçtan
 // geliyordu ve ikisi farklı zamanları gösteriyordu.
 async function kayitlardanHesapla(
-  kimlik: string, tur: ButceTuru, baslangicISO: string
+  kimlik: string, tur: BudgetType, baslangicISO: string
 ): Promise<number> {
   try {
     let anahtarKimlikleri: string[] | null = null;
 
-    if (tur === 'kisi') {
+    if (tur === 'user') {
       const { data } = await supabase
         .from('client_keys').select('id').eq('user_id', kimlik);
       anahtarKimlikleri = ((data ?? []) as Array<{ id: string }>).map((x) => x.id);
@@ -126,7 +126,7 @@ async function kayitlardanHesapla(
 
     let sorgu = supabase
       .from('logs').select('cost').gte('created_at', baslangicISO).limit(10000) as any;
-    sorgu = tur === 'kisi'
+    sorgu = tur === 'user'
       ? sorgu.in('key_id', anahtarKimlikleri)
       : sorgu.eq('client_id', kimlik);
 
@@ -140,136 +140,136 @@ async function kayitlardanHesapla(
   }
 }
 
-function donemBaslangici(): { ay: string; gun: string } {
+function donemBaslangici(): { month: string; day: string } {
   const now = new Date();
   return {
-    ay: yerelGunBasiUTC(now, true),
-    gun: yerelGunBasiUTC(now, false)
+    month: yerelGunBasiUTC(now, true),
+    day: yerelGunBasiUTC(now, false)
   };
 }
 
-// Ekranda "ne zaman sıfırlanıyor" yazabilmek için: hangi dilim, hangi dönem,
+// Ekranda "ne zaman sıfırlanıyor" yazabilmek için: hangi timezone, hangi dönem,
 // dönemler hangi anda başladı.
-export function butceDonemi(now = new Date()) {
-  const { ay, gun } = donemler(now);
+export function getBudgetPeriod(now = new Date()) {
+  const { month, day } = donemler(now);
   return {
-    dilim: SAAT_DILIMI,
-    ay, gun,
+    timezone: SAAT_DILIMI,
+    month, day,
     ayBasi: yerelGunBasiUTC(now, true),
     gunBasi: yerelGunBasiUTC(now, false)
   };
 }
 
-async function oku(kimlik: string, tur: ButceTuru): Promise<{ ay: number; gun: number }> {
-  const a = anahtarlar(kimlik);
+async function oku(kimlik: string, tur: BudgetType): Promise<{ month: number; day: number }> {
+  const a = keys(kimlik);
   const [ayHam, gunHam] = await redis.mget<(string | number | null)[]>(a.aylik, a.gunluk);
 
   // Sayaç hiç açılmamışsa kayıtlardan doldur. null ile 0 farkı önemli:
   // 0 "bu dönemde harcama yok" demek, null "sayaç yok" demek.
-  const bas = donemBaslangici();
-  let ay = ayHam === null || ayHam === undefined ? null : Number(ayHam);
-  let gun = gunHam === null || gunHam === undefined ? null : Number(gunHam);
+  const headers = donemBaslangici();
+  let month = ayHam === null || ayHam === undefined ? null : Number(ayHam);
+  let day = gunHam === null || gunHam === undefined ? null : Number(gunHam);
 
-  if (ay === null) {
-    ay = await kayitlardanHesapla(kimlik, tur, bas.ay);
-    if (ay > 0) {
-      await redis.set(a.aylik, ay, { ex: AY_TTL });
+  if (month === null) {
+    month = await kayitlardanHesapla(kimlik, tur, headers.month);
+    if (month > 0) {
+      await redis.set(a.aylik, month, { ex: AY_TTL });
     }
   }
-  if (gun === null) {
-    gun = await kayitlardanHesapla(kimlik, tur, bas.gun);
-    if (gun > 0) {
-      await redis.set(a.gunluk, gun, { ex: GUN_TTL });
+  if (day === null) {
+    day = await kayitlardanHesapla(kimlik, tur, headers.day);
+    if (day > 0) {
+      await redis.set(a.gunluk, day, { ex: GUN_TTL });
     }
   }
 
-  return { ay, gun };
+  return { month, day };
 }
 
 // Harcamayı sayaca ekliyor. İstek tamamlandıktan sonra çağrılıyor, çünkü
-// maliyet ancak o zaman biliniyor.
-export async function harcamaEkle(kimlikler: Array<string | null>, tutar: number): Promise<void> {
-  if (!Number.isFinite(tutar) || tutar <= 0) return;
+// cost ancak o zaman biliniyor.
+export async function addSpend(kimlikler: Array<string | null>, amount: number): Promise<void> {
+  if (!Number.isFinite(amount) || amount <= 0) return;
   try {
     for (const kimlik of kimlikler) {
       if (!kimlik) continue;
-      const a = anahtarlar(kimlik);
+      const a = keys(kimlik);
       const [yeniAy, yeniGun] = await Promise.all([
-        redis.incrbyfloat(a.aylik, tutar),
-        redis.incrbyfloat(a.gunluk, tutar)
+        redis.incrbyfloat(a.aylik, amount),
+        redis.incrbyfloat(a.gunluk, amount)
       ]);
       // TTL yalnızca sayaç yeni açıldığında konuyor; her istekte expire
       // çağırmak süreyi sürekli ileri iterdi ve dönem hiç kapanmazdı.
-      if (Number(yeniAy) === tutar) await redis.expire(a.aylik, AY_TTL);
-      if (Number(yeniGun) === tutar) await redis.expire(a.gunluk, GUN_TTL);
+      if (Number(yeniAy) === amount) await redis.expire(a.aylik, AY_TTL);
+      if (Number(yeniGun) === amount) await redis.expire(a.gunluk, GUN_TTL);
     }
   } catch (error) {
-    // Sayaç yazılamazsa istek engellenmiyor: bütçe takibi kaybolur ama
+    // Sayaç yazılamazsa request engellenmiyor: bütçe takibi kaybolur ama
     // servis çalışmaya devam eder. Aksi halde Redis kesintisi bütün
     // trafiği durdururdu.
-    console.error('Bütçe sayacı yazılamadı:', error);
+    console.error('Bütçe counterı yazılamadı:', error);
   }
 }
 
-export async function butceDurumu(
+export async function getBudgetStatus(
   kimlik: string,
-  sinirlar: ButceSinirlari,
-  tur: ButceTuru = 'kisi'
-): Promise<ButceDurumu> {
-  const { ay, gun } = await oku(kimlik, tur);
-  const asildi =
-    sinirlar.gunluk !== null && gun >= sinirlar.gunluk ? 'gunluk'
-    : sinirlar.aylik !== null && ay >= sinirlar.aylik ? 'aylik'
+  sinirlar: BudgetLimits,
+  tur: BudgetType = 'user'
+): Promise<BudgetStatus> {
+  const { month, day } = await oku(kimlik, tur);
+  const exceeded =
+    sinirlar.gunluk !== null && day >= sinirlar.gunluk ? 'gunluk'
+    : sinirlar.aylik !== null && month >= sinirlar.aylik ? 'aylik'
     : null;
 
   return {
-    aylikHarcama: ay,
-    gunlukHarcama: gun,
+    aylikHarcama: month,
+    gunlukHarcama: day,
     aylikSinir: sinirlar.aylik,
     gunlukSinir: sinirlar.gunluk,
-    asildi
+    exceeded
   };
 }
 
 // Kişi ve şirket sınırları birlikte değerlendiriliyor: hangisi önce dolarsa
-// istek orada duruyor.
-export async function butceKontrol(
+// request orada duruyor.
+export async function checkBudget(
   kisiId: string | null,
   clientId: string,
-  kisiSinir: ButceSinirlari,
-  sirketSinir: ButceSinirlari
-): Promise<{ ok: true } | { ok: false; sebep: string }> {
+  kisiSinir: BudgetLimits,
+  sirketSinir: BudgetLimits
+): Promise<{ ok: true } | { ok: false; reason: string }> {
   try {
     if (kisiId) {
-      const d = await butceDurumu(kisiId, kisiSinir, 'kisi');
-      if (d.asildi === 'gunluk') {
+      const d = await getBudgetStatus(kisiId, kisiSinir, 'user');
+      if (d.exceeded === 'gunluk') {
         return {
           ok: false,
-          sebep: `Daily spending limit reached ($${(d.gunlukSinir ?? 0).toFixed(2)}). ` +
+          reason: `Daily spending limit reached ($${(d.gunlukSinir ?? 0).toFixed(2)}). ` +
                  `Requests resume tomorrow, or ask an administrator to raise it.`
         };
       }
-      if (d.asildi === 'aylik') {
+      if (d.exceeded === 'aylik') {
         return {
           ok: false,
-          sebep: `Monthly spending limit reached ($${(d.aylikSinir ?? 0).toFixed(2)}). ` +
+          reason: `Monthly spending limit reached ($${(d.aylikSinir ?? 0).toFixed(2)}). ` +
                  `Ask an administrator to raise it.`
         };
       }
     }
 
-    const s = await butceDurumu(clientId, sirketSinir, 'sirket');
-    if (s.asildi === 'gunluk') {
+    const s = await getBudgetStatus(clientId, sirketSinir, 'client');
+    if (s.exceeded === 'gunluk') {
       return {
         ok: false,
-        sebep: `The company hit its daily spending limit ($${(s.gunlukSinir ?? 0).toFixed(2)}). ` +
+        reason: `The company hit its daily spending limit ($${(s.gunlukSinir ?? 0).toFixed(2)}). ` +
                `Requests resume tomorrow.`
       };
     }
-    if (s.asildi === 'aylik') {
+    if (s.exceeded === 'aylik') {
       return {
         ok: false,
-        sebep: `The company hit its monthly spending limit ($${(s.aylikSinir ?? 0).toFixed(2)}).`
+        reason: `The company hit its monthly spending limit ($${(s.aylikSinir ?? 0).toFixed(2)}).`
       };
     }
 

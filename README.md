@@ -20,20 +20,22 @@ Route requests across OpenAI, Anthropic, and Google Gemini through a single, uni
 | Category | Feature | Description |
 |----------|---------|-------------|
 | 🔀 **Routing** | Unified Endpoint | Single `POST /v1/chat/completions` routes to OpenAI, Anthropic, or Gemini based on model name |
-| 🔐 **Security** | API Key Management | Issue `sk-proxy-*` keys per client. Keys are SHA-256 hashed — never stored in plaintext |
-| 🔐 **Security** | Vault Integration | Provider secrets stored in a centralized Vault server, never exposed to edge functions |
-| 🔐 **Security** | One-Time Key Delivery | Generated keys are delivered via AES-256-GCM encrypted single-use links |
+| 🛡️ **Security** | API Key Management | Issue `sk-proxy-*` keys per client. Keys are SHA-256 hashed — never stored in plaintext |
+| 🛡️ **Security** | Vault Integration | Provider secrets stored in a centralized Vault server, never exposed to edge functions |
+| 🛡️ **Security** | One-Time Key Delivery | Generated keys are delivered via AES-256-GCM encrypted single-use links |
+| 🚀 **Performance** | Semantic Caching | Skips LLM calls entirely for repetitive queries using Redis Sørensen-Dice string similarity (85% match) |
 | ⚡ **Performance** | SWR Caching | Stale-While-Revalidate pattern for Vault keys — 0 ms latency overhead on cache hits |
 | ⚡ **Performance** | Edge-Native | Runs on Vercel Edge worldwide. 17,750+ req/sec throughput benchmarked |
 | 🛡️ **Protection** | Rate Limiting | Redis-based fixed-window rate limiter with fail-open fault tolerance |
-| 💰 **Cost Control** | Token & Cost Tracking | Every request logged with input/output tokens, latency, and calculated USD cost |
-| 💰 **Cost Control** | Budget Limits | Set daily and monthly spending caps per client |
-| 💰 **Cost Control** | Dynamic Pricing | Auto-syncs model prices from OpenRouter. Price drops adopted automatically |
-| 📊 **Analytics** | Admin Console | Full-featured web dashboard — clients, requests, models, pricing, budgets |
+| 💸 **Cost Control** | Token & Cost Tracking | Every request logged with input/output tokens, latency, and calculated USD cost |
+| 💸 **Cost Control** | Budget Limits | Set daily and monthly spending caps per client |
+| 💸 **Cost Control** | Dynamic Pricing | Auto-syncs model prices from OpenRouter. Price drops adopted automatically |
+| 📊 **Analytics** | Admin Console | Full-featured web dashboard — clients, models, pricing, budgets, and session summaries |
+| 📊 **Analytics** | Risk Audit UI | Proactive monitoring interface highlighting flagged users and failed requests |
 | 📊 **Analytics** | Customer Portal | Self-service portal where clients view their own usage, costs, and API keys |
-| 🧠 **AI Insights** | Session Summarization | Groups conversations into 15-min sessions and generates AI summaries via `gpt-4o-mini` |
-| 🌍 **Flexibility** | Multi-Provider | OpenAI, Anthropic, and Google Gemini supported out of the box |
-| 🌍 **Flexibility** | Vault Fallback | No Vault server? Falls back to `.env` provider keys for easy local development |
+| 🧠 **AI Insights** | Session Summarization | Groups conversations into 15-min sessions and auto-generates AI context summaries |
+| 🔀 **Flexibility** | Multi-Provider | OpenAI, Anthropic, and Google Gemini supported out of the box |
+| 🔀 **Flexibility** | Vault Fallback | No Vault server? Falls back to `.env` provider keys for easy local development |
 
 ---
 

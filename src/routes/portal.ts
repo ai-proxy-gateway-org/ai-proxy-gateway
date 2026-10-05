@@ -1005,7 +1005,13 @@ ${YAZI_TIPI}
     // kapatmazdı, çerez bir sonraki açılışta yine geçerli olurdu.
     try { await fetch('/portal/api/session', { method: 'DELETE' }); } catch (e) {}
     key = null; hesap = null; anahtarYaz(null);
-    $('key').value = ''; $('sifre').value = ''; $('icerik').innerHTML = '';
+    // #icerik'in içini boşaltmıyoruz: anahtarBilgi/izinBilgi gibi statik
+    // elemanlar sayfanın asıl HTML'inde, yalnızca bir kez var — bir daha
+    // geri gelmiyorlar. Boşaltılırsa bir sonraki girişte hesapCiz() onlara
+    // yazmaya çalışıp "Cannot set properties of null" ile patlıyor ve
+    // kullanıcı "Could not reach the server" gibi alakasız bir hata görüyor.
+    // Zaten bir sonraki başarılı girişte uygulamayaGir() hepsini tazeliyor.
+    $('key').value = ''; $('sifre').value = '';
     $('appWrap').classList.add('hidden'); $('girisEkran').classList.remove('hidden');
   });
   $('filter').addEventListener('click', e => {

@@ -344,6 +344,9 @@ ${YAZI_TIPI}
       <button data-bolum="requests">
         <svg viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
         Requests</button>
+      <button data-bolum="sessions">
+        <svg viewBox="0 0 24 24"><path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+        Session Summaries</button>
       <button data-bolum="admins">
         <svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.4-2.9 8.4-7 9.6C7.9 19.4 5 15.4 5 11V6z"/><path d="M9 12l2 2 4-4"/></svg>
         Administrators</button>
@@ -663,10 +666,22 @@ ${YAZI_TIPI}
           <div class="counter" id="iSayac"></div>
         </div>
         <div class="tableCard">
+          <div id="iKullaniciGruplari" style="display:flex; flex-wrap:wrap; gap:0.5rem; margin-bottom:1rem; align-items:center;"></div>
           <div class="kaydir"><table id="iTablo"></table></div>
           <div class="bosdurum hidden" id="iBos"></div>
         </div>
         <button class="btn outlinedBtn hidden" id="iDaha" style="width:100%;margin-top:.75rem">Load more</button>
+      </section>
+      
+      <section data-bolum="sessions" class="hidden">
+        <div class="satirbasi">
+          <div class="smallTitle">Session Summaries</div>
+          <div class="counter" id="sesSayac"></div>
+        </div>
+        <div class="tableCard">
+          <div class="kaydir"><table id="sesTablo"></table></div>
+          <div class="bosdurum hidden" id="sesBos">No sessions summarized yet. Wait 15 mins for an inactive session to be summarized by cron.</div>
+        </div>
       </section>
     </div>
   </div>
@@ -974,6 +989,7 @@ ${YAZI_TIPI}
     modeller:   ['Models',    'Model catalog and pricing'],
     users:    ['Teams',    'Who can use the gateway, and what they can reach'],
     requests:   ['Requests',  'All requests across customers'],
+    sessions:   ['Session Summaries', 'Auto-generated context memories for AI sessions'],
     fiyatlar:     ['Price audit', 'Stored prices checked against a live source'],
     admins:  ['Administrators', 'Who can sign in to this console']
   };
@@ -1016,6 +1032,7 @@ ${YAZI_TIPI}
     // sayfayı çekiyor, yeni gelen requests görünmüyordu.
     if (yeni === 'requests') { offset = 0; iSatirlar = []; istekYukle(false); }
     if (yeni === 'users') kisilerYukle();
+    if (yeni === 'sessions') sessionYukle();
     if (yeni === 'ozet') ozetYukle();
     if (yeni === 'fiyatlar') fiyatYukle();
     if (yeni === 'admins') yoneticileriYukle();
@@ -1201,6 +1218,30 @@ ${YAZI_TIPI}
         $('iSayac').textContent = ''; $('iDaha').classList.add('hidden');
       } else {
         $('iBos').classList.add('hidden');
+        
+        if (!ekle && !$('fKisi').value) {
+          if (v.users) {
+            const uHtml = v.users.map(u => {
+               const ackHata = Number(localStorage.getItem('ack_' + u.deger) || 0);
+               const ackBayrakli = Number(localStorage.getItem('ack_flag_' + u.deger) || 0);
+               const riskli = u.hata > ackHata || u.bayrakli > ackBayrakli;
+               const bg = riskli ? 'background:rgba(255,0,0,0.1); border:1px solid red; color:red' : 'background:var(--bg-alt); border:1px solid var(--border)';
+               const onclk = 'localStorage.setItem(\\\'ack_\\\' + \\\'' + kacir(u.deger).replace(/'/g, "\\\\'") + '\\\', ' + u.hata + '); localStorage.setItem(\\\'ack_flag_\\\' + \\\'' + kacir(u.deger).replace(/'/g, "\\\\'") + '\\\', ' + u.bayrakli + '); $(\\\'fKisi\\\').value=\\\'' + kacir(u.deger).replace(/'/g, "\\\\'") + '\\\'; offset=0; iSatirlar=[]; istekYukle(false);';
+               return '<div class="tiklanir u-card" data-search="' + kacir(u.ad || u.deger).toLowerCase() + '" style="padding:.6rem 1rem; border-radius:.5rem; cursor:pointer; font-size:.95rem; ' + bg + '" onclick="' + onclk + '">' +
+                 '<strong>' + kacir(u.ad || u.deger) + '</strong>' +
+                 '<div style="opacity:.8; margin-top:.3rem; font-size:.85rem">' + u.toplam + ' requests ' + (riskli ? '<b>(' + (u.hata - ackHata > 0 ? (u.hata - ackHata) + ' new err ' : '') + (u.bayrakli - ackBayrakli > 0 ? (u.bayrakli - ackBayrakli) + ' new flag' : '') + ')</b>' : '') + '</div>' +
+               '</div>';
+            }).join('');
+            const searchBar = '<input type="text" placeholder="Search users by email..." style="width:100%; padding:.5rem; margin-bottom:1rem; border:1px solid var(--border); border-radius:.5rem; background:var(--bg-alt); color:inherit" onkeyup="var q=this.value.toLowerCase(); document.querySelectorAll(\\\'.u-card\\\').forEach(function(c){ c.style.display = c.dataset.search.includes(q) ? \\\'block\\\' : \\\'none\\\'; })">';
+            $('iKullaniciGruplari').innerHTML = '<div style="font-size:1rem; font-weight:600; width:100%; margin-bottom:.5rem">All Users (Click to view requests):</div>' + searchBar + '<div style="display:flex; flex-wrap:wrap; gap:0.5rem; width:100%">' + uHtml + '</div>';
+          }
+          $('iTablo').parentElement.classList.add('hidden');
+          $('iDaha').classList.add('hidden');
+        } else if (!ekle) {
+          $('iKullaniciGruplari').innerHTML = '<div style="margin-bottom:1rem"><button class="btn outlinedBtn" onclick="$(\\\'fKisi\\\').value=\\\'\\\'; offset=0; iSatirlar=[]; istekYukle(false);">&larr; Back to Users View</button></div>';
+          $('iTablo').parentElement.classList.remove('hidden');
+        }
+        
         iSatirCiz(v.kayitlar, ekle);
         const gosterilen = offset + v.kayitlar.length;
         $('iSayac').textContent = gosterilen + ' / ' + iToplam;
@@ -2803,6 +2844,35 @@ ${YAZI_TIPI}
     else fUygula({ id: x.id });
   });
 
+  async function sessionYukle() {
+    $('uyari').classList.add('hidden');
+    $('yukleniyor').classList.remove('hidden');
+    try {
+      const v = await api('/sessions');
+      const k = v.data || [];
+      $('sesSayac').textContent = k.length + ' sessions';
+      if (k.length === 0) {
+        $('sesBos').classList.remove('hidden');
+        $('sesTablo').innerHTML = '';
+      } else {
+        $('sesBos').classList.add('hidden');
+        $('sesTablo').innerHTML = '<thead><tr><th>Started</th><th>Team</th><th class="sayi">Msgs</th><th>Summary</th></tr></thead><tbody>' +
+          k.map(s => {
+            const team = s.clients ? s.clients.name : s.client_id;
+            return '<tr>' +
+              '<td style="white-space:nowrap">' + tarih(s.started_at) + '</td>' +
+              '<td style="white-space:nowrap">' + kacir(team) + '</td>' +
+              '<td class="sayi">' + (s.message_count ?? 0) + '</td>' +
+              '<td><div style="max-width:30rem; white-space:normal; font-size:.9rem; line-height:1.4">' + kacir(s.summary || 'No summary generated') + '</div></td>' +
+            '</tr>';
+          }).join('') + '</tbody>';
+      }
+    } catch (e) {
+      $('uyari').textContent = 'Could not load sessions. ' + e.message;
+      $('uyari').classList.remove('hidden');
+    } finally { $('yukleniyor').classList.add('hidden'); }
+  }
+
   async function fiyatYukle() {
     $('uyari').classList.add('hidden');
     $('yukleniyor').classList.remove('hidden');
@@ -3109,6 +3179,7 @@ ${YAZI_TIPI}
     if (bolum === 'requests') { offset = 0; iSatirlar = []; istekYukle(false); }
     else if (bolum === 'ozet') ozetYukle();
     else if (bolum === 'users') kisilerYukle();
+    else if (bolum === 'sessions') sessionYukle();
     else if (bolum === 'fiyatlar') fiyatYukle();
     else yukle();
   });
@@ -3359,7 +3430,7 @@ export function adminRoutes(app: Hono) {
     // 1) Dönemin tamamı — özet için
     const { data: tumu, error: h1 } = await filtrele(
       supabase.from('logs')
-        .select('status, input_tokens, output_tokens, cost')
+        .select('status, input_tokens, output_tokens, cost, key_id, is_flagged')
         .limit(10000) as any
     );
     if (h1) return c.json({ error: 'Could not read requests.' }, 500 as any);
@@ -3367,6 +3438,7 @@ export function adminRoutes(app: Hono) {
     const donem = (tumu ?? []) as Array<{
       status: string; input_tokens: number | null;
       output_tokens: number | null; cost: number | null;
+      key_id?: string | null; is_flagged?: boolean;
     }>;
     const ozet = donem.reduce(
       (a, k) => ({
@@ -3466,24 +3538,35 @@ export function adminRoutes(app: Hono) {
       .sort((a, b) => b[1] - a[1])
       .map(([ad, adet]) => ({ ad, label: `${ad.split('/')[1]} (${adet})` }));
 
-    // Kişi süzgecinin seçenekleri, dönemdeki request sayılarıyla.
-    let kisiSayimSorgu: any = supabase.from('logs').select('key_id').limit(10000);
-    if (baslangic) kisiSayimSorgu = kisiSayimSorgu.gte('created_at', baslangic);
-    if (s.durum) kisiSayimSorgu = kisiSayimSorgu.eq('status', s.durum);
-    const { data: kisiSayimlari } = await kisiSayimSorgu;
-
-    const kisiSayac = new Map<string, number>();
-    let sahipsiz = 0;
-    for (const k of (kisiSayimlari ?? []) as Array<{ key_id: string | null }>) {
-      const sahip = k.key_id ? anahtarKisisi.get(String(k.key_id)) ?? null : null;
-      if (!sahip) { sahipsiz += 1; continue; }
-      kisiSayac.set(sahip.email, (kisiSayac.get(sahip.email) ?? 0) + 1);
+    const kisiMap = new Map<string, { ad: string; toplam: number; hata: number; bayrakli: number; label?: string; deger?: string }>();
+    for (const k of (kisiSatirlari ?? [])) {
+      if (k.email) kisiMap.set(k.email, { ad: k.email, toplam: 0, hata: 0, bayrakli: 0 });
     }
-    const filtreKisileri = [...kisiSayac.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .map(([eposta, adet]) => ({ deger: eposta, label: `${eposta} (${adet})` }));
-    if (sahipsiz) {
-      filtreKisileri.push({ deger: 'yok', label: `Shared or unattributed (${sahipsiz})` });
+    let sahipsizToplam = 0, sahipsizHata = 0, sahipsizBayrakli = 0;
+
+    for (const k of donem) {
+      const sahip = k.key_id ? anahtarKisisi.get(String(k.key_id)) ?? null : null;
+      if (!sahip) {
+        sahipsizToplam++;
+        if (k.status !== 'success') sahipsizHata++;
+        if (k.is_flagged) sahipsizBayrakli++;
+        continue;
+      }
+      if (!kisiMap.has(sahip.email)) {
+        kisiMap.set(sahip.email, { ad: sahip.email, toplam: 0, hata: 0, bayrakli: 0 });
+      }
+      const u = kisiMap.get(sahip.email)!;
+      u.toplam++;
+      if (k.status !== 'success') u.hata++;
+      if (k.is_flagged) u.bayrakli++;
+    }
+
+    const filtreKisileri = [...kisiMap.values()]
+      .sort((a, b) => b.toplam - a.toplam)
+      .map(u => ({ ...u, deger: u.ad, label: `${u.ad} (${u.toplam})` }));
+      
+    if (sahipsizToplam > 0) {
+      filtreKisileri.push({ deger: 'yok', label: `Shared (${sahipsizToplam})`, ad: 'Shared', toplam: sahipsizToplam, hata: sahipsizHata, bayrakli: sahipsizBayrakli } as any);
     }
 
     return c.json({
@@ -3503,6 +3586,15 @@ export function adminRoutes(app: Hono) {
   // Müşteri oluşturma bugüne kadar test.ts betiğiyle elle yapılıyordu; bu
   // yüzden veritabanında adı tekrar eden, izni boş satırlar birikti.
   // Buradan oluşturulunca ad, tür ve izinler tek yerden kontrollü giriliyor.
+  app.get('/admin/api/sessions', async (c) => {
+    if (!(await hesapOturumuMu(c))) return c.json({ error: 'Unauthorized.' }, 401 as any);
+    const { data, error } = await supabase.from('sessions')
+      .select('id, started_at, ended_at, message_count, summary, summary_tokens, summary_cost, client_id, clients(name)')
+      .order('started_at', { ascending: false })
+      .limit(100) as any;
+    if (error) return c.json({ error: 'DB Error' }, 500 as any);
+    return c.json({ data });
+  });
 
   app.get('/admin/api/customers', async (c) => {
     if (!(await hesapOturumuMu(c))) {

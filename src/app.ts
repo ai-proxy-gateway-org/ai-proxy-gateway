@@ -113,36 +113,7 @@ app.post('/v1/chat/completions', authMiddleware, rateLimitMiddleware, async (c) 
 
     // 4. Sağlayıcıya Göre URL ve Header Ayarı
 
-    // --- SEMANTIC CACHE CHECK ---
-    let semanticCacheHit = null;
-    try {
-      if (promptText && promptText.length > 10) {
-        semanticCacheHit = await checkSemanticCache(model, promptText);
-      }
-    } catch(e) {}
 
-    if (semanticCacheHit) {
-      // Return cached response instantly!
-      const latencyMs = Date.now() - startTime;
-      if (logId) {
-        dbService.logRequestComplete(
-          logId, provider, model, 0, 0, latencyMs, true, undefined, semanticCacheHit
-        ).catch(console.error);
-      }
-      return c.json({
-        id: "chatcmpl-semantic-cached",
-        object: "chat.completion",
-        created: Math.floor(Date.now() / 1000),
-        model: model,
-        choices: [{
-          index: 0,
-          message: { role: "assistant", content: semanticCacheHit },
-          finish_reason: "stop"
-        }],
-        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
-      }, 200, { 'X-Cache': 'HIT-SEMANTIC' });
-    }
-    // ----------------------------
 
     let fetchUrl = 'https://api.openai.com/v1/chat/completions';
     let headers: Record<string, string> = {
@@ -189,15 +160,6 @@ app.post('/v1/chat/completions', authMiddleware, rateLimitMiddleware, async (c) 
       data.content?.[0]?.text ??      // anthropic
       data.choices?.[0]?.message?.content ?? // openai / gemini (uyumluluk katmanı)
       JSON.stringify(data);
-    // Save to Semantic Cache if successful
-    if (isSuccess && responseText && !errorMessage) {
-      if (c.executionCtx?.waitUntil) {
-        c.executionCtx.waitUntil(saveToSemanticCache(model, promptText, responseText));
-      } else {
-        saveToSemanticCache(model, promptText, responseText).catch(console.error);
-      }
-    }
-
 
     // 7. EDGE Büyüsü: Log işlemini arka planda tamamla (Kullanıcıyı bekletmez)
     if (logId) {

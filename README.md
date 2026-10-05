@@ -23,7 +23,6 @@ Route requests across OpenAI, Anthropic, and Google Gemini through a single, uni
 | 🛡️ **Security** | API Key Management | Issue `sk-proxy-*` keys per client. Keys are SHA-256 hashed — never stored in plaintext |
 | 🛡️ **Security** | Vault Integration | Provider secrets stored in a centralized Vault server, never exposed to edge functions |
 | 🛡️ **Security** | One-Time Key Delivery | Generated keys are delivered via AES-256-GCM encrypted single-use links |
-| 🚀 **Performance** | Semantic Caching | Skips LLM calls entirely for repetitive queries using Redis Sørensen-Dice string similarity (85% match) |
 | ⚡ **Performance** | SWR Caching | Stale-While-Revalidate pattern for Vault keys — 0 ms latency overhead on cache hits |
 | ⚡ **Performance** | Edge-Native | Runs on Vercel Edge worldwide. 17,750+ req/sec throughput benchmarked |
 | 🛡️ **Protection** | Rate Limiting | Redis-based fixed-window rate limiter with fail-open fault tolerance |

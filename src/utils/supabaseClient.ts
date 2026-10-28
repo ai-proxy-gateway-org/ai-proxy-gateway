@@ -6,9 +6,24 @@
 // ihtiyacı (esnek sorgular, join'ler) Supabase-JS ile zaten karşılanıyordu,
 // Drizzle'ın veritabanından bağımsız çekirdek amacı buraya uymuyor. Bu yüzden
 // kendi bağlantısını kuruyor.
-import { createClient } from '@supabase/supabase-js';
+//
+// Bağlantı ilk kullanımda (lazy) kurulur: SUPABASE_URL tanımlı değilken
+// (ör. saf PostgreSQL, Docker veya özel IDatabase adaptörüyle çalışırken)
+// sunucunun açılış anında çökmesini önler.
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
-export const supabase = createClient(
-  process.env.SUPABASE_URL || '',
-  process.env.SUPABASE_SERVICE_KEY || ''
-);
+let _client: SupabaseClient | null = null;
+
+function getSupabase(): SupabaseClient {
+  if (_client) return _client;
+  const url = process.env.SUPABASE_URL || 'http://127.0.0.1:54321';
+  const key = process.env.SUPABASE_SERVICE_KEY || 'unconfigured-supabase-key';
+  _client = createClient(url, key);
+  return _client;
+}
+
+export const supabase: SupabaseClient = new Proxy({} as SupabaseClient, {
+  get(_target, prop, receiver) {
+    return Reflect.get(getSupabase(), prop, receiver);
+  },
+});

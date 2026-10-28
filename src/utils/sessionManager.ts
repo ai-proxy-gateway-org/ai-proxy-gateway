@@ -1,11 +1,21 @@
-﻿import { Redis } from '@upstash/redis'
+import { Redis } from '@upstash/redis'
 import { randomUUID } from 'crypto'
 import { getProviderKey } from './vault.js'
 
-const redis = new Redis({
-  url: process.env.UPSTASH_REDIS_REST_URL!,
-  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
-})
+let _redis: Redis | null = null
+
+function getRedis(): Redis | null {
+  if (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN) {
+    return null
+  }
+  if (!_redis) {
+    _redis = new Redis({
+      url: process.env.UPSTASH_REDIS_REST_URL,
+      token: process.env.UPSTASH_REDIS_REST_TOKEN,
+    })
+  }
+  return _redis
+}
 
 const SESSION_TTL = 900 // 15 dakika (saniye cinsinden)
 
@@ -27,33 +37,53 @@ export interface SessionMessage {
 /**
  * Müşterinin mevcut oturumunu getirir veya yeni bir oturum oluşturur.
  * Her çağrıda TTL 15 dakikaya sıfırlanır — müşteri istekte bulunduğu sürece
- * oturum canlı kalır.
+ * oturum canlı kalır. Redis tanımlı değilse fail-open olarak geçici oturum döner.
  */
 export async function getOrCreateSession(
   clientId: string,
   summaryEnabled: boolean
 ): Promise<SessionInfo> {
-  const sessionKey = `session:${clientId}`
-  const existing = await redis.get<SessionInfo>(sessionKey)
-
-  if (existing) {
-    // Oturum hâlâ aktif — TTL'i sıfırla (15 dk daha uzat)
-    await redis.expire(sessionKey, SESSION_TTL)
-    
-    return existing
+  const redis = getRedis()
+  if (!redis) {
+    return {
+      sessionId: randomUUID(),
+      startedAt: new Date().toISOString(),
+      messageCount: 0,
+      summaryEnabled: false,
+    }
   }
 
-  // Yeni oturum başlat
-  const session: SessionInfo = {
-    sessionId: randomUUID(),
-    startedAt: new Date().toISOString(),
-    messageCount: 0,
-    summaryEnabled,
-  }
+  try {
+    const sessionKey = `session:${clientId}`
+    const existing = await redis.get<SessionInfo>(sessionKey)
 
-  await redis.set(sessionKey, session, { ex: SESSION_TTL })
-  if (summaryEnabled) { await redis.sadd('sessions_to_summarize', `${clientId}:${session.sessionId}:${session.startedAt}`) }
-  return session
+    if (existing) {
+      // Oturum hâlâ aktif — TTL'i sıfırla (15 dk daha uzat)
+      await redis.expire(sessionKey, SESSION_TTL)
+      return existing
+    }
+
+    // Yeni oturum başlat
+    const session: SessionInfo = {
+      sessionId: randomUUID(),
+      startedAt: new Date().toISOString(),
+      messageCount: 0,
+      summaryEnabled,
+    }
+
+    await redis.set(sessionKey, session, { ex: SESSION_TTL })
+    if (summaryEnabled) {
+      await redis.sadd('sessions_to_summarize', `${clientId}:${session.sessionId}:${session.startedAt}`)
+    }
+    return session
+  } catch {
+    return {
+      sessionId: randomUUID(),
+      startedAt: new Date().toISOString(),
+      messageCount: 0,
+      summaryEnabled: false,
+    }
+  }
 }
 
 /**
@@ -68,6 +98,9 @@ export async function addMessageToSession(
   model: string,
   provider: string
 ): Promise<void> {
+  const redis = getRedis()
+  if (!redis) return
+
   const messagesKey = `session_messages:${sessionId}`
   const sessionKey = `session:${clientId}`
 
@@ -103,6 +136,9 @@ export async function addMessageToSession(
  * Bir oturumun tüm mesajlarını Redis'ten getirir.
  */
 export async function getSessionMessages(sessionId: string): Promise<SessionMessage[]> {
+  const redis = getRedis()
+  if (!redis) return []
+
   const messagesKey = `session_messages:${sessionId}`
   const rawMessages = await redis.lrange(messagesKey, 0, -1)
 
@@ -162,6 +198,9 @@ export async function generateSessionSummary(
  * Müşterinin aktif oturum bilgisini döndürür (yoksa null).
  */
 export async function getActiveSession(clientId: string): Promise<SessionInfo | null> {
+  const redis = getRedis()
+  if (!redis) return null
+
   const sessionKey = `session:${clientId}`
   return await redis.get<SessionInfo>(sessionKey)
 }

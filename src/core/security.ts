@@ -7,10 +7,6 @@ import { checkDomainWhitelist } from '../middleware/domainWhitelister.js';
 import { checkRateLimit } from '../middleware/rateLimiter.js';
 import { supabase } from '../utils/supabaseClient.js';
 
-// GEÇİCİ: verifyClient şu an clients tablosundan yalnızca (id, name, is_active)
-// seçiyor; client_type, allowed_domains ve allowed_models kolonları sorguya dahil
-// değil. O select genişletildiğinde bu ek sorgu tamamen kalkacak ve veriler
-// doğrudan verifyClient'ın döndürdüğü kayıttan okunacak.
 interface ClientPolicy {
   clientType: 'browser-based' | 'server-based';
   allowedDomains: string[];
@@ -21,7 +17,28 @@ interface ClientPolicy {
   maxOutputPrice: number | null;
 }
 
-async function fetchClientPolicy(clientId: string): Promise<ClientPolicy> {
+async function resolveClientPolicy(clientRecord: Record<string, unknown>, clientId: string): Promise<ClientPolicy> {
+  // verifyClient (IDatabase üzerinden) politika alanlarını doğrudan dönebiliyor;
+  // böylece saf PostgreSQL, Docker veya özel veritabanı adaptörlerinde ek bir
+  // Supabase sorgusuna gerek kalmıyor.
+  if ('client_type' in clientRecord || 'allowed_domains' in clientRecord || 'allowed_models' in clientRecord) {
+    return {
+      clientType: (clientRecord.client_type as ClientPolicy['clientType']) ?? 'server-based',
+      allowedDomains: (clientRecord.allowed_domains as string[] | null) ?? [],
+      allowedModels: (clientRecord.allowed_models as string[] | null) ?? [],
+      maxOutputPrice: (clientRecord.max_output_price as number | null) ?? null,
+    };
+  }
+
+  if (!process.env.SUPABASE_URL) {
+    return {
+      clientType: 'server-based',
+      allowedDomains: [],
+      allowedModels: [],
+      maxOutputPrice: null,
+    };
+  }
+
   const { data } = await supabase
     .from('clients')
     .select('client_type, allowed_domains, allowed_models, max_output_price')
@@ -36,9 +53,7 @@ async function fetchClientPolicy(clientId: string): Promise<ClientPolicy> {
   };
 }
 
-// Client başına hız limiti şemada tutulmuyor; tüm client'lar için aynı varsayılan
-// uygulanıyor. wf-ortak §4 dakika/saat/gün seviyelerinde istemci bazlı limit
-// istiyor — bunun için clients tablosuna limit kolonları eklenmesi gerekiyor.
+// Client başına hız limiti varsayılanı (client kaydında rate_limit varsa o kullanılır).
 const DEFAULT_REQUESTS_PER_MINUTE = 60;
 
 export type SecurityOutcome =
@@ -59,7 +74,7 @@ export async function runSecurityChain(options: {
   }
 
   const clientId = String(auth.client.id);
-  const policy = await fetchClientPolicy(clientId);
+  const policy = await resolveClientPolicy(auth.client as Record<string, unknown>, clientId);
 
   // 2. Domain — yalnızca tarayıcı tabanlı client'lara uygulanır
   const domain = checkDomainWhitelist(policy.clientType, policy.allowedDomains, options.origin);
@@ -68,7 +83,8 @@ export async function runSecurityChain(options: {
   }
 
   // 3. Hız limiti — Redis INCR + TTL
-  const rate = await checkRateLimit(clientId, DEFAULT_REQUESTS_PER_MINUTE, 60);
+  const clientLimit = Number(auth.client.rate_limit) > 0 ? Number(auth.client.rate_limit) : DEFAULT_REQUESTS_PER_MINUTE;
+  const rate = await checkRateLimit(clientId, clientLimit, 60);
   if (!rate.success) {
     return { ok: false, status: Number(rate.status), error: String(rate.error) };
   }

@@ -1,26 +1,39 @@
 {
   "name": "ai-proxy-gateway",
   "version": "1.0.0",
-  "description": "",
+  "description": "High-performance, modular AI API Gateway with multi-provider routing, cost tracking, rate limiting, and pluggable storage.",
   "main": "index.js",
   "type": "module",
   "scripts": {
     "dev": "tsx watch --env-file=.env src/server.ts",
+    "start": "tsx src/server.ts",
+    "db:migrate": "tsx --env-file=.env scripts/migrate.ts",
+    "db:push": "drizzle-kit push",
     "mock": "tsx watch --env-file=.env mock-server/index.ts",
     "mock-vault": "tsx watch --env-file=.env mock-vault/index.ts",
     "test": "echo \"No tests specified yet. Passing by default.\" && exit 0"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/umrtkyrk/ai-proxy-gateway.git"
+    "url": "git+https://github.com/ai-proxy-gateway-org/ai-proxy-gateway.git"
   },
-  "keywords": [],
+  "keywords": [
+    "ai",
+    "llm",
+    "proxy",
+    "gateway",
+    "openai",
+    "anthropic",
+    "gemini",
+    "hono",
+    "edge"
+  ],
   "author": "",
   "license": "ISC",
   "bugs": {
-    "url": "https://github.com/umrtkyrk/ai-proxy-gateway/issues"
+    "url": "https://github.com/ai-proxy-gateway-org/ai-proxy-gateway/issues"
   },
-  "homepage": "https://github.com/umrtkyrk/ai-proxy-gateway#readme",
+  "homepage": "https://github.com/ai-proxy-gateway-org/ai-proxy-gateway#readme",
   "devDependencies": {
     "@types/node": "^26.2.0",
     "autocannon": "^8.0.0",

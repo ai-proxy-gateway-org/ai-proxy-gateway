@@ -115,14 +115,16 @@ app.post('/v1/chat/completions', authMiddleware, rateLimitMiddleware, async (c) 
 
 
 
-    let fetchUrl = 'https://api.openai.com/v1/chat/completions';
+    const openaiBase = (process.env.OPENAI_BASE_URL || 'https://api.openai.com').replace(/\/+$/, '');
+    let fetchUrl = `${openaiBase}/v1/chat/completions`;
     let headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${realApiKey}`
     };
 
     if (provider === 'anthropic') {
-      fetchUrl = 'https://api.anthropic.com/v1/messages';
+      const anthropicBase = (process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com').replace(/\/+$/, '');
+      fetchUrl = `${anthropicBase}/v1/messages`;
       headers = {
         'Content-Type': 'application/json',
         'x-api-key': realApiKey,
@@ -130,7 +132,8 @@ app.post('/v1/chat/completions', authMiddleware, rateLimitMiddleware, async (c) 
       };
     } else if (provider === 'gemini') {
       // Gemini'nin OpenAI uyumluluk katmanını kullanıyoruz (OpenAI formatıyla çalışır)
-      fetchUrl = `https://generativelanguage.googleapis.com/v1beta/openai/chat/completions`;
+      const geminiBase = (process.env.GEMINI_BASE_URL || 'https://generativelanguage.googleapis.com').replace(/\/+$/, '');
+      fetchUrl = `${geminiBase}/v1beta/openai/chat/completions`;
       headers = {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${realApiKey}`
@@ -321,12 +324,13 @@ if (process.env.ENABLE_PORTAL === 'true') {
 // Yalnızca yerelde, Vercel dışında çalışırken başlasın.
 if (process.env.VERCEL !== '1') {
   const port = process.env.PORT ? parseInt(process.env.PORT) : 3000;
-  console.log(`Hono Server http://127.0.0.1:${port} started atı`);
+  const hostname = process.env.HOST || '127.0.0.1';
+  console.log(`Hono Server started at http://${hostname}:${port}`);
 
   serve({
     fetch: app.fetch,
     port,
-    hostname: '127.0.0.1' // Node.js v17+ IPv6 localhost çakışmasını önler
+    hostname
   });
 }
 

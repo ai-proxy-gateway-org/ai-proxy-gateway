@@ -1,11 +1,9 @@
 // src/db/DrizzleAdapter.ts
 import type { IDatabase } from '../interfaces/IDatabase.js';
 import { db } from './index.js'; // Senin kurduğun Drizzle bağlantısı
-import { clients, client_keys, logs, sessions } from './schema.js';
-// ...
-import { eq, desc } from 'drizzle-orm';
+import { clients, client_keys, logs, sessions, users, model_catalog } from './schema.js';
+import { and, eq, desc } from 'drizzle-orm';
 import { hashApiKey, generateProxyKey } from '../utils/auth.js';
-import { supabase } from '../utils/supabaseClient.js';
 import pricingData from '../model_pricing.json' with { type: 'json' };
 
 
@@ -21,6 +19,10 @@ export class DrizzleAdapter implements IDatabase {
       const [newClient] = await db.insert(clients)
         .values({ name, client_type: 'server-based' })
         .returning({ id: clients.id });
+
+      if (!newClient) {
+        return { success: false, error: 'Failed to insert client' };
+      }
 
       const plainApiKey = generateProxyKey();
       const hashedKey = hashApiKey(plainApiKey);
@@ -41,7 +43,9 @@ export class DrizzleAdapter implements IDatabase {
       const hashedKey = hashApiKey(token);
       const [keyData] = await db.select().from(client_keys).where(eq(client_keys.key_hash, hashedKey));
 
-      if (!keyData) return { success: false, error: 'Unauthorized: Key not found', status: 401 };
+      if (!keyData || !keyData.is_active || !keyData.client_id) {
+        return { success: false, error: 'Unauthorized: Key not found', status: 401 };
+      }
 
       const [clientData] = await db.select().from(clients).where(eq(clients.id, keyData.client_id));
 
@@ -49,14 +53,12 @@ export class DrizzleAdapter implements IDatabase {
         return { success: false, error: 'Forbidden: Client is inactive or not found', status: 403 };
       }
 
-      
       let userData = null;
       if (keyData.user_id) {
-        // Fetch user manually since users is not in schema.ts
-        const { data } = await supabase.from('users').select('*').eq('id', keyData.user_id).single();
-        if (data) userData = data;
+        const [foundUser] = await db.select().from(users).where(eq(users.id, keyData.user_id));
+        if (foundUser) userData = foundUser;
       }
-      return { success: true, client: clientData, user: userData };
+      return { success: true, client: clientData, user: userData, keyId: keyData.id };
   
     } catch (error) {
       return { success: false, error: 'Internal Server Error', status: 500 };
@@ -68,7 +70,7 @@ export class DrizzleAdapter implements IDatabase {
       const [newLog] = await db.insert(logs)
         .values({ client_id: clientId, provider, model, status: 'pending', prompt: prompt ?? null })
         .returning({ id: logs.id });
-      return newLog.id;
+      return newLog?.id ?? null;
     } catch (error) {
       return null;
     }
@@ -87,12 +89,11 @@ export class DrizzleAdapter implements IDatabase {
         // orada girilen/doğrulanan güncel prices. model_pricing.json çok
         // eski ve sadece 3 model içeriyor, artık yalnızca model_catalog'da
         // henüz kaydı olmayan bir model için yedek (fallback) olarak kullanılıyor.
-        const { data: katalogKaydi } = await supabase
-          .from('model_catalog')
-          .select('input_price, output_price')
-          .eq('provider', provider)
-          .eq('model', model)
-          .maybeSingle();
+        const [katalogKaydi] = await db
+          .select({ input_price: model_catalog.input_price, output_price: model_catalog.output_price })
+          .from(model_catalog)
+          .where(and(eq(model_catalog.provider, provider), eq(model_catalog.model, model)))
+          .limit(1);
 
         if (katalogKaydi && katalogKaydi.input_price != null && katalogKaydi.output_price != null) {
           // model_catalog pricesı da (model_pricing.json ile aynı birimde)

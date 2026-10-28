@@ -17,7 +17,18 @@
 import { Redis } from '@upstash/redis';
 import { supabase } from '../utils/supabaseClient.js';
 
-const redis = Redis.fromEnv();
+let _redis: Redis | null = null;
+const redis = new Proxy({} as Redis, {
+  get(_target, prop, receiver) {
+    if (!_redis) {
+      _redis = new Redis({
+        url: process.env.UPSTASH_REDIS_REST_URL || 'http://127.0.0.1:8079',
+        token: process.env.UPSTASH_REDIS_REST_TOKEN || 'unconfigured',
+      });
+    }
+    return Reflect.get(_redis, prop, receiver);
+  },
+});
 
 // Aylık sayaç 40 gün, günlük 48 saat yaşıyor: dönem bittikten sonra
 // kendiliğinden düşüyor, temizlik işi kalmıyor.

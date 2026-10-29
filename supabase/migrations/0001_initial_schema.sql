@@ -4,7 +4,7 @@
 -- Safe to run multiple times (idempotent via IF NOT EXISTS).
 -- =============================================================================
 
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+-- CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- 1. Clients (Organizations / Teams)
 CREATE TABLE IF NOT EXISTS clients (

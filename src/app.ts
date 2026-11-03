@@ -12,7 +12,8 @@ import {
 import { runSecurityChain } from './core/security.js';
 
 // Hono uygulamasını başlatıyoruz
-const app = new Hono();
+type AppVariables = { client: any; user: any };
+const app = new Hono<{ Variables: AppVariables }>();
 
 // CORS destegi
 app.use('*', cors({
@@ -251,7 +252,7 @@ app.get('/v1/sessions/current', authMiddleware, async (c) => {
 // Belirli bir oturumun mesajlarını getir (aktif oturum — Redis'ten)
 app.get('/v1/sessions/:sessionId/messages', authMiddleware, async (c) => {
   const client = c.get('client');
-  const sessionId = c.req.param('sessionId');
+  const sessionId = c.req.param('sessionId')!;
   const session = await getActiveSession(client.id);
 
   if (!session || session.sessionId !== sessionId) {
@@ -265,7 +266,7 @@ app.get('/v1/sessions/:sessionId/messages', authMiddleware, async (c) => {
 // Manuel olarak özet tetikle (oturum bitmeden de çağrılabilir)
 app.post('/v1/sessions/:sessionId/summarize', authMiddleware, async (c) => {
   const client = c.get('client');
-  const sessionId = c.req.param('sessionId');
+  const sessionId = c.req.param('sessionId')!;
   const messages = await getSessionMessages(sessionId);
 
   if (messages.length === 0) {
@@ -301,11 +302,11 @@ app.get('/v1/sessions/history', authMiddleware, async (c) => {
 // Admin (yönetim paneli) her kurulumda gerekli — müşteri/price/model
 // yönetimi başka yoldan yapılamıyor. Bu yüzden koşulsuz yükleniyor.
 const { adminRoutes } = await import('./routes/admin.js');
-adminRoutes(app);
+adminRoutes(app as any);
 
 // Tek kullanımlık anahtar teslim rotası — portal kapalı olsa bile çalışır
 const { revealRoutes } = await import('./routes/reveal.js');
-revealRoutes(app);
+revealRoutes(app as any);
 
 // Portal (müşteri paneli) her şirket için gerekli değil — bazı kurulumlarda
 // cost merkezi olarak takip ediliyor, kullanıcı kendi harcamasını
@@ -314,7 +315,7 @@ revealRoutes(app);
 // kaydını atlardı. Böyle, kapalıyken o kod hiç çalışmıyor.
 if (process.env.ENABLE_PORTAL === 'true') {
   const { portalRoutes } = await import('./routes/portal.js');
-  portalRoutes(app);
+  portalRoutes(app as any);
 }
 
 // Lokal test için Node.js sunucusunu ayağa kaldırma.

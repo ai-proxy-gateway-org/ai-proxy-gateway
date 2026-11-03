@@ -8,7 +8,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: ai_proxy_gateway
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./supabase/migrations:/docker-entrypoint-initdb.d:ro
@@ -22,6 +22,7 @@ services:
     build: .
     container_name: ai-proxy-gateway
     restart: unless-stopped
+    command: ["sh", "-c", "npm run db:migrate && npm run start"]
     ports:
       - "3000:3000"
     env_file:
@@ -30,7 +31,7 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: 3000
-      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/ai_proxy_gateway}
+      DATABASE_URL: ${DOCKER_DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/ai_proxy_gateway}
     depends_on:
       postgres:
         condition: service_healthy

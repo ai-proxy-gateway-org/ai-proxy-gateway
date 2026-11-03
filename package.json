@@ -15,6 +15,7 @@
     "key:create": "tsx scripts/create-key.ts",
     "mock": "tsx watch mock-server/index.ts",
     "mock-vault": "tsx watch mock-vault/index.ts",
+    "typecheck": "tsc --noEmit",
     "test": "tsx src/test.ts"
   },
   "repository": {

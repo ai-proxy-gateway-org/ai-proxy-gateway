@@ -5093,7 +5093,7 @@ export function adminRoutes(app: Hono) {
       let summarized = 0;
       
       for (const s of sessions) {
-        const [clientId, sessionId, startedAt] = s.split(':');
+        const [clientId = '', sessionId = '', startedAt = new Date().toISOString()] = String(s).split(':');
         const isActive = await redis.exists(`session:${clientId}`);
         
         // E�er session key'i silinmi�se (15 dk TTL dolmu�sa), art�k oturum kapanm��t�r, �zetle!
@@ -5207,7 +5207,7 @@ app.get('/admin/api/cron/prices', async (c) => {
 
     await supabase.from('users').update({ 
         role: g?.role === 'owner' ? 'owner' : 'member',
-        rate_limit: musteri[0]?.rate_limit
+        rate_limit: musteri?.[0]?.rate_limit
       }).eq('id', sonuc.hesap.id);
 
     // Şifre yalnızca burada dönüyor; veritabanında karması duruyor.

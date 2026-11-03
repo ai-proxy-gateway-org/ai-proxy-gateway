@@ -81,7 +81,11 @@ Route requests across OpenAI, Anthropic, Google Gemini, or custom OpenAI-compati
 
 ### Option A: Docker Compose (Zero-Cloud Local / Self-Hosted Core Gateway)
 
-Spins up PostgreSQL 16, **automatically executes** [`supabase/migrations/0001_initial_schema.sql`](supabase/migrations/0001_initial_schema.sql) via `/docker-entrypoint-initdb.d`, and starts the gateway container on port `3000` (`HOST=0.0.0.0`).
+Requires **Docker Engine** with **Docker Compose v2.24+** (uses `env_file.required: false`).
+
+Spins up PostgreSQL 16 (bound to `127.0.0.1:5432` so it is not exposed to external networks), **automatically runs `npm run db:migrate`** on every container startup (recording applied SQL files in `schema_migrations`), and starts the gateway container on port `3000` (`HOST=0.0.0.0`).
+
+> **Note:** Inside [`docker-compose.yml`](docker-compose.yml), the `gateway` container uses `DOCKER_DATABASE_URL` (defaulting to `postgresql://postgres:postgres@postgres:5432/ai_proxy_gateway`) so that `DATABASE_URL=...@localhost:5432/...` in your host `.env` file never overrides the internal Docker service hostname `postgres`.
 
 ```bash
 git clone https://github.com/ai-proxy-gateway-org/ai-proxy-gateway.git
@@ -140,7 +144,7 @@ OPENAI_API_KEY=sk-proj-...
 
 All 9 database tables (`clients`, `users`, `admin_users`, `client_keys`, `key_deliveries`, `logs`, `sessions`, `model_catalog`, `price_events`), indexes, and initial `model_catalog` seeds (`gpt-4o`, `gpt-4o-mini`, `claude-sonnet-4-20250514`, `claude-3-5-sonnet-latest`, `gemini-2.5-flash`) are defined in [`supabase/migrations/0001_initial_schema.sql`](supabase/migrations/0001_initial_schema.sql).
 
-Apply them with a single command:
+Apply them with a single command (tracks applied files in `schema_migrations` so each migration runs only once, in addition to using idempotent SQL):
 
 ```bash
 npm run db:migrate
@@ -290,6 +294,7 @@ Understanding how `POST /v1/chat/completions` routes and processes requests help
 | `npm run key:create -- "<Name>" [env]` | Create a new client and generate a `sk-proxy-*` API key via CLI |
 | `npm run mock` | Start local Hono mock AI provider server on `http://127.0.0.1:4000` (zero API cost) |
 | `npm run mock-vault` | Start local mock Vault server on `http://127.0.0.1:4000` for testing SWR key encryption |
+| `npm run typecheck` | Run TypeScript compiler check (`tsc --noEmit`) across all source files |
 | `npm test` | Run the database, auth, domain allowlist, rate-limit, and logging integration suite (`src/test.ts`) |
 
 ---

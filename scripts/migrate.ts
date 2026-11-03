@@ -19,6 +19,19 @@ async function runMigrations() {
   const sql = postgres(databaseUrl!, { max: 1 });
 
   try {
+    // Ensure migration tracking table exists
+    await sql`
+      CREATE TABLE IF NOT EXISTS schema_migrations (
+        filename VARCHAR(255) PRIMARY KEY,
+        applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `;
+
+    const appliedRows = await sql<{ filename: string }[]>`
+      SELECT filename FROM schema_migrations
+    `;
+    const appliedSet = new Set(appliedRows.map((r) => r.filename));
+
     const files = readdirSync(migrationsDir)
       .filter((f) => f.endsWith('.sql'))
       .sort();
@@ -29,12 +42,23 @@ async function runMigrations() {
     }
 
     for (const file of files) {
+      if (appliedSet.has(file)) {
+        console.log(`⏭️  Skipping already applied migration: ${file}`);
+        continue;
+      }
+
       const fullPath = join(migrationsDir, file);
       const content = readFileSync(fullPath, 'utf8').trim();
       if (!content) continue;
 
       console.log(`⏳ Applying migration: ${file}...`);
-      await sql.unsafe(content);
+      await sql.begin(async (tx) => {
+        await tx.unsafe(content);
+        await tx.unsafe(
+          'INSERT INTO schema_migrations (filename) VALUES ($1) ON CONFLICT (filename) DO NOTHING',
+          [file]
+        );
+      });
       console.log(`✅ Applied: ${file}`);
     }
 

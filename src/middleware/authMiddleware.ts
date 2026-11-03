@@ -14,7 +14,7 @@ export async function authMiddleware(c: Context, next: Next) {
     return c.json({ error: 'Unauthorized: Missing or invalid token' }, 401);
   }
 
-  const token = authHeader.split(' ')[1];
+  const token = authHeader.split(' ')[1] || '';
   const result = await verifyClient(token);
 
   if (!result.success) {

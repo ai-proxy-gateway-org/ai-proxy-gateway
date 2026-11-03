@@ -188,6 +188,69 @@ Switch providers anytime just by changing `model`:
 
 ---
 
+## 💻 Using with Official SDKs
+
+Because `POST /v1/chat/completions` exposes a **unified OpenAI-compatible interface** and translates upstream authentication headers (`Bearer`, `x-api-key`, `anthropic-version`) on the server side, you can use the official OpenAI SDK in any language to call **OpenAI, Anthropic Claude, and Google Gemini** by changing only `baseURL` and `apiKey`:
+
+### TypeScript / Node.js (`npm install openai`)
+
+```typescript
+import OpenAI from 'openai';
+
+const client = new OpenAI({
+  baseURL: 'http://127.0.0.1:3000/v1',
+  apiKey: process.env.PROXY_API_KEY, // sk-proxy-...
+});
+
+// 1. Call OpenAI
+const gpt = await client.chat.completions.create({
+  model: 'gpt-4o-mini',
+  messages: [{ role: 'user', content: 'Hello from OpenAI!' }],
+});
+
+// 2. Call Anthropic Claude (same SDK, same Bearer token!)
+const claude = await client.chat.completions.create({
+  model: 'claude-3-5-sonnet-latest',
+  messages: [{ role: 'user', content: 'Hello from Claude!' }],
+});
+
+// 3. Call Google Gemini (same SDK, same Bearer token!)
+const gemini = await client.chat.completions.create({
+  model: 'gemini-2.5-flash',
+  messages: [{ role: 'user', content: 'Hello from Gemini!' }],
+});
+```
+
+### Python (`pip install openai`)
+
+```python
+from openai import OpenAI
+
+client = OpenAI(
+    base_url="http://127.0.0.1:3000/v1",
+    api_key="sk-proxy-your-key-here",
+)
+
+response = client.chat.completions.create(
+    model="gemini-2.5-flash",  # or "gpt-4o" / "claude-3-5-sonnet-latest"
+    messages=[{"role": "user", "content": "Explain quantum computing in one sentence."}],
+)
+print(response.choices[0].message.content)
+```
+
+### 📜 Available NPM Scripts
+
+| Command | Description |
+|---------|-------------|
+| `npm run dev` | Start local development server with hot-reload (`tsx watch`) |
+| `npm run start` | Start production Node.js server (`src/server.ts`) |
+| `npm run db:migrate` | Apply all SQL migrations in `supabase/migrations/` using `DATABASE_URL` |
+| `npm run db:push` | Push Drizzle TypeScript schema (`src/db/schema.ts`) directly to PostgreSQL |
+| `npm run mock` | Start local mock AI provider server on `http://localhost:4000` (zero API cost) |
+| `npm run mock-vault` | Start local mock Vault server for testing SWR key encryption and rotation |
+
+---
+
 ## 🔌 Adapting to Your Stack
 
 AI Proxy Gateway is architected around decoupled interfaces so you can swap databases, caches, secret managers, runtimes, or AI backends without rewriting the core proxy.
@@ -424,6 +487,21 @@ ai-proxy-gateway/
 | `CRON_SECRET` | ❌ | — | Bearer secret for triggering `/admin/api/cron/prices` |
 | `HOST` | ❌ | `127.0.0.1` | Bind address for Node.js server (`0.0.0.0` in Docker) |
 | `PORT` | ❌ | `3000` | HTTP listen port for Node.js server |
+
+---
+
+## 🛠️ Troubleshooting
+
+| Status / Symptom | Cause | How to Fix |
+|------------------|-------|------------|
+| `401 Unauthorized` (`Missing or Invalid Token`) | Request is missing `Authorization: Bearer sk-proxy-...` header | Pass the key as a Bearer token: `-H "Authorization: Bearer sk-proxy-..."` |
+| `401 Unauthorized` (`Key not found`) | The `sk-proxy-*` key does not exist in `client_keys` or was revoked (`is_active = false`) | Issue a new key in `/admin` or run `npx tsx --env-file=.env src/test.ts` |
+| `403 Forbidden` (`Client is inactive`) | The parent organization in `clients` has `is_active = false` | Re-enable the client in `/admin` or update `clients.is_active = true` |
+| `403 Forbidden` (`Origin not allowed`) | Client is configured as `browser-based` and request `Origin` is not in `allowed_domains` | Add your frontend domain to `allowed_domains` in `/admin` or switch client type to `server-based` |
+| `429 Too Many Requests` | Client exceeded per-minute `rate_limit` or daily/monthly USD budget | Increase `rate_limit`, `daily_budget`, or `monthly_budget` for the client/user in `/admin` |
+| `500 Internal Edge Proxy Error` (`*_API_KEY was not found`) | Neither `VAULT_API_URL` nor the provider's `*_API_KEY` is configured | Set `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` in `.env`, or start `ai-vault-server` |
+| `Migration failed: ENOTFOUND` | `DATABASE_URL` points to an unreachable host or a paused Supabase Free Tier project | Resume your database in the Supabase dashboard, or switch `DATABASE_URL` to a local/Docker PostgreSQL instance |
+| `Long-running request timeout on Vercel` | Vercel Hobby plan enforces function execution timeouts (10s–60s) on slow reasoning models | Upgrade to Vercel Pro (up to 300s) or deploy via the included `Dockerfile` / `docker-compose.yml` for unrestricted connection durations |
 
 ---
 

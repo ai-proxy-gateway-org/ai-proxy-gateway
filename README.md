@@ -2,16 +2,16 @@
   <img src="https://img.shields.io/badge/runtime-Node.js%20%7C%20Edge-E36002?style=for-the-badge&logo=hono&logoColor=white" alt="Hono" />
   <img src="https://img.shields.io/badge/deploy-Docker%20%7C%20Vercel%20%7C%20Cloud-000000?style=for-the-badge&logo=docker&logoColor=white" alt="Deploy" />
   <img src="https://img.shields.io/badge/database-PostgreSQL%20%7C%20Pluggable-336791?style=for-the-badge&logo=postgresql&logoColor=white" alt="Database" />
-  <img src="https://img.shields.io/badge/cache-Redis%20(Optional)-DC382D?style=for-the-badge&logo=redis&logoColor=white" alt="Redis" />
+  <img src="https://img.shields.io/badge/cache-Redis%20(Upstash%20%7C%20SRH)-DC382D?style=for-the-badge&logo=redis&logoColor=white" alt="Redis" />
   <img src="https://img.shields.io/badge/orm-Drizzle-C5F74F?style=for-the-badge&logo=drizzle&logoColor=black" alt="Drizzle" />
   <img src="https://img.shields.io/badge/language-TypeScript-3178C6?style=for-the-badge&logo=typescript&logoColor=white" alt="TypeScript" />
 </p>
 
 # 🚀 AI Proxy Gateway
 
-**A blazing-fast, modular, infrastructure-agnostic AI API Gateway.**
+**A modular, infrastructure-agnostic AI API Gateway for multi-provider routing, cost tracking, and key management.**
 
-Route requests across OpenAI, Anthropic, Google Gemini, or custom OpenAI-compatible endpoints through a single unified API — with built-in authentication, rate limiting, cost tracking, session summarization, and a full admin console. Built on [Hono](https://hono.dev/) with a pluggable adapter architecture so you can deploy anywhere: **Docker, Kubernetes, bare-metal Node.js, AWS/Railway/Fly.io, or Vercel Edge/Serverless**.
+Route requests across OpenAI, Anthropic, Google Gemini, or custom OpenAI-compatible endpoints through a single unified API — with built-in authentication, rate limiting, cost tracking, session summarization, and an admin console. Built on [Hono](https://hono.dev/) with a pluggable storage adapter (`IDatabase`) so you can run it anywhere: **Docker Compose, Kubernetes, standalone Node.js VMs, AWS/Railway/Fly.io, or Vercel Serverless/Edge**.
 
 ---
 
@@ -19,21 +19,19 @@ Route requests across OpenAI, Anthropic, Google Gemini, or custom OpenAI-compati
 
 | Category | Feature | Description |
 |----------|---------|-------------|
-| 🔀 **Routing** | Unified Endpoint | Single `POST /v1/chat/completions` routes to OpenAI, Anthropic, Gemini, or custom endpoints |
+| 🔀 **Routing** | Unified Endpoint | Single `POST /v1/chat/completions` routes to OpenAI, Anthropic, Gemini, or custom endpoints based on model prefix |
 | 🔌 **Modularity** | Pluggable Storage | Adapter pattern (`IDatabase`) works out-of-the-box with PostgreSQL/Supabase or custom adapters (MongoDB, MySQL, SQLite) |
-| 🛡️ **Security** | API Key Management | Issue `sk-proxy-*` keys per client. Keys are SHA-256 hashed — never stored in plaintext |
-| 🛡️ **Security** | Vault Integration | Store provider secrets in an isolated Vault server or fall back to environment/secret-manager variables |
-| 🛡️ **Security** | One-Time Key Delivery | Generated keys are delivered via AES-256-GCM encrypted single-use links |
-| ⚡ **Performance** | SWR Caching | Stale-While-Revalidate pattern for Vault keys — 0 ms latency overhead on cache hits |
-| ⚡ **Performance** | Portable Runtime | Runs natively on Node.js, Docker containers, or Vercel Edge (17,750+ req/sec benchmarked) |
-| 🛡️ **Protection** | Fail-Open Rate Limiting | Redis-backed fixed-window rate limiter that degrades gracefully when Redis is omitted or unreachable |
-| 💸 **Cost Control** | Token & Cost Tracking | Every request logged with input/output tokens, latency, and calculated USD cost |
+| 🛡️ **Security** | API Key Management | Issue `sk-proxy-*` keys per client via CLI or UI. Keys are SHA-256 hashed — never stored in plaintext |
+| 🛡️ **Security** | Vault Integration | Store provider secrets in an isolated Vault server (`ai-vault-server`) or read from environment/secret-manager variables |
+| 🛡️ **Security** | One-Time Key Delivery | Generated keys can be delivered via AES-256-GCM encrypted single-use links (`/reveal/:token`) |
+| ⚡ **Performance** | SWR Caching | Stale-While-Revalidate pattern for Vault keys — 0 ms latency overhead on Redis cache hits |
+| 🛡️ **Protection** | Rate Limiting | Redis-backed fixed-window rate limiter per client (`rate_limit` req/min) with fail-open fault tolerance |
+| 💸 **Cost Control** | Token & Cost Tracking | Every request logged asynchronously with input/output tokens, latency, and USD cost calculated from `model_catalog` |
 | 💸 **Cost Control** | Budget Limits | Enforce daily and monthly spending caps per organization or user |
-| 💸 **Cost Control** | Dynamic Pricing | Auto-syncs model prices from OpenRouter & LiteLLM with drift verification |
-| 📊 **Analytics** | Admin Console | Built-in zero-build web dashboard — clients, models, pricing, budgets, and session summaries |
-| 📊 **Analytics** | Risk Audit UI | Proactive monitoring interface highlighting flagged prompts and failed requests |
-| 📊 **Analytics** | Customer Portal | Optional self-service portal (`ENABLE_PORTAL=true`) for end-users to track usage and keys |
-| 🧠 **AI Insights** | Session Summarization | Groups conversations into 15-min sessions and auto-generates AI context summaries |
+| 💸 **Cost Control** | Dynamic Pricing | Auto-syncs model prices from OpenRouter & LiteLLM with cross-source drift verification |
+| 📊 **Analytics** | Admin Console | Built-in web dashboard (`/admin`) — clients, users, models, pricing, budgets, risk audit, and session summaries |
+| 📊 **Analytics** | Customer Portal | Optional self-service portal (`/portal`, enabled via `ENABLE_PORTAL=true`) for end-users to track usage and keys |
+| 🧠 **AI Insights** | Session Summarization | Groups conversations into 15-min sliding sessions and generates AI context summaries |
 
 ---
 
@@ -55,7 +53,7 @@ Route requests across OpenAI, Anthropic, Google Gemini, or custom OpenAI-compati
 │                                      │  default → OpenAI / Custom │  │
 │  ┌───────────────────┐  ┌──────────┴───────────┐  └───────┬───────┘  │
 │  │  Session Tracker  │  │  dbService Adapter   │          │          │
-│  │  (Optional Redis) │  │ Postgres / MongoDB / │          │          │
+│  │  (Redis 15m TTL)  │  │ Postgres / MongoDB / │          │          │
 │  └───────────────────┘  │ Custom IDatabase     │          │          │
 │                         └──────────────────────┘          │          │
 └───────────────────────────┬───────────────────────────────┼──────────┘
@@ -70,37 +68,46 @@ Route requests across OpenAI, Anthropic, Google Gemini, or custom OpenAI-compati
                                               └────────────────────────┘
 ```
 
+### Core Gateway vs. Web UI Dashboards (`/admin` & `/portal`)
+
+| Component | Database Connection Used | Cloud Account Required? |
+|-----------|--------------------------|-------------------------|
+| **Core Proxy Gateway** (`POST /v1/chat/completions`, `/v1/sessions/*`, CLI scripts `db:migrate` & `key:create`) | Standard PostgreSQL (`DATABASE_URL` via Drizzle ORM) **or** any custom [`IDatabase`](src/interfaces/IDatabase.ts) adapter | **No** — runs 100% locally with Docker PostgreSQL, Neon, RDS, Railway, or custom DB |
+| **Web Dashboards** (`/admin` Admin Console & `/portal` Customer Portal) | Supabase REST client (`SUPABASE_URL` + `SUPABASE_SERVICE_KEY`) | **Requires Supabase** (Free Tier cloud project or [Self-Hosted Supabase](https://supabase.com/docs/guides/self-hosting/docker)). Without Supabase, use `npm run key:create` and SQL to manage clients/keys |
+
 ---
 
 ## 🚀 Quick Start
 
-Choose the setup workflow that matches your environment.
+### Option A: Docker Compose (Zero-Cloud Local / Self-Hosted Core Gateway)
 
-### Option A: One-Command Setup with Docker Compose (Self-Hosted / Local)
-
-Spins up PostgreSQL 16, **automatically applies all SQL migrations** from [`supabase/migrations/0001_initial_schema.sql`](supabase/migrations/0001_initial_schema.sql), and starts the gateway on port `3000` — no cloud accounts required.
+Spins up PostgreSQL 16, **automatically executes** [`supabase/migrations/0001_initial_schema.sql`](supabase/migrations/0001_initial_schema.sql) via `/docker-entrypoint-initdb.d`, and starts the gateway container on port `3000` (`HOST=0.0.0.0`).
 
 ```bash
 git clone https://github.com/ai-proxy-gateway-org/ai-proxy-gateway.git
 cd ai-proxy-gateway
 
 cp .env.example .env
-# Add at least one provider key (e.g., OPENAI_API_KEY=sk-...) in .env
+# Edit .env and set at least one provider key (e.g., OPENAI_API_KEY=sk-proj-...)
 
 docker compose up -d
+
+# Issue your first client and sk-proxy-* API key inside the running container:
+docker compose exec gateway npm run key:create -- "My First App" production
 ```
 
 The gateway is now live at `http://localhost:3000`.
 
 ---
 
-### Option B: Node.js Setup (Any PostgreSQL, Neon, RDS, Railway, or Supabase)
+### Option B: Node.js Setup (Local Postgres, Supabase, Neon, RDS, or Railway)
 
 #### 1. Prerequisites
-- **Node.js** v20+
-- **PostgreSQL 14+** (local Postgres, Docker, AWS RDS, Neon, Railway, or Supabase) — *or implement [`IDatabase`](src/interfaces/IDatabase.ts) for another database engine (see [Adapting to Your Stack](#-adapting-to-your-stack))*
-- At least one AI provider API key (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY`)
-- *(Optional)* Redis (Upstash REST or self-hosted via HTTP proxy) for distributed rate limiting & session buffering
+- **Node.js v20.6+** (v22 LTS recommended)
+- **PostgreSQL 14+** (local Postgres, Docker, Supabase, Neon, AWS RDS, or Railway) — *or implement [`IDatabase`](src/interfaces/IDatabase.ts) for another database engine (see [Adapting to Your Stack](#-adapting-to-your-stack))*
+- At least one AI provider API key (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY`) — *or use `npm run mock` for offline zero-key testing*
+- *(Optional, recommended for production)* Redis (`UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN`) for rate limiting, Vault SWR caching, and session buffering
+- *(Optional)* `SUPABASE_URL` + `SUPABASE_SERVICE_KEY` if you want to use the `/admin` and `/portal` web dashboards
 
 #### 2. Clone & Install
 
@@ -116,21 +123,24 @@ npm install
 cp .env.example .env
 ```
 
-Minimal `.env` required to run the core gateway:
+> **Note:** Both `npm run dev` and `npm run start` automatically load `.env` from the working directory via [`src/utils/env.ts`](src/utils/env.ts) (and silently skip it in container/serverless environments where variables are injected by the platform).
+
+Minimal `.env` for the core gateway:
 
 ```env
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/ai_proxy_gateway
-ADMIN_TOKEN=replace-with-a-long-random-secret
-SESSION_SECRET=replace-with-another-random-secret
+ADMIN_TOKEN=generate-with-openssl-rand-hex-32
+SESSION_SECRET=generate-with-openssl-rand-hex-32
 OPENAI_API_KEY=sk-proj-...
 ```
 
-> **Using the Built-in Admin Console (`/admin`) & Customer Portal (`/portal`)?**
-> Add `SUPABASE_URL` and `SUPABASE_SERVICE_KEY` (works with both Supabase Cloud and [Self-Hosted Supabase](https://supabase.com/docs/guides/self-hosting/docker)). See [Environment Variables](#-environment-variables) for all optional modules.
+> ⚠️ **Security Warning:** Always set strong random values for `ADMIN_TOKEN` and `SESSION_SECRET` (e.g., run `openssl rand -hex 32`) before exposing the server to a network.
 
 #### 4. Run Database Migrations
 
-All database tables, constraints, indexes, and baseline model seeds are defined in [`supabase/migrations/0001_initial_schema.sql`](supabase/migrations/0001_initial_schema.sql) and [`src/db/schema.ts`](src/db/schema.ts). Apply them with a single command:
+All 9 database tables (`clients`, `users`, `admin_users`, `client_keys`, `key_deliveries`, `logs`, `sessions`, `model_catalog`, `price_events`), indexes, and initial `model_catalog` seeds (`gpt-4o`, `gpt-4o-mini`, `claude-sonnet-4-20250514`, `claude-3-5-sonnet-latest`, `gemini-2.5-flash`) are defined in [`supabase/migrations/0001_initial_schema.sql`](supabase/migrations/0001_initial_schema.sql).
+
+Apply them with a single command:
 
 ```bash
 npm run db:migrate
@@ -140,14 +150,14 @@ npm run db:migrate
 <summary><strong>Alternative migration methods (Drizzle Kit / psql / Supabase CLI)</strong></summary>
 
 ```bash
-# Option 1: Push schema directly from TypeScript definitions via Drizzle Kit
+# Option 1: Push schema directly from TypeScript definitions (src/db/schema.ts)
 npm run db:push
 
 # Option 2: Standard psql client against any PostgreSQL server
 psql "$DATABASE_URL" -f supabase/migrations/0001_initial_schema.sql
 
-# Option 3: Supabase CLI
-npx supabase db push
+# Option 3: Supabase CLI with explicit database URL
+npx supabase db push --db-url "$DATABASE_URL"
 ```
 </details>
 
@@ -157,40 +167,59 @@ npx supabase db push
 # Development mode (hot-reload)
 npm run dev
 
-# Production mode
+# Production mode (loads .env if present, runs src/server.ts)
 npm run start
 ```
 
-#### 6. Create a Client Key & Send Your First Request
+> **Offline / Zero-Key Testing:** Want to test without real OpenAI/Anthropic/Gemini API keys? Run `npm run mock` in a second terminal (starts a local mock AI provider on `http://127.0.0.1:4000`) and set `OPENAI_BASE_URL=http://127.0.0.1:4000` and `OPENAI_API_KEY=mock-key` in `.env`.
 
-Generate a test client and `sk-proxy-*` key (or issue one via `/admin`):
+#### 6. Create Your First Client & `sk-proxy-*` API Key
+
+**Method 1 — CLI Script (works with any PostgreSQL or custom `IDatabase` adapter):**
 
 ```bash
-npx tsx --env-file=.env src/test.ts
+npm run key:create -- "Acme Backend" production
 ```
 
-Call the unified chat completions endpoint:
+Output:
+```text
+✅ Client and API key created successfully!
+────────────────────────────────────────────────────────────
+Client ID : 7f9c2b10-...
+API Key   : sk-proxy-9a8b7c6d5e4f...
+────────────────────────────────────────────────────────────
+⚠️  Save this API key now — only its SHA-256 hash is stored in the database.
+```
+
+By default, `key:create` creates an active `server-based` client with access to the seeded models (`gpt-4o`, `gpt-4o-mini`, `claude-sonnet-4-20250514`, `claude-3-5-sonnet-latest`, `gemini-2.5-flash`).
+
+**Method 2 — Admin Console Web UI (when `SUPABASE_URL` & `SUPABASE_SERVICE_KEY` are configured):**
+1. Open `http://127.0.0.1:3000/admin` in your browser.
+2. Sign in using your `ADMIN_TOKEN` (from `.env`) to bootstrap your first administrator account (`admin_users`), or sign in with an existing admin email & password.
+3. Under **People / Customers**, create a client or user, configure `allowed_models`, `max_output_price`, and daily/monthly budgets, and issue a new `sk-proxy-*` key (or generate a one-time AES-256-GCM `/reveal/:token` link).
+
+#### 7. Send Your First Request
 
 ```bash
 curl -X POST http://127.0.0.1:3000/v1/chat/completions \
   -H "Authorization: Bearer sk-proxy-your-key-here" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gpt-4o",
+    "model": "gpt-4o-mini",
     "messages": [{"role": "user", "content": "Hello!"}]
   }'
 ```
 
-Switch providers anytime just by changing `model`:
-- **OpenAI:** `gpt-4o`, `gpt-4o-mini`, `o1-mini`, `o3-mini`
-- **Anthropic:** `claude-sonnet-4-20250514`, `claude-3-5-sonnet-latest`, `claude-3-opus-20240229`
+Switch providers just by changing `model`:
+- **OpenAI:** `gpt-4o`, `gpt-4o-mini`, `o3-mini`
+- **Anthropic:** `claude-sonnet-4-20250514`, `claude-3-5-sonnet-latest`
 - **Google Gemini:** `gemini-2.5-flash`, `gemini-2.0-flash`, `gemini-1.5-pro`
 
 ---
 
 ## 💻 Using with Official SDKs
 
-Because `POST /v1/chat/completions` exposes a **unified OpenAI-compatible interface** and translates upstream authentication headers (`Bearer`, `x-api-key`, `anthropic-version`) on the server side, you can use the official OpenAI SDK in any language to call **OpenAI, Anthropic Claude, and Google Gemini** by changing only `baseURL` and `apiKey`:
+Because `POST /v1/chat/completions` accepts `Authorization: Bearer sk-proxy-...` and injects upstream provider headers (`Authorization: Bearer`, `x-api-key` + `anthropic-version`) on the server side, you can use the **official OpenAI SDK** to call OpenAI, Anthropic, and Gemini models by setting `baseURL` and `apiKey`:
 
 ### TypeScript / Node.js (`npm install openai`)
 
@@ -202,19 +231,13 @@ const client = new OpenAI({
   apiKey: process.env.PROXY_API_KEY, // sk-proxy-...
 });
 
-// 1. Call OpenAI
+// 1. OpenAI
 const gpt = await client.chat.completions.create({
   model: 'gpt-4o-mini',
   messages: [{ role: 'user', content: 'Hello from OpenAI!' }],
 });
 
-// 2. Call Anthropic Claude (same SDK, same Bearer token!)
-const claude = await client.chat.completions.create({
-  model: 'claude-3-5-sonnet-latest',
-  messages: [{ role: 'user', content: 'Hello from Claude!' }],
-});
-
-// 3. Call Google Gemini (same SDK, same Bearer token!)
+// 2. Google Gemini (routed via Gemini's OpenAI compatibility layer)
 const gemini = await client.chat.completions.create({
   model: 'gemini-2.5-flash',
   messages: [{ role: 'user', content: 'Hello from Gemini!' }],
@@ -232,22 +255,42 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="gemini-2.5-flash",  # or "gpt-4o" / "claude-3-5-sonnet-latest"
+    model="gpt-4o-mini",
     messages=[{"role": "user", "content": "Explain quantum computing in one sentence."}],
 )
 print(response.choices[0].message.content)
 ```
 
-### 📜 Available NPM Scripts
+> **Note on Anthropic Request/Response Format:** When `model` starts with `claude`, the gateway forwards the request body to Anthropic's `/v1/messages` endpoint (which requires `max_tokens` in the request body and returns `content[0].text` in the JSON response, while the gateway extracts `content[0].text` for audit logging).
+
+---
+
+## 📋 Unified Endpoint Capabilities & Known Limitations
+
+Understanding how `POST /v1/chat/completions` routes and processes requests helps you plan production deployments:
+
+| Aspect | Current Behavior & Scope |
+|--------|--------------------------|
+| **Routing Rule** | Model prefix based: `claude*` → Anthropic (`/v1/messages`), `gemini*` → Google Gemini (`/v1beta/openai/chat/completions`), all other model names → OpenAI (`/v1/chat/completions`). |
+| **Custom `OPENAI_BASE_URL` (Ollama / vLLM / LiteLLM)** | Setting `OPENAI_BASE_URL` redirects the default (non-`claude*`, non-`gemini*`) route to your custom endpoint. Because it overrides the default OpenAI base URL, OpenAI Cloud and a custom `OPENAI_BASE_URL` cannot be used simultaneously on the same instance unless routed through an upstream aggregator like LiteLLM/OpenRouter. |
+| **Response Mode (JSON vs. SSE Streaming)** | The unified `/v1/chat/completions` handler currently parses upstream responses as JSON (`await aiResponse.json()`) to extract token usage and response text for cost logging and session buffering. It is designed for standard (non-streaming) JSON completions. |
+| **Payload Pass-Through (Tools / Vision)** | Request bodies are forwarded as-is (`JSON.stringify(body)`) to the target endpoint. OpenAI and Gemini (via Google's OpenAI-compatible endpoint) share the same payload schema; Anthropic `/v1/messages` expects Anthropic-formatted fields (`max_tokens`, `messages`). |
+| **Redis Fail-Open Mode** | If `UPSTASH_REDIS_REST_URL` is omitted or unreachable, the gateway degrades gracefully (requests succeed without rate limiting or session buffering). **For production deployments, always configure Redis** so rate limits (`rate_limit`) and Vault SWR caching are actively enforced. |
+
+---
+
+## 📜 Available NPM Scripts
 
 | Command | Description |
 |---------|-------------|
-| `npm run dev` | Start local development server with hot-reload (`tsx watch`) |
-| `npm run start` | Start production Node.js server (`src/server.ts`) |
+| `npm run dev` | Start local development server with hot-reload (`tsx watch src/server.ts`) |
+| `npm run start` | Start production Node.js server (`tsx src/server.ts`, auto-loads `.env` if present) |
 | `npm run db:migrate` | Apply all SQL migrations in `supabase/migrations/` using `DATABASE_URL` |
 | `npm run db:push` | Push Drizzle TypeScript schema (`src/db/schema.ts`) directly to PostgreSQL |
-| `npm run mock` | Start local mock AI provider server on `http://localhost:4000` (zero API cost) |
-| `npm run mock-vault` | Start local mock Vault server for testing SWR key encryption and rotation |
+| `npm run key:create -- "<Name>" [env]` | Create a new client and generate a `sk-proxy-*` API key via CLI |
+| `npm run mock` | Start local Hono mock AI provider server on `http://127.0.0.1:4000` (zero API cost) |
+| `npm run mock-vault` | Start local mock Vault server on `http://127.0.0.1:4000` for testing SWR key encryption |
+| `npm test` | Run the database, auth, domain allowlist, rate-limit, and logging integration suite (`src/test.ts`) |
 
 ---
 
@@ -289,20 +332,16 @@ export interface IDatabase {
    ```
 No changes to `src/app.ts` or routing middleware are required.
 
----
+### 2. Redis Options (Upstash vs. Self-Hosted Redis vs. Zero-Redis Dev Mode)
 
-### 2. Redis Options (Self-Hosted Redis vs. Upstash vs. Zero-Redis)
-
-- **Zero-Redis Mode (Default if omitted):** Leave `UPSTASH_REDIS_REST_URL` empty. Rate limiting, Vault SWR caching, and session buffering automatically operate in **fail-open** mode so the gateway works with zero Redis dependency.
+- **Managed Serverless Redis (Upstash):** Set `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN`.
 - **Self-Hosted Redis (Docker / Kubernetes):** Run [`serverless-redis-http` (SRH)](https://github.com/hiett/serverless-redis-http) alongside a standard `redis:7-alpine` container and point `UPSTASH_REDIS_REST_URL` to your local SRH endpoint (`http://srh:80`).
-- **Managed Serverless Redis:** Set `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` from Upstash.
-
----
+- **Zero-Redis Mode (Local Development Only):** Leave `UPSTASH_REDIS_REST_URL` empty. The gateway runs in fail-open mode without Redis.
 
 ### 3. Secret Management Options (Vault vs. Environment / Cloud Secrets)
 
 - **Environment / Secret Managers (Simple):** Leave `VAULT_API_URL` unset and inject `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, and `GEMINI_API_KEY` via `.env`, Docker Secrets, Kubernetes Secrets, AWS Secrets Manager, or Doppler.
-- **Dedicated Vault Server (Zero-Trust Production):** Run the included [`ai-vault-server/`](ai-vault-server) microservice (or a compatible HTTPS endpoint returning `{ "apiKey": "..." }` at `GET /keys/:provider`) and set:
+- **Dedicated Vault Server (Zero-Trust Production):** Run the included [`ai-vault-server/`](ai-vault-server) microservice (or any HTTPS endpoint returning `{ "apiKey": "..." }` at `GET /keys/:provider`) and set:
   ```env
   VAULT_API_URL=https://vault.internal.example.com
   VAULT_ACCESS_TOKEN=your-vault-token
@@ -311,98 +350,93 @@ No changes to `src/app.ts` or routing middleware are required.
 
 ---
 
-### 4. Custom & Self-Hosted LLM Endpoints (Ollama, vLLM, LiteLLM, Azure)
-
-Override upstream provider URLs via environment variables (`OPENAI_BASE_URL`, `ANTHROPIC_BASE_URL`, `GEMINI_BASE_URL`) or run the included local mock server (`npm run mock`) for offline CI/CD testing without spending API credits.
-
----
-
-### 5. Headless Gateway vs. Full Portal Mode
-
-- **Headless / Internal Cost-Center Mode:** Set `ENABLE_PORTAL=false` in `.env` so the customer portal (`/portal`) is never dynamically imported or exposed.
-- **Full B2B / Multi-Team Mode:** Set `ENABLE_PORTAL=true` to give end-users self-service visibility into their own token consumption, budgets, allowed models, and one-time key handover links.
-
----
-
 ## ☁️ Deployment Guides
 
-### Deploy Anywhere with Docker (AWS ECS, Fly.io, Railway, Render, Coolify, K8s)
+### 1. Deploy with Docker (AWS ECS, Fly.io, Railway, Render, Coolify, K8s)
 
-Build and run the standalone container image using the included [`Dockerfile`](Dockerfile):
+The included [`Dockerfile`](Dockerfile) installs production dependencies (`npm ci --omit=dev` — `tsx` is included in `dependencies`) and sets `ENV HOST=0.0.0.0 PORT=3000`:
 
 ```bash
+# 1. Run database migrations against your target PostgreSQL database
+DATABASE_URL="postgresql://user:pass@db-host:5432/ai_proxy" npm run db:migrate
+
+# 2. Build and run the container
 docker build -t ai-proxy-gateway .
 
 docker run -d \
   -p 3000:3000 \
+  -e HOST="0.0.0.0" \
+  -e PORT="3000" \
   -e DATABASE_URL="postgresql://user:pass@db-host:5432/ai_proxy" \
   -e OPENAI_API_KEY="sk-proj-..." \
-  -e ADMIN_TOKEN="your-secret" \
-  -e SESSION_SECRET="your-session-secret" \
+  -e ADMIN_TOKEN="your-strong-random-secret" \
+  -e SESSION_SECRET="your-strong-session-secret" \
   ai-proxy-gateway
 ```
 
-Run migrations against your target database before or during release:
+### 2. Deploy Serverless to Vercel
 
+#### Step 1: Run Migrations on Your Production Database
+Before deploying, ensure your production PostgreSQL / Supabase database schema is initialized:
 ```bash
-DATABASE_URL="postgresql://user:pass@db-host:5432/ai_proxy" npm run db:migrate
+DATABASE_URL="postgresql://postgres.xxx:pass@aws-0-region.pooler.supabase.com:6543/postgres" npm run db:migrate
 ```
 
-### Deploy Serverless / Edge to Vercel
+#### Step 2: Configure Vercel Environment Variables
+In **Vercel Project Settings → Environment Variables**, add the variables from [`.env.example`](.env.example):
+- `DATABASE_URL` (use the transaction pooler port `6543` for serverless connections)
+- `SUPABASE_URL` & `SUPABASE_SERVICE_KEY` (for `/admin` and `/portal`)
+- `UPSTASH_REDIS_REST_URL` & `UPSTASH_REDIS_REST_TOKEN`
+- `ADMIN_TOKEN`, `SESSION_SECRET`, and `CRON_SECRET`
+- Provider keys (`OPENAI_API_KEY`, etc.) or `VAULT_API_URL` + `VAULT_ACCESS_TOKEN`
 
-The included [`vercel.json`](vercel.json) and [`api/index.ts`](api/index.ts) entry point configure universal routing and a daily `03:00 UTC` price-sync cron job automatically:
-
+#### Step 3: Deploy
 ```bash
 npm i -g vercel
 vercel --prod
 ```
 
-Configure the variables from [`.env.example`](.env.example) under **Vercel Project Settings → Environment Variables** (use a pooled PostgreSQL connection string for `DATABASE_URL` in serverless environments).
+The included [`vercel.json`](vercel.json) configures universal routing to [`api/index.ts`](api/index.ts) and two daily cron jobs (authenticated via `CRON_SECRET`):
+```json
+{
+  "framework": null,
+  "rewrites": [
+    { "source": "/(.*)", "destination": "/api/index" }
+  ],
+  "crons": [
+    { "path": "/admin/api/cron/prices", "schedule": "0 3 * * *" },
+    { "path": "/admin/api/cron/sessions", "schedule": "0 4 * * *" }
+  ]
+}
+```
+- **`/admin/api/cron/prices` (`03:00 UTC`):** Syncs and cross-verifies model pricing from OpenRouter and LiteLLM.
+- **`/admin/api/cron/sessions` (`04:00 UTC`):** Summarizes expired Redis conversation sessions via `gpt-4o-mini` and archives them to PostgreSQL.
 
 ---
 
 ## 🧠 Session Summarization
 
-The gateway can group multi-turn API interactions into 15-minute sliding sessions and generate concise AI context summaries.
+The gateway can group multi-turn API interactions into 15-minute sliding sessions in Redis and generate AI context summaries.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/v1/sessions/current` | Get the active session for the authenticated client |
 | `GET` | `/v1/sessions/:id/messages` | Retrieve buffered messages in an active session |
-| `POST` | `/v1/sessions/:id/summarize` | Trigger AI summary generation and persist to DB |
+| `POST` | `/v1/sessions/:id/summarize` | Trigger AI summary generation (`gpt-4o-mini`) and persist to DB |
 | `GET` | `/v1/sessions/history` | List past summarized sessions from the database |
 
 Enable per request via header (`-H "X-Summarize: true"`) or per client (`summary_enabled = true`).
 
 ---
 
-## 📊 Admin Console & Customer Portal
-
-- **Admin Console (`/admin`):** Zero-build web dashboard for managing organizations, users, `sk-proxy-*` keys, model permissions, daily/monthly budgets, risk audit logs (flagged prompts & errors), session summaries, and automated price-drift checks against OpenRouter & LiteLLM.
-- **Customer Portal (`/portal`):** Optional self-service interface (`ENABLE_PORTAL=true`) where team members inspect their own usage, remaining budgets, and allowed models.
-
----
-
 ## ⚡ Performance Benchmarks
 
-Benchmarked locally with [autocannon](https://github.com/mcollina/autocannon):
+Benchmarked locally with [autocannon](https://github.com/mcollina/autocannon) to measure raw HTTP framework overhead vs. end-to-end authenticated calls:
 
-| Test Scenario | Connections | Duration | Total Requests | Req/Sec | Avg Latency |
-|---------------|-------------|----------|----------------|---------|-------------|
-| Health Check (raw Hono routing) | 500 | 5s | **89,000** | **17,752** | 27 ms |
-| Auth + Rate Limit + Real AI Call | 50 | 5s | 310 | 52 | Provider-bound |
-
-> **Tip:** Co-locating your compute runtime and database in the same cloud region (e.g., both in `eu-central-1` or `us-east-1`) keeps auth & logging overhead under a few milliseconds.
-
----
-
-## 🛡️ Security Highlights
-
-- **SHA-256 Key Hashing:** Client `sk-proxy-*` keys are hashed before storage; plaintext keys are never persisted.
-- **AES-256-GCM Handover Links:** Newly issued keys are delivered via single-use links (`/reveal/:token`) where the decryption key is derived from the URL token (never stored in the DB) and wiped immediately once opened.
-- **Vault Secret Isolation:** Master provider keys can be isolated in [`ai-vault-server`](ai-vault-server) and encrypted in Redis SWR cache.
-- **Domain Whitelisting & Model Caps:** Browser-based clients enforce `Origin` allowlists, per-user/client model allowlists, and `max_output_price` ceilings.
-- **Async Content Moderation:** Prompts are checked asynchronously in the background without adding latency to client responses.
+| Test Scenario | Connections | Duration | Total Requests | Req/Sec | Avg Latency | Notes |
+|---------------|-------------|----------|----------------|---------|-------------|-------|
+| `GET /` Health Check (raw Hono routing overhead) | 500 | 5s | 89,000 | 17,752 | 27 ms | Measures framework overhead without DB/LLM I/O |
+| `POST /v1/chat/completions` (Auth + Rate Limit + Real AI Call) | 50 | 5s | 310 | 52 | Provider-bound | Bound by upstream LLM generation latency (1.4s–3.5s) |
 
 ---
 
@@ -411,16 +445,22 @@ Benchmarked locally with [autocannon](https://github.com/mcollina/autocannon):
 ```
 ai-proxy-gateway/
 ├── api/
-│   └── index.ts                             # Vercel serverless / edge entry point
+│   └── index.ts                             # Vercel serverless entry point
 ├── ai-vault-server/                         # Optional standalone Vault microservice
+├── mock-server/
+│   └── index.ts                             # Local mock AI provider (npm run mock)
+├── mock-vault/
+│   └── index.ts                             # Local mock Vault server (npm run mock-vault)
 ├── scripts/
+│   ├── create-key.ts                        # CLI utility to create clients & sk-proxy-* keys
 │   └── migrate.ts                           # Cross-platform SQL migration runner
 ├── supabase/
 │   └── migrations/
 │       └── 0001_initial_schema.sql          # Full idempotent PostgreSQL schema & seeds
 ├── src/
 │   ├── app.ts                               # Main Hono application & proxy routes
-│   ├── server.ts                            # Node.js / Docker server entry point
+│   ├── server.ts                            # Node.js / Docker server entry point (loads .env)
+│   ├── test.ts                              # Integration test suite (npm test)
 │   ├── model_pricing.json                   # Static model pricing fallback
 │   ├── core/
 │   │   ├── budget.ts                        # Daily & monthly budget enforcement
@@ -447,9 +487,15 @@ ai-proxy-gateway/
 │   │   ├── portal.ts                        # Built-in Customer Portal SPA & API
 │   │   └── reveal.ts                        # One-time key reveal route
 │   ├── services/
-│   │   └── databaseService.ts               # Active IDatabase adapter binding
+│   │   ├── databaseService.ts               # Active IDatabase adapter binding
+│   │   ├── db.ts                            # Client helper wrapper
+│   │   └── logger.ts                        # Async request logger wrapper
+│   ├── ui/
+│   │   └── stil.ts                          # Shared dashboard styles
 │   └── utils/
 │       ├── auth.ts                          # Key generation & SHA-256 hashing
+│       ├── env.ts                           # Zero-dependency .env loader
+│       ├── hesap.ts                         # Scrypt password hashing & HMAC cookies
 │       ├── sessionManager.ts                # Sliding-window Redis sessions & summaries
 │       ├── supabaseClient.ts                # Lazy Supabase REST client (admin/portal)
 │       └── vault.ts                         # Vault client with encrypted SWR cache
@@ -465,28 +511,33 @@ ai-proxy-gateway/
 
 ## 🔧 Environment Variables
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `DATABASE_URL` | ✅* | — | PostgreSQL connection URL (*not needed if using a custom `IDatabase` adapter) |
-| `OPENAI_API_KEY` | ❌ | — | Direct OpenAI key (used when `VAULT_API_URL` is unset) |
-| `ANTHROPIC_API_KEY` | ❌ | — | Direct Anthropic key (used when `VAULT_API_URL` is unset) |
-| `GEMINI_API_KEY` | ❌ | — | Direct Google Gemini key (used when `VAULT_API_URL` is unset) |
-| `OPENAI_BASE_URL` | ❌ | `https://api.openai.com` | Custom OpenAI-compatible base URL (Ollama, vLLM, Azure, etc.) |
-| `ANTHROPIC_BASE_URL` | ❌ | `https://api.anthropic.com` | Custom Anthropic-compatible base URL |
-| `GEMINI_BASE_URL` | ❌ | `https://generativelanguage...` | Custom Gemini-compatible base URL |
-| `VAULT_API_URL` | ❌ | — | Centralized Vault server URL (overrides direct `*_API_KEY` env vars) |
-| `VAULT_ACCESS_TOKEN` | ❌ | — | Bearer token for authenticating with Vault server |
-| `UPSTASH_REDIS_REST_URL` | ❌ | — | Redis HTTP endpoint (Upstash or `serverless-redis-http`). Fails open if unset |
-| `UPSTASH_REDIS_REST_TOKEN` | ❌ | — | Redis HTTP auth token |
-| `SUPABASE_URL` | ❌ | — | Supabase REST URL (required for built-in `/admin` & `/portal` dashboards) |
-| `SUPABASE_SERVICE_KEY` | ❌ | — | Supabase service-role key (for `/admin` & `/portal`) |
-| `ADMIN_TOKEN` | ❌ | — | Bootstrap token for `/admin` access & encryption fallback |
-| `SESSION_SECRET` | ❌ | — | HMAC signing secret for admin & portal session cookies |
+All variables match [`.env.example`](.env.example):
+
+| Variable | Required | Default in `.env.example` | Description |
+|----------|----------|---------------------------|-------------|
+| `DATABASE_URL` | ✅* | `postgresql://postgres:...` | PostgreSQL connection URL (*not needed if using a custom `IDatabase` adapter) |
+| `ADMIN_TOKEN` | ✅ (Prod) | *(empty)* | Secret token for `/admin` bootstrap & encryption fallback. Generate with `openssl rand -hex 32` |
+| `SESSION_SECRET` | ✅ (Prod) | *(empty)* | HMAC signing secret for `/admin` and `/portal` session cookies. Generate with `openssl rand -hex 32` |
+| `OPENAI_API_KEY` | ❌** | *(empty)* | Direct OpenAI key (**at least one provider key or Vault is required to make AI calls) |
+| `ANTHROPIC_API_KEY` | ❌** | *(empty)* | Direct Anthropic key (used when `VAULT_API_URL` is unset) |
+| `GEMINI_API_KEY` | ❌** | *(empty)* | Direct Google Gemini key (used when `VAULT_API_URL` is unset) |
+| `OPENAI_BASE_URL` | ❌ | *(empty → `https://api.openai.com`)* | Custom OpenAI-compatible base URL (Ollama, vLLM, LiteLLM, or `http://127.0.0.1:4000` for mock) |
+| `ANTHROPIC_BASE_URL` | ❌ | *(empty → `https://api.anthropic.com`)* | Custom Anthropic-compatible base URL |
+| `GEMINI_BASE_URL` | ❌ | *(empty → `https://generativelanguage...`)* | Custom Gemini-compatible base URL |
+| `VAULT_API_URL` | ❌ | *(empty)* | Centralized Vault server URL (overrides direct `*_API_KEY` env vars) |
+| `VAULT_ACCESS_TOKEN` | ❌ | *(empty)* | Bearer token for authenticating with Vault server |
+| `UPSTASH_REDIS_REST_URL` | ❌ (Prod ✅) | *(empty)* | Redis HTTP endpoint (Upstash or `serverless-redis-http`). Fails open if unset |
+| `UPSTASH_REDIS_REST_TOKEN` | ❌ (Prod ✅) | *(empty)* | Redis HTTP auth token |
+| `SUPABASE_URL` | ❌*** | *(empty)* | Supabase Project URL (***required for `/admin` and `/portal` web dashboards) |
+| `SUPABASE_SERVICE_KEY` | ❌*** | *(empty)* | Supabase `service_role` secret key (found in Supabase Dashboard → Project Settings → API) |
 | `ENABLE_PORTAL` | ❌ | `false` | Set to `true` to mount the `/portal` self-service customer dashboard |
 | `BUDGET_TIMEZONE` | ❌ | `Europe/Istanbul` | IANA timezone used for daily/monthly budget rollover boundaries |
-| `CRON_SECRET` | ❌ | — | Bearer secret for triggering `/admin/api/cron/prices` |
-| `HOST` | ❌ | `127.0.0.1` | Bind address for Node.js server (`0.0.0.0` in Docker) |
+| `CRON_SECRET` | ❌ | *(empty)* | Bearer secret for authenticating `/admin/api/cron/prices` and `/admin/api/cron/sessions` |
+| `HOST` | ❌ | `127.0.0.1` | Bind address for Node.js server (`Dockerfile` & `docker-compose.yml` set `0.0.0.0`) |
 | `PORT` | ❌ | `3000` | HTTP listen port for Node.js server |
+| `ENABLE_MOCK_PROVIDERS` | ❌ | `false` | Routes `providerConfig.ts` helpers to `http://localhost:4000` when `true` |
+| `TEST_PROXY_KEY` | ❌ | *(empty)* | Optional `sk-proxy-*` key used by local test scripts |
+| `DEMO_LIMITED_KEY` | ❌ | *(empty)* | Optional rate-limited `sk-proxy-*` key for demo scenarios |
 
 ---
 
@@ -495,13 +546,15 @@ ai-proxy-gateway/
 | Status / Symptom | Cause | How to Fix |
 |------------------|-------|------------|
 | `401 Unauthorized` (`Missing or Invalid Token`) | Request is missing `Authorization: Bearer sk-proxy-...` header | Pass the key as a Bearer token: `-H "Authorization: Bearer sk-proxy-..."` |
-| `401 Unauthorized` (`Key not found`) | The `sk-proxy-*` key does not exist in `client_keys` or was revoked (`is_active = false`) | Issue a new key in `/admin` or run `npx tsx --env-file=.env src/test.ts` |
+| `401 Unauthorized` (`Key not found`) | The `sk-proxy-*` key does not exist in `client_keys` or was revoked (`is_active = false`) | Run `npm run key:create -- "My App"` or issue a new key in `/admin` |
 | `403 Forbidden` (`Client is inactive`) | The parent organization in `clients` has `is_active = false` | Re-enable the client in `/admin` or update `clients.is_active = true` |
-| `403 Forbidden` (`Origin not allowed`) | Client is configured as `browser-based` and request `Origin` is not in `allowed_domains` | Add your frontend domain to `allowed_domains` in `/admin` or switch client type to `server-based` |
+| `403 Forbidden` (`Origin not allowed`) | Client is configured as `browser-based` and request `Origin` is not in `allowed_domains` | Add your frontend domain to `allowed_domains` in `/admin` or set `client_type = 'server-based'` |
+| `400 / 403 Model not allowed or not in catalog` | Requested model is inactive in `model_catalog`, not in client/user `allowed_models`, or exceeds `max_output_price` | Permit the model or raise the price ceiling in `/admin` → **Models / People**, or check `SELECT * FROM model_catalog;` |
 | `429 Too Many Requests` | Client exceeded per-minute `rate_limit` or daily/monthly USD budget | Increase `rate_limit`, `daily_budget`, or `monthly_budget` for the client/user in `/admin` |
 | `500 Internal Edge Proxy Error` (`*_API_KEY was not found`) | Neither `VAULT_API_URL` nor the provider's `*_API_KEY` is configured | Set `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` in `.env`, or start `ai-vault-server` |
 | `Migration failed: ENOTFOUND` | `DATABASE_URL` points to an unreachable host or a paused Supabase Free Tier project | Resume your database in the Supabase dashboard, or switch `DATABASE_URL` to a local/Docker PostgreSQL instance |
-| `Long-running request timeout on Vercel` | Vercel Hobby plan enforces function execution timeouts (10s–60s) on slow reasoning models | Upgrade to Vercel Pro (up to 300s) or deploy via the included `Dockerfile` / `docker-compose.yml` for unrestricted connection durations |
+| `Container port 3000 unreachable` | Server bound to `127.0.0.1` instead of `0.0.0.0` inside Docker | Ensure `HOST=0.0.0.0` is set (included by default in `Dockerfile` and `docker-compose.yml`) |
+| `Long-running request timeout on Vercel` | Vercel Hobby plan enforces function execution timeouts (10s–60s) on slow reasoning models | Upgrade to Vercel Pro (up to 300s) or deploy via `Dockerfile` / `docker-compose.yml` for unrestricted connection durations |
 
 ---
 

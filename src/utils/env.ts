@@ -5,21 +5,18 @@
 // ve dosyaya sonradan eklenenler görünmüyor; daha kötüsü, boş bırakılmış bir
 // değişken de "tanımlı" sayılıp dosyadaki değeri eziyor.
 //
-// Bu, akşam boyunca üç kez farklı şekilde karşımıza çıktı: bir keresinde
-// requests sahte sağlayıcı yerine gerçek OpenAI'ye gitti, iki kere oturum
-// imzalanamadı. Hepsinin kökü aynıydı ve hiçbiri kodda görünmüyordu.
-//
-// Bu yükleyici yalnızca yerel geliştirme için: Vercel'de .env dosyası yok,
-// değişkenler panelden geliyor ve işlev sessizce hiçbir şey yapmıyor.
+// Bu yükleyici yalnızca yerel geliştirme ve kendi sunucunda (self-hosted)
+// çalışma için: Vercel'de .env dosyası yok, değişkenler panelden geliyor ve
+// işlev sessizce hiçbir şey yapmıyor.
 
-import fs from 'fs';
-import path from 'path';
+import fs from 'node:fs';
+import path from 'node:path';
 
 export function yukleEnv(dosya = '.env'): void {
-  const path = path.resolve(process.cwd(), dosya);
-  if (!fs.existsSync(path)) return;
+  const dosyaYolu = path.resolve(process.cwd(), dosya);
+  if (!fs.existsSync(dosyaYolu)) return;
 
-  for (const satir of fs.readFileSync(path, 'utf8').split('\n')) {
+  for (const satir of fs.readFileSync(dosyaYolu, 'utf8').split(/\r?\n/)) {
     const t = satir.trim();
     if (!t || t.startsWith('#')) continue;
 
@@ -30,8 +27,10 @@ export function yukleEnv(dosya = '.env'): void {
     let deger = t.slice(ayrac + 1).trim();
 
     // Tırnak içine alınmış değerler
-    if ((deger.startsWith('"') && deger.endsWith('"')) ||
-        (deger.startsWith("'") && deger.endsWith("'"))) {
+    if (
+      (deger.startsWith('"') && deger.endsWith('"')) ||
+      (deger.startsWith("'") && deger.endsWith("'"))
+    ) {
       deger = deger.slice(1, -1);
     }
 

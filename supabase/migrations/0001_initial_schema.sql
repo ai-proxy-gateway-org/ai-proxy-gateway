@@ -157,6 +157,7 @@ INSERT INTO model_catalog (provider, model, input_price, output_price, is_active
 VALUES
   ('openai', 'gpt-4o', 0.0025, 0.01, true, 'seed'),
   ('openai', 'gpt-4o-mini', 0.00015, 0.0006, true, 'seed'),
+  ('anthropic', 'claude-sonnet-4-20250514', 0.003, 0.015, true, 'seed'),
   ('anthropic', 'claude-3-5-sonnet-latest', 0.003, 0.015, true, 'seed'),
   ('gemini', 'gemini-2.5-flash', 0.00015, 0.0006, true, 'seed')
 ON CONFLICT (provider, model) DO NOTHING;

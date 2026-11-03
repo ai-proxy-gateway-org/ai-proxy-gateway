@@ -1,26 +1,75 @@
-// Sahte sağlayıcıyı tek başına çalıştırır (npm run mock).
-//
-// Yolların kendisi src/routes/mockProvider.ts içinde: aynı kod hem burada
-// hem de ana uygulamanın /mock yolunda kullanılıyor. İki kopya tutmak,
-// birinin diğerinden sessizce ayrışması demekti.
+import { serve } from '@hono/node-server';
+import { Hono } from 'hono';
 
-import Fastify from 'fastify';
-import { mockProviderRoutes } from '../src/routes/mockProvider.js';
+const mockApp = new Hono();
 
-// Terminale istek kutularını bu süreçte basıyoruz; sunucusuz ortamda kimse
-// görmediği için orada kapalı kalıyor.
-process.env.MOCK_STANDALONE = 'true';
+mockApp.post('/v1/chat/completions', async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const model = body.model || 'gpt-4o-mini';
+  console.log(`[Mock Provider] OpenAI/Gemini compatible call -> model: ${model}`);
+  return c.json({
+    id: `chatcmpl-mock-${Date.now()}`,
+    object: 'chat.completion',
+    created: Math.floor(Date.now() / 1000),
+    model,
+    choices: [
+      {
+        index: 0,
+        message: {
+          role: 'assistant',
+          content: `[Mock response from ${model}] Hello! Your request passed through AI Proxy Gateway.`,
+        },
+        finish_reason: 'stop',
+      },
+    ],
+    usage: { prompt_tokens: 12, completion_tokens: 18, total_tokens: 30 },
+  });
+});
 
-const mockServer = Fastify({ logger: false });
-mockServer.register(mockProviderRoutes);
+mockApp.post('/v1/messages', async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const model = body.model || 'claude-sonnet-4-20250514';
+  console.log(`[Mock Provider] Anthropic call -> model: ${model}`);
+  return c.json({
+    id: `msg_mock_${Date.now()}`,
+    type: 'message',
+    role: 'assistant',
+    model,
+    content: [
+      {
+        type: 'text',
+        text: `[Mock response from ${model}] Hello! Your request passed through AI Proxy Gateway.`,
+      },
+    ],
+    usage: { input_tokens: 14, output_tokens: 20, prompt_tokens: 14, completion_tokens: 20 },
+  });
+});
 
-mockServer.listen({ port: 4000, host: '0.0.0.0' }, (err) => {
-  if (err) {
-    console.error(err);
-    process.exit(1);
-  }
-  console.log('\n\x1b[1m  SAHTE SAĞLAYICI  ·  localhost:4000\x1b[0m');
-  console.log('\x1b[2m  OpenAI, Anthropic ve Gemini\'nin yerine geçiyor.\x1b[0m');
-  console.log('\x1b[2m  Buraya ulaşan her istek aşağıda sarı kutu olarak görünecek.\x1b[0m');
-  console.log('\x1b[2m  Şu an boş — henüz istek gelmedi.\x1b[0m\n');
+mockApp.post('/v1beta/openai/chat/completions', async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const model = body.model || 'gemini-2.5-flash';
+  console.log(`[Mock Provider] Gemini call -> model: ${model}`);
+  return c.json({
+    id: `gemini-mock-${Date.now()}`,
+    object: 'chat.completion',
+    created: Math.floor(Date.now() / 1000),
+    model,
+    choices: [
+      {
+        index: 0,
+        message: {
+          role: 'assistant',
+          content: `[Mock response from ${model}] Hello! Your request passed through AI Proxy Gateway.`,
+        },
+        finish_reason: 'stop',
+      },
+    ],
+    usage: { prompt_tokens: 10, completion_tokens: 16, total_tokens: 26 },
+  });
+});
+
+const port = 4000;
+serve({ fetch: mockApp.fetch, port, hostname: '127.0.0.1' }, () => {
+  console.log(`\nMock AI Provider running at http://127.0.0.1:${port}`);
+  console.log('Simulates OpenAI (/v1/chat/completions), Anthropic (/v1/messages), and Gemini (/v1beta/openai/chat/completions).\n');
 });

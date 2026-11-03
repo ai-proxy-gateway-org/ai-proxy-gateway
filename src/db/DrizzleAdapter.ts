@@ -17,7 +17,17 @@ export class DrizzleAdapter implements IDatabase {
     try {
       // 1. Müşteriyi oluştur ve türünü 'server-based' olarak sabitle
       const [newClient] = await db.insert(clients)
-        .values({ name, client_type: 'server-based' })
+        .values({
+          name,
+          client_type: 'server-based',
+          allowed_models: [
+            'openai/gpt-4o',
+            'openai/gpt-4o-mini',
+            'anthropic/claude-sonnet-4-20250514',
+            'anthropic/claude-3-5-sonnet-latest',
+            'gemini/gemini-2.5-flash',
+          ],
+        })
         .returning({ id: clients.id });
 
       if (!newClient) {
@@ -29,7 +39,12 @@ export class DrizzleAdapter implements IDatabase {
 
       // 2. Anahtarı oluştur ve 'environment' bilgisini buraya kaydet
       await db.insert(client_keys)
-        .values({ client_id: newClient.id, key_hash: hashedKey, environment });
+        .values({
+          client_id: newClient.id,
+          key_hash: hashedKey,
+          key_prefix: plainApiKey.slice(0, 12),
+          environment,
+        });
 
       return { success: true, clientId: newClient.id, plainApiKey };
     } catch (error) {

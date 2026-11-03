@@ -111,7 +111,7 @@ The gateway is now live at `http://localhost:3000`.
 ### Option B: Node.js Setup (Local Postgres, Supabase, Neon, RDS, or Railway)
 
 #### 1. Prerequisites
-- **Node.js v20.6+** (v22 LTS recommended)
+- **Node.js v20+** (v22 LTS recommended)
 - **PostgreSQL 14+** (local Postgres, Docker, Supabase, Neon, AWS RDS, or Railway) — *or implement [`IDatabase`](src/interfaces/IDatabase.ts) for another database engine (see [Adapting to Your Stack](#-adapting-to-your-stack))*
 - At least one AI provider API key (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY`) — *or use `npm run mock` for offline zero-key testing*
 - *(Optional, recommended for production)* Redis (`UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN`) for rate limiting, Vault SWR caching, and session buffering
@@ -305,7 +305,7 @@ Understanding how `POST /v1/chat/completions` routes and processes requests help
 | `npm run db:push` | Push Drizzle TypeScript schema (`src/db/schema.ts`) directly to PostgreSQL |
 | `npm run key:create -- "<Name>" [env]` | Create a new client and generate a `sk-proxy-*` API key via CLI |
 | `npm run mock` | Start local Hono mock AI provider server on `http://127.0.0.1:4000` (zero API cost) |
-| `npm run mock-vault` | Start local mock Vault server on `http://127.0.0.1:4000` for testing SWR key encryption |
+| `npm run mock-vault` | Start local mock Vault server on `http://127.0.0.1:4001` for testing SWR key encryption |
 | `npm run typecheck` | Run TypeScript compiler check (`tsc --noEmit`) across all source files |
 | `npm test` | Run the database, auth, domain allowlist, rate-limit, and logging integration suite (`src/test.ts`) |
 
@@ -397,7 +397,8 @@ Know what leaves your infrastructure and what is stored before going to producti
 The included [`Dockerfile`](Dockerfile) installs production dependencies (`npm ci --omit=dev` — `tsx` is included in `dependencies`) and sets `ENV HOST=0.0.0.0 PORT=3000`:
 
 ```bash
-# 1. Run database migrations against your target PostgreSQL database
+# 1. Run database migrations against your target PostgreSQL database (requires npm install first)
+npm install
 DATABASE_URL="postgresql://user:pass@db-host:5432/ai_proxy" npm run db:migrate
 
 # 2. Build and run the container

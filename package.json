@@ -5,7 +5,7 @@
   "main": "src/server.ts",
   "type": "module",
   "engines": {
-    "node": ">=20.6.0"
+    "node": ">=20.0.0"
   },
   "scripts": {
     "dev": "tsx watch src/server.ts",

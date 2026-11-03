@@ -27,8 +27,8 @@ app.get('/keys/:provider', (c) => {
   return c.json({ apiKey: `sk-mock-${provider}-not-a-real-key` });
 });
 
-const port = 4000;
+const port = Number(process.env.MOCK_VAULT_PORT || 4001);
 serve({ fetch: app.fetch, port, hostname: '127.0.0.1' }, () => {
-  console.log(`\nSahte kasa (mock vault) http://127.0.0.1:${port} adresinde çalışıyor`);
-  console.log('Gerçek anahtar değil — sadece kasadan-anahtar-çekme adımını test etmek için.\n');
+  console.log(`\nSahte kasa (mock vault) http://127.0.0.1:${port} adresinde calisiyor`);
+  console.log('Gercek anahtar degil - sadece kasadan-anahtar-cekme adimini test etmek icin.\n');
 });

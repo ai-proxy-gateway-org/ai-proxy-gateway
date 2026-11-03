@@ -19,7 +19,7 @@ export async function rateLimitMiddleware(c: Context, next: Next) {
   // Hangi ID baz al�narak limitlenecek? User varsa user.id, yoksa team.id
   const limitId = user ? user.id : client.id;
   
-  const result = await checkRateLimit(limitId, limit, limit);
+  const result = await checkRateLimit(limitId, limit, 60);
 
   if (!result.success) {
     // Limit aşıldıysa Hono üzerinden 429 hatası dönüyoruz

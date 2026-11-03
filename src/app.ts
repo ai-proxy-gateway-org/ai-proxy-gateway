@@ -10,6 +10,10 @@ import {
   getSessionMessages, generateSessionSummary
 } from './utils/sessionManager.js';
 import { runSecurityChain } from './core/security.js';
+import { authorizeModel } from './core/modelAuthorization.js';
+import type { ProviderName } from './core/providerConfig.js';
+import { priceFor } from './core/modelCatalog.js';
+import { checkBudget, addSpend } from './core/budget.js';
 
 // Hono uygulamasını başlatıyoruz
 type AppVariables = { client: any; user: any };
@@ -52,14 +56,17 @@ app.get('/', (c) => {
 // Sırasıyla Auth ve Rate Limit middleware'leri çalışacak
 app.post('/v1/chat/completions', authMiddleware, rateLimitMiddleware, async (c) => {
   const client = c.get('client');
+  const user = c.get('user');
   const startTime = Date.now();
 
   const apiKey = (c.req.header('Authorization') || '').replace('Bearer ', '');
   const origin = c.req.header('Origin') ?? null;
-  const security = await runSecurityChain({ apiKey, origin });
+  // Hız limiti rateLimitMiddleware'de (kullanıcı/şirket bazlı) zaten uygulandı;
+  // burada tekrar saymak limiti fiilen yarıya indiriyordu.
+  const security = await runSecurityChain({ apiKey, origin, skipRateLimit: true });
   
   if (!security.ok) {
-    return c.json({ success: false, error: security.error }, 403);
+    return c.json({ success: false, error: security.error }, security.status as any);
   }
 
   // try bloğunun dışında tanımlı: sağlayıcıya ulaşmadan önce bir şey
@@ -69,7 +76,7 @@ app.post('/v1/chat/completions', authMiddleware, rateLimitMiddleware, async (c) 
   // ama hiçbir zaman başarısız olarak işaretlenmiyordu, error sebebi de
   // hiç yazılmıyordu.
   let logId: string | null = null;
-  let provider = 'openai';
+  let provider: ProviderName = 'openai';
   let model = 'gpt-4o';
 
   try {
@@ -80,6 +87,29 @@ app.post('/v1/chat/completions', authMiddleware, rateLimitMiddleware, async (c) 
     // Sağlayıcı Tespiti (Basit Routing)
     if (model.includes('claude')) provider = 'anthropic';
     if (model.includes('gemini')) provider = 'gemini';
+
+    // Model yetkisi: katalogda olmayan model 400, izin listesinde/fiyat tavanı
+    // altında olmayan model 403. Reddedilen istek de kayda geçer (yönetici
+    // panelinde erişim talebi olarak görünür).
+    const authorization = await authorizeModel(provider, model, security.allowedModels, security.maxOutputPrice);
+    if (!authorization.ok) {
+      const deniedId = await dbService.logRequestStart(client.id, provider, model, null);
+      if (deniedId) {
+        dbService.logRequestComplete(deniedId, provider, model, 0, 0, 0, false, authorization.error).catch(console.error);
+      }
+      return c.json({ success: false, error: authorization.error }, authorization.status as any);
+    }
+
+    // Bütçe: kişi ve şirket için günlük/aylık USD tavanı (Redis sayacı, fail-open).
+    const budget = await checkBudget(
+      user?.id ?? null,
+      client.id,
+      { aylik: user?.monthly_budget ?? null, gunluk: user?.daily_budget ?? null },
+      { aylik: client.monthly_budget ?? null, gunluk: client.daily_budget ?? null }
+    );
+    if (!budget.ok) {
+      return c.json({ success: false, error: budget.reason }, 429);
+    }
 
     // Oturum (Session) Yönetimi:
     // X-Summarize header'ı varsa onu kullan, yoksa müşterinin admin settingına bak.
@@ -96,7 +126,9 @@ app.post('/v1/chat/completions', authMiddleware, rateLimitMiddleware, async (c) 
     // şey bu. messages yoksa (beklenmedik bir gövde gelirse) gövdenin
     // tamamı saklanıyor, hiç kayıt kaybetmemek için.
     const promptText = JSON.stringify(body.messages ?? body);
-    logId = await dbService.logRequestStart(client.id, provider, model, promptText);
+    // LOG_PAYLOADS=false: yalnızca metadata (token, maliyet, gecikme) saklanır, prompt saklanmaz.
+    const storePayloads = process.env.LOG_PAYLOADS !== 'false';
+    logId = await dbService.logRequestStart(client.id, provider, model, storePayloads ? promptText : null);
 
     // Tehlike taraması (Arka planda çalışır, Edge function'ı bekletmez)
     if (logId && promptText) {
@@ -168,7 +200,8 @@ app.post('/v1/chat/completions', authMiddleware, rateLimitMiddleware, async (c) 
     // 7. EDGE Büyüsü: Log işlemini arka planda tamamla (Kullanıcıyı bekletmez)
     if (logId) {
       const logPromise = dbService.logRequestComplete(
-        logId, provider, model, inputTokens, outputTokens, latencyMs, isSuccess, errorMessage, responseText
+        logId, provider, model, inputTokens, outputTokens, latencyMs, isSuccess, errorMessage,
+        storePayloads ? responseText : null
       );
       
       try {
@@ -179,6 +212,24 @@ app.post('/v1/chat/completions', authMiddleware, rateLimitMiddleware, async (c) 
         }
       } catch (e) {
         logPromise.catch(console.error); // Fallback for Node.js
+      }
+    }
+
+    // 7b. Bütçe sayacını güncelle (arka planda; Redis yoksa sessizce atlanır)
+    if (isSuccess && (inputTokens || outputTokens)) {
+      const spendPromise = priceFor(provider, model).then((price) => {
+        if (!price) return;
+        const cost = (inputTokens / 1000) * price.input + (outputTokens / 1000) * price.output;
+        return addSpend([user?.id ?? null, client.id], cost);
+      });
+      try {
+        if (c.executionCtx?.waitUntil) {
+          c.executionCtx.waitUntil(spendPromise);
+        } else {
+          spendPromise.catch(console.error);
+        }
+      } catch (e) {
+        spendPromise.catch(console.error);
       }
     }
 

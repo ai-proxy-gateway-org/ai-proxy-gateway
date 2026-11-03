@@ -15,7 +15,10 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { eq } from 'drizzle-orm';
 import { supabase } from '../utils/supabaseClient.js';
+import { db } from '../db/index.js';
+import { model_catalog } from '../db/schema.js';
 
 export interface PricingEntry {
   input: number;
@@ -63,13 +66,31 @@ function dosyadanOku(): Katalog {
   }
 }
 
-async function veritabanindanOku(): Promise<Katalog> {
+// Katalog satırlarını okur: DATABASE_URL varsa doğrudan PostgreSQL (Drizzle),
+// yoksa Supabase REST. Böylece Supabase'siz (Docker / saf Postgres) kurulumlar
+// da model_catalog tablosunu kullanır, eski model_pricing.json'a düşmez.
+async function katalogSatirlari(): Promise<unknown[]> {
+  if (process.env.DATABASE_URL) {
+    return db
+      .select({
+        provider: model_catalog.provider,
+        model: model_catalog.model,
+        input_price: model_catalog.input_price,
+        output_price: model_catalog.output_price
+      })
+      .from(model_catalog)
+      .where(eq(model_catalog.is_active, true));
+  }
   const { data, error } = await supabase
     .from('model_catalog')
     .select('provider, model, input_price, output_price')
     .eq('is_active', true);
-
   if (error) throw new Error(error.message);
+  return data ?? [];
+}
+
+async function veritabanindanOku(): Promise<Katalog> {
+  const data = await katalogSatirlari();
 
   const satirlar = (data ?? []) as Array<{
     provider: string; model: string;

@@ -102,6 +102,10 @@ docker compose exec gateway npm run key:create -- "My First App" production
 
 The gateway is now live at `http://localhost:3000`.
 
+> **Admin Console in Option A:** The Compose stack runs the **core gateway only** (`/v1/chat/completions`, `/v1/sessions/*`, `key:create`). The `/admin` and `/portal` dashboards additionally need `SUPABASE_URL` + `SUPABASE_SERVICE_KEY` in `.env` (a free Supabase Cloud project pointed at the same schema works). Without them, manage clients/keys with `npm run key:create` and SQL.
+>
+> **Adding migrations later:** The gateway container runs `npm run db:migrate` on every start, so new files like `supabase/migrations/0002_*.sql` are applied automatically on `docker compose up -d --build` (already-applied files are skipped via `schema_migrations`).
+
 ---
 
 ### Option B: Node.js Setup (Local Postgres, Supabase, Neon, RDS, or Railway)
@@ -214,10 +218,18 @@ curl -X POST http://127.0.0.1:3000/v1/chat/completions \
   }'
 ```
 
-Switch providers just by changing `model`:
-- **OpenAI:** `gpt-4o`, `gpt-4o-mini`, `o3-mini`
+Switch providers just by changing `model`. The fresh database is seeded with exactly these 5 models in `model_catalog`:
+- **OpenAI:** `gpt-4o`, `gpt-4o-mini`
 - **Anthropic:** `claude-sonnet-4-20250514`, `claude-3-5-sonnet-latest`
-- **Google Gemini:** `gemini-2.5-flash`, `gemini-2.0-flash`, `gemini-1.5-pro`
+- **Google Gemini:** `gemini-2.5-flash`
+
+> **Using other models:** Any model not in `model_catalog` is rejected with `400 Model '<name>' is not available on this gateway`. To enable more models, add them in `/admin` → **Models** (or run the price sync cron), or insert them directly:
+> ```sql
+> INSERT INTO model_catalog (provider, model, input_price, output_price, is_active, price_source)
+> VALUES ('openai', 'o3-mini', 0.0011, 0.0044, true, 'manual')   -- prices are USD per 1K tokens
+> ON CONFLICT (provider, model) DO NOTHING;
+> ```
+> Then grant it to a client by appending `openai/o3-mini` to `clients.allowed_models` (or via `/admin`).
 
 ---
 
@@ -297,6 +309,13 @@ Understanding how `POST /v1/chat/completions` routes and processes requests help
 | `npm run typecheck` | Run TypeScript compiler check (`tsc --noEmit`) across all source files |
 | `npm test` | Run the database, auth, domain allowlist, rate-limit, and logging integration suite (`src/test.ts`) |
 
+> ⚠️ **`npm test` writes real rows** to the database in `DATABASE_URL` (2 clients named `[TEST] ...`, 1 key each, 1 log row). Run it against a **test database only** — it refuses to run when `NODE_ENV=production` unless `ALLOW_TEST_WRITES=true`. Cleanup:
+> ```sql
+> DELETE FROM logs    WHERE client_id IN (SELECT id FROM clients WHERE name LIKE '[TEST]%');
+> DELETE FROM clients WHERE name LIKE '[TEST]%';   -- client_keys cascade via foreign key
+> ```
+> To create a real client/key, use `npm run key:create` instead.
+
 ---
 
 ## 🔌 Adapting to Your Stack
@@ -352,6 +371,22 @@ No changes to `src/app.ts` or routing middleware are required.
   VAULT_ACCESS_TOKEN=your-vault-token
   ```
   Keys are cached in Redis using **Stale-While-Revalidate (SWR)** (5-min fresh window, 2-hour TTL, AES-256-GCM encrypted at rest in Redis).
+
+---
+
+## 🔒 Privacy & Data Retention
+
+Know what leaves your infrastructure and what is stored before going to production:
+
+| Behavior | Default | What happens | How to change |
+|----------|---------|--------------|---------------|
+| **Prompt moderation** | On (`ENABLE_MODERATION=true`) | Every prompt is sent **in the background** to OpenAI's Moderation API (`https://api.openai.com/v1/moderations`) using your OpenAI key. Flagged requests get `logs.is_flagged = true` + `flagged_reason`. Requests are never blocked. If no OpenAI key is available the check is silently skipped. | Set `ENABLE_MODERATION=false` (recommended when using non-OpenAI or self-hosted models only, or when prompts must not reach OpenAI) |
+| **Payload logging** | On (`LOG_PAYLOADS=true`) | Full request messages (`logs.prompt`) and response text (`logs.response`) are stored in your database for auditing and the admin console. | Set `LOG_PAYLOADS=false` to store metadata only (model, tokens, cost, latency, status, error) |
+| **Session buffering** | Per client / per request (`summary_enabled`, `X-Summarize: true`) | Q&A pairs are buffered in Redis (15-min sliding TTL) and summarized by `gpt-4o-mini`; summaries are stored in `sessions`. | Leave `summary_enabled = false` and don't send `X-Summarize` |
+| **Retention** | Unlimited | The gateway never deletes `logs` or `sessions` rows automatically. | Schedule your own cleanup, e.g. `DELETE FROM logs WHERE created_at < now() - interval '90 days';` (via `pg_cron`, a cron job, or your DB provider's scheduler) |
+
+> [!IMPORTANT]
+> If you process personal data (GDPR / KVKK), document these flows in your privacy policy, or disable moderation and payload logging.
 
 ---
 
@@ -541,6 +576,8 @@ All variables match [`.env.example`](.env.example):
 | `HOST` | ❌ | `127.0.0.1` | Bind address for Node.js server (`Dockerfile` & `docker-compose.yml` set `0.0.0.0`) |
 | `PORT` | ❌ | `3000` | HTTP listen port for Node.js server |
 | `ENABLE_MOCK_PROVIDERS` | ❌ | `false` | Routes `providerConfig.ts` helpers to `http://localhost:4000` when `true` |
+| `ENABLE_MODERATION` | ❌ | `true` | Sends each prompt to OpenAI's Moderation API and flags `logs.is_flagged`. Set `false` to never send prompts to OpenAI for moderation (see [Privacy & Data Retention](#-privacy--data-retention)) |
+| `LOG_PAYLOADS` | ❌ | `true` | Stores full prompt & response text in `logs.prompt` / `logs.response`. Set `false` to store only tokens, cost, latency and status |
 | `TEST_PROXY_KEY` | ❌ | *(empty)* | Optional `sk-proxy-*` key used by local test scripts |
 | `DEMO_LIMITED_KEY` | ❌ | *(empty)* | Optional rate-limited `sk-proxy-*` key for demo scenarios |
 
@@ -555,7 +592,10 @@ All variables match [`.env.example`](.env.example):
 | `403 Forbidden` (`Client is inactive`) | The parent organization in `clients` has `is_active = false` | Re-enable the client in `/admin` or update `clients.is_active = true` |
 | `403 Forbidden` (`Origin not allowed`) | Client is configured as `browser-based` and request `Origin` is not in `allowed_domains` | Add your frontend domain to `allowed_domains` in `/admin` or set `client_type = 'server-based'` |
 | `400 / 403 Model not allowed or not in catalog` | Requested model is inactive in `model_catalog`, not in client/user `allowed_models`, or exceeds `max_output_price` | Permit the model or raise the price ceiling in `/admin` → **Models / People**, or check `SELECT * FROM model_catalog;` |
-| `429 Too Many Requests` | Client exceeded per-minute `rate_limit` or daily/monthly USD budget | Increase `rate_limit`, `daily_budget`, or `monthly_budget` for the client/user in `/admin` |
+| `400` `Model '<name>' is not available on this gateway` | The model is not an active row in `model_catalog` (a fresh DB only seeds `gpt-4o`, `gpt-4o-mini`, `claude-sonnet-4-20250514`, `claude-3-5-sonnet-latest`, `gemini-2.5-flash`) | Add it in `/admin` → **Models**, or `INSERT INTO model_catalog ...` (see [Send Your First Request](#7-send-your-first-request)). Custom `OPENAI_BASE_URL` models (Ollama/vLLM) must be added too |
+| `403` `Model '<name>' is not enabled for your account` | The model is in the catalog but `openai/<model>` (etc.) is not in the client's `allowed_models` | Append `<provider>/<model>` to `clients.allowed_models`, or set a `max_output_price` ceiling the model fits under |
+| `403` `Model '<name>' costs $X per 1M output tokens, above your limit` | Client has a `max_output_price` ceiling lower than the model's output price | Raise `max_output_price` or add the model explicitly to `allowed_models` |
+| `429 Too Many Requests` | Client exceeded per-minute `rate_limit` or daily/monthly USD budget | Increase `rate_limit`, `daily_budget`, or `monthly_budget` for the client/user in `/admin` (budgets are only tracked when Redis is configured) |
 | `500 Internal Edge Proxy Error` (`*_API_KEY was not found`) | Neither `VAULT_API_URL` nor the provider's `*_API_KEY` is configured | Set `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` in `.env`, or start `ai-vault-server` |
 | `Migration failed: ENOTFOUND` | `DATABASE_URL` points to an unreachable host or a paused Supabase Free Tier project | Resume your database in the Supabase dashboard, or switch `DATABASE_URL` to a local/Docker PostgreSQL instance |
 | `Container port 3000 unreachable` | Server bound to `127.0.0.1` instead of `0.0.0.0` inside Docker | Ensure `HOST=0.0.0.0` is set (included by default in `Dockerfile` and `docker-compose.yml`) |

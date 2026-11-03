@@ -66,6 +66,7 @@ export type SecurityOutcome =
 export async function runSecurityChain(options: {
   apiKey: string;
   origin: string | null;
+  skipRateLimit?: boolean;
 }): Promise<SecurityOutcome> {
   // 1. Kimlik — key SHA-256'lanıp client_keys ile karşılaştırılır
   const auth = await verifyClient(options.apiKey);
@@ -84,7 +85,7 @@ export async function runSecurityChain(options: {
 
   // 3. Hız limiti — Redis INCR + TTL
   const clientLimit = Number(auth.client.rate_limit) > 0 ? Number(auth.client.rate_limit) : DEFAULT_REQUESTS_PER_MINUTE;
-  const rate = await checkRateLimit(clientId, clientLimit, 60);
+  const rate = options.skipRateLimit ? { success: true as const } : await checkRateLimit(clientId, clientLimit, 60);
   if (!rate.success) {
     return { ok: false, status: Number(rate.status), error: String(rate.error) };
   }

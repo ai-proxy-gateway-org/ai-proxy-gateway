@@ -144,6 +144,8 @@ export class DrizzleAdapter implements IDatabase {
   async checkModeration(logId: string, prompt: string): Promise<void> {
     try {
       if (!prompt) return;
+      // ENABLE_MODERATION=false: promptlar OpenAI Moderation API'sine hiç gönderilmez.
+      if (process.env.ENABLE_MODERATION === 'false') return;
       
       // Kasa'dan OpenAI keyını alıyoruz (hidden!)
       const { getProviderKey } = await import('../utils/vault.js');

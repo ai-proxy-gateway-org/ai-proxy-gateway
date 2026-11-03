@@ -16,7 +16,7 @@ if (!databaseUrl) {
 const migrationsDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'supabase', 'migrations');
 
 async function runMigrations() {
-  const sql = postgres(databaseUrl!, { max: 1 });
+  const sql = postgres(databaseUrl!, { max: 1, onnotice: () => {} });
 
   try {
     // Ensure migration tracking table exists

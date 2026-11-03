@@ -5,11 +5,11 @@ import { checkDomainWhitelist } from './middleware/domainWhitelister.js';
 import { logRequestStart, logRequestComplete } from './services/logger.js';
 
 async function runTests() {
-  console.log('⏳ Starting Supabase Database and Security Test...\n');
+  console.log('⏳ Starting Database and Security Integration Test...\n');
 
   // 1. New Client Creation Test
   console.log('1️⃣ Creating a new client...');
-  const createRes = await createNewClient('Test Project', 'development');
+  const createRes = await createNewClient('[TEST] Integration Project', 'development');
   
   if (!createRes.success) {
     console.error('❌ Failed to create client. Error:', createRes.error);
@@ -74,7 +74,7 @@ function runDomainTest() {
 async function runLogTest() {
   console.log('\n📝 6️⃣ Starting Asynchronous Logging and Cost Calculation Test...\n');
 
-  const clientRes = await createNewClient('Log Test Client', 'development');
+  const clientRes = await createNewClient('[TEST] Log Client', 'development');
   if (!clientRes.success) {
     console.log('❌ Failed to create client for log test.');
     return;
@@ -98,11 +98,19 @@ async function runLogTest() {
   await logRequestComplete(logId, provider, model, 1000, 500, 1200, true);
 
   console.log('🟢 Process complete! Calculated cost based on 1000 input and 500 output tokens for GPT-4o.');
-  console.log('👀 You can check the "cost" column in the "logs" table on the Supabase panel!');
+  console.log('👀 Check the "cost" column in the "logs" table of your database (DATABASE_URL).');
+  console.log('🧹 Cleanup: test rows are named "[TEST] ..." — see README → Available NPM Scripts for the cleanup SQL.');
 }
 
 // Main function to run all tests sequentially
 async function runAllTests() {
+  // Bu paket hedef veritabanına gerçek satırlar yazar (2 client, 1 log).
+  // Üretim veritabanını yanlışlıkla kirletmemek için NODE_ENV=production'da çalışmaz.
+  if (process.env.NODE_ENV === 'production' && process.env.ALLOW_TEST_WRITES !== 'true') {
+    console.error('❌ Refusing to run: NODE_ENV=production. This suite writes test rows to DATABASE_URL.');
+    console.error('   Point DATABASE_URL to a test database, or set ALLOW_TEST_WRITES=true to override.');
+    process.exit(1);
+  }
   await runTests();
   await runRateLimitTest();
   runDomainTest(); 

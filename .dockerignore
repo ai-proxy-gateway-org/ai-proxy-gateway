@@ -1,0 +1,31 @@
+# Dependencies & build output (reinstalled inside the image via `npm ci --omit=dev`)
+node_modules
+dist
+coverage
+*.tsbuildinfo
+
+# Secrets — never bake local env files into the image
+.env
+.env.*
+!.env.example
+
+# VCS, editor & OS files
+.git
+.github
+.vscode
+.idea
+.DS_Store
+
+# Local tooling, logs & scratch artifacts
+.vercel
+*.log
+*.png
+*.pdf
+*.cjs
+*.mjs
+
+# Not needed at runtime
+ai-vault-server
+mock-server
+mock-vault
+docs

@@ -201,6 +201,8 @@ async function oku(kimlik: string, tur: BudgetType): Promise<{ month: number; da
 // cost ancak o zaman biliniyor.
 export async function addSpend(kimlikler: Array<string | null>, amount: number): Promise<void> {
   if (!Number.isFinite(amount) || amount <= 0) return;
+  // Redis yapılandırılmamışsa bütçe sayacı yok (fail-open, sessiz).
+  if (!process.env.UPSTASH_REDIS_REST_URL) return;
   try {
     for (const kimlik of kimlikler) {
       if (!kimlik) continue;
@@ -250,6 +252,9 @@ export async function checkBudget(
   kisiSinir: BudgetLimits,
   sirketSinir: BudgetLimits
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
+  // Redis yapılandırılmamışsa bütçe sayacı tutulamaz: hız limitiyle aynı
+  // fail-open davranışı, her istekte bağlantı hatası basmadan.
+  if (!process.env.UPSTASH_REDIS_REST_URL) return { ok: true };
   try {
     if (kisiId) {
       const d = await getBudgetStatus(kisiId, kisiSinir, 'user');
